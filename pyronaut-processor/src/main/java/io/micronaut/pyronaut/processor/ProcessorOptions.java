@@ -36,6 +36,8 @@ import java.util.TreeMap;
 final class ProcessorOptions {
     private static final String CACHE_FILE = "annotation-processor-options.properties";
     private static final String OPENAPI_ENABLED = "micronaut.openapi.enabled";
+    /** The compiler option naming the Python classes to generate no Java type for. */
+    static final String PYTHON_EXCLUDE = "micronaut.python.exclude";
     private static final Map<String, String> DEFAULTS = Map.of(
         "micronaut.openapi.views.spec", "swagger-ui.enabled=true,redoc.enabled=true"
     );
@@ -53,6 +55,11 @@ final class ProcessorOptions {
             }
         });
         loadApplicationOptions(root, model, supported, values);
+        List<String> exclude = model == null || model.pyronaut() == null || model.pyronaut().processor() == null
+            ? List.of() : model.pyronaut().processor().exclude();
+        if (!exclude.isEmpty()) {
+            values.put(PYTHON_EXCLUDE, String.join(",", exclude));
+        }
         Map<String, String> manual = new LinkedHashMap<>();
         List<String> raw = new ArrayList<>();
         for (String option : explicit == null ? List.<String>of() : explicit) {

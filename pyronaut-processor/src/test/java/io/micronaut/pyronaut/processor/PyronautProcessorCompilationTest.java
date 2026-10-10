@@ -251,6 +251,66 @@ class PyronautProcessorCompilationTest {
         assertFalse(hasFileContaining(classesDir, "MyController"));
     }
 
+    @Test
+    void processesPlainPythonHelperClasses() throws Exception {
+        // micronaut-projects/pyronaut#331
+        Path project = tempDir.resolve("project-helpers");
+        Path core = Files.createDirectories(project.resolve("src/weather_agent/core"));
+        Path legacy = Files.createDirectories(project.resolve("src/weather_agent/legacy"));
+        Path cacheDir = Files.createDirectories(project.resolve("__pyronaut__"));
+        Files.writeString(project.resolve("pyproject.toml"), minimalPyproject() + """
+
+            [tool.pyronaut.processor]
+            exclude = ["weather_agent.legacy.*"]
+            """);
+        Files.writeString(core.resolve("condition.py"), """
+            class ConditionError(ValueError):
+                pass
+
+
+            class _Evaluator:
+                def error(self, message: str) -> ConditionError:
+                    return ConditionError(message)
+
+
+            class Evaluator:
+                def error(self, message: str) -> ConditionError:
+                    return ConditionError(message)
+
+                def describe(self, error: ConditionError) -> str:
+                    return str(error)
+
+
+            class _Base:
+                def name(self) -> str:
+                    return "base"
+
+
+            class Derived(_Base):
+                pass
+            """);
+        Files.writeString(legacy.resolve("helpers.py"), """
+            class LegacyFormatter:
+                def format(self, value: str) -> str:
+                    return value.upper()
+            """);
+        writeClasspathCaches(cacheDir);
+
+        PyronautProcessorMain command = new PyronautProcessorMain();
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        Path classesDir = project.resolve("__pyronaut__/classes");
+        assertTrue(hasClassContaining(classesDir, "ConditionError"));
+        assertTrue(hasClassContaining(classesDir, "Evaluator"));
+        assertFalse(hasClassContaining(classesDir, "_Evaluator"));
+        // a private class a kept class extends is kept with it
+        assertTrue(hasClassContaining(classesDir, "_Base"));
+        assertTrue(hasClassContaining(classesDir, "Derived"));
+        assertFalse(hasClassContaining(classesDir, "LegacyFormatter"));
+    }
+
     private static boolean hasClassContaining(Path root, String token) throws Exception {
         try (var files = Files.walk(root)) {
             return files
