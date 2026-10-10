@@ -39,7 +39,7 @@ class PeopleController:
         return f"{name}:{trace}"
 
     @http.Get(uri="/running", produces=http.TEXT_PLAIN)
-    def running(self, ctx: inject.ApplicationContext = inject.Inject()) -> str:
+    def running(self, ctx: context.ApplicationContext = context.Inject()) -> str:
         # a bean, not a request value
         return str(ctx.isRunning())
 
