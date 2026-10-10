@@ -1,3 +1,4 @@
+import io.micronaut.pyronaut.gradle.PyenvVersions
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
@@ -33,10 +34,7 @@ def nativeImageJdkVersion = graalVmDevTag.map { tag ->
 }.orElse(buildJdkVersion)
 def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy3.13-25.4.4")
 def pyenvExecutable = providers.provider {
-    def pyenvRoot = System.getenv("PYENV_ROOT")
-    def configured = pyenvRoot == null || pyenvRoot.isBlank()
-        ? new File(System.getProperty("user.home"), ".pyenv/bin/pyenv")
-        : new File(pyenvRoot, "bin/pyenv")
+    def configured = new File(PyenvVersions.root(), "bin/pyenv")
     if (configured.isFile() && configured.canExecute()) {
         return configured.absolutePath
     }
