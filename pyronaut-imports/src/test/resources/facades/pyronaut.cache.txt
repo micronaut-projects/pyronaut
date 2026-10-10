@@ -1,0 +1,21 @@
+# pyronaut.cache
+
+## members
+AbstractMapBasedSyncCache	CLASS	io.micronaut.cache.AbstractMapBasedSyncCache
+AsyncCache	INTERFACE	io.micronaut.cache.AsyncCache
+AsyncCacheErrorHandler	CLASS	io.micronaut.cache.AsyncCacheErrorHandler
+Cache	INTERFACE	io.micronaut.cache.Cache
+CacheConfig	ANNOTATION	io.micronaut.cache.annotation.CacheConfig
+CacheConfiguration	CLASS	io.micronaut.cache.CacheConfiguration
+CacheErrorHandler	INTERFACE	io.micronaut.cache.CacheErrorHandler
+CacheInfo	INTERFACE	io.micronaut.cache.CacheInfo
+CacheInvalidate	ANNOTATION	io.micronaut.cache.annotation.CacheInvalidate
+CacheManager	INTERFACE	io.micronaut.cache.CacheManager
+CachePut	ANNOTATION	io.micronaut.cache.annotation.CachePut
+Cacheable	ANNOTATION	io.micronaut.cache.annotation.Cacheable
+DefaultCacheErrorHandler	CLASS	io.micronaut.cache.DefaultCacheErrorHandler
+DefaultCacheManager	CLASS	io.micronaut.cache.DefaultCacheManager
+DynamicCacheManager	INTERFACE	io.micronaut.cache.DynamicCacheManager
+InvalidateOperations	ANNOTATION	io.micronaut.cache.annotation.InvalidateOperations
+PutOperations	ANNOTATION	io.micronaut.cache.annotation.PutOperations
+SyncCache	INTERFACE	io.micronaut.cache.SyncCache

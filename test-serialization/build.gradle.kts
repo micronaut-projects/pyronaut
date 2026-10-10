@@ -9,7 +9,10 @@ dependencies {
     implementation(mn.micronaut.json.core)
     implementation(mnSerde.micronaut.serde.jackson)
     implementation("io.micronaut.serde:micronaut-serde-api")
+    implementation("jakarta.validation:jakarta.validation-api")
     compileOnly(mnSerde.micronaut.serde.processor)
+    // the curated modules (from pyronaut import http, ...) the Python sources import
+    "pyronautCompiler"(project(":micronaut-pyronaut-imports"))
 
     testImplementation(mn.micronaut.context.python)
     testImplementation(mn.micronaut.http.client)

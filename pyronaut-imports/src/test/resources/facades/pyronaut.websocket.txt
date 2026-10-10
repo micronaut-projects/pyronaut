@@ -1,0 +1,19 @@
+# pyronaut.websocket
+
+## members
+ClientWebSocket	ANNOTATION	io.micronaut.websocket.annotation.ClientWebSocket
+CloseReason	CLASS	io.micronaut.websocket.CloseReason
+OnClose	ANNOTATION	io.micronaut.websocket.annotation.OnClose
+OnError	ANNOTATION	io.micronaut.websocket.annotation.OnError
+OnMessage	ANNOTATION	io.micronaut.websocket.annotation.OnMessage
+OnOpen	ANNOTATION	io.micronaut.websocket.annotation.OnOpen
+ServerWebSocket	ANNOTATION	io.micronaut.websocket.annotation.ServerWebSocket
+WebSocketBroadcaster	INTERFACE	io.micronaut.websocket.WebSocketBroadcaster
+WebSocketClient	INTERFACE	io.micronaut.websocket.WebSocketClient
+WebSocketClientFactory	INTERFACE	io.micronaut.websocket.WebSocketClientFactory
+WebSocketClientRegistry	INTERFACE	io.micronaut.websocket.WebSocketClientRegistry
+WebSocketComponent	ANNOTATION	io.micronaut.websocket.annotation.WebSocketComponent
+WebSocketMapping	ANNOTATION	io.micronaut.websocket.annotation.WebSocketMapping
+WebSocketPongMessage	CLASS	io.micronaut.websocket.WebSocketPongMessage
+WebSocketSession	INTERFACE	io.micronaut.websocket.WebSocketSession
+WebSocketVersion	ENUM	io.micronaut.websocket.WebSocketVersion
