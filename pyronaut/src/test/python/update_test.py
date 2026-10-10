@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import os
 import sys
 import tempfile
 import types
@@ -137,6 +138,31 @@ class ReleaseSelectionTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "GH_TOKEN"):
                 cli._sdk_releases()
 
+    def test_anonymous_clients_download_published_wheels_from_the_public_url(self):
+        published = _github_release("v1.0.0")
+        draft = _github_release("v2.0.0", draft=True)
+        for release in (published, draft):
+            for asset in release["assets"]:
+                asset["browser_download_url"] = f"https://github.com/download/{asset['name']}"
+
+        def wheel_urls(token):
+            with patch.object(cli, "_github_api_json", side_effect=lambda url, _headers: [published, draft] if "page=1" in url else []), \
+                    patch.object(cli, "_read_pyronaut_user_settings", return_value={}), \
+                    patch.object(cli, "_github_token", return_value=token):
+                return {release.tag: release.wheel_url for release in cli._sdk_releases(allow_draft=True)}
+
+        self.assertEqual(
+            {
+                "v1.0.0": "https://github.com/download/pyronaut-1.0.0-py3-none-any.whl",
+                "v2.0.0": "https://api.github.com/assets/v2.0.0-wheel",
+            },
+            wheel_urls(None),
+        )
+        self.assertEqual(
+            {"v1.0.0": "https://api.github.com/assets/v1.0.0-wheel", "v2.0.0": "https://api.github.com/assets/v2.0.0-wheel"},
+            wheel_urls("token"),
+        )
+
 
 class UpdateArgumentsTest(unittest.TestCase):
     def test_accepts_an_optional_version_and_known_options(self):
@@ -173,6 +199,8 @@ class RunUpdateTest(unittest.TestCase):
         self.commands = []
         self.patches = [
             patch.object(cli.Path, "home", return_value=self.home),
+            # These tests cover the ~/.pyronaut layout, whatever the platform.
+            patch.dict(os.environ, {"PYRONAUT_XDG": "false"}),
             patch.object(cli, "_setup_is_required", return_value=True),
             patch.object(cli, "_read_pyronaut_user_settings", return_value={}),
             patch.object(cli, "_setup_local_repository", return_value=self.repository),
@@ -252,6 +280,15 @@ class RunUpdateTest(unittest.TestCase):
             sorted(path.name for path in (self.repository / "io" / "micronaut" / "pyronaut" / "micronaut-pyronaut-run").iterdir()),
         )
         self.assertEqual([], list((self.home / ".pyronaut" / "update").iterdir()))
+
+    def test_public_wheel_download_sends_no_api_headers(self):
+        release = _release("v0.0.5")._replace(wheel_url="https://github.com/download/pyronaut-0.0.5-py3-none-any.whl")
+        code, _, stderr = self._run(["--progress", "off"], [release])
+        self.assertEqual(cli.SUCCESS, code, stderr)
+        self.assertEqual(
+            [("https://github.com/download/pyronaut-0.0.5-py3-none-any.whl", "pyronaut-0.0.5-py3-none-any.whl", None)],
+            self.downloads,
+        )
 
     def test_keep_old_skips_cleanup(self):
         self._populate_versions("0.0.4")

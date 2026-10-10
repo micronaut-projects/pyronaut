@@ -21,6 +21,8 @@ repositories = [
 [tool.pyronaut.dependencies]
 runtime = [ 
     "io.micronaut:micronaut-http-server-netty",
+    "io.micronaut:micronaut-websocket",
+    "io.micronaut.reactor:micronaut-reactor",
     "io.micronaut.validation:micronaut-validation",
     "io.micronaut.serde:micronaut-serde-jackson",
     "io.micronaut.jsonschema:micronaut-json-schema-annotations",
@@ -35,4 +37,5 @@ test = [
    "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
    "io.micronaut.test:micronaut-test-junit5",
    "io.micronaut.pyronaut:micronaut-pyronaut-requests",
+   "io.micronaut:micronaut-http-client",
  ]

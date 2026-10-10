@@ -246,12 +246,12 @@ class DoctorCommandTest(unittest.TestCase):
 
     def test_check_order_includes_project_checks_only_inside_project(self):
         self.assertEqual(
-            ["python", "pyronaut", "graalvm", "graalpy", "interpreter", "launchers", "proxy", "docker"],
+            ["python", "pyronaut", "home", "graalvm", "graalpy", "interpreter", "launchers", "proxy", "docker"],
             [check_id for check_id, _, _ in cli._doctor_checks([], None)],
         )
         self.assertEqual(
             [
-                "python", "pyronaut", "graalvm", "graalpy", "interpreter", "launchers",
+                "python", "pyronaut", "home", "graalvm", "graalpy", "interpreter", "launchers",
                 "pyproject", "install", "state", "threading", "packages", "compat", "pytest",
                 "proxy", "docker",
             ],
@@ -280,7 +280,8 @@ class DoctorChecksTest(unittest.TestCase):
         self._home_patch = patch("pathlib.Path.home", return_value=self.home)
         self._home_patch.start()
         self.addCleanup(self._home_patch.stop)
-        self._env_patch = patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        # These checks cover the ~/.pyronaut layout, also on Linux.
+        self._env_patch = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
         for name in ("JAVA_HOME", "PYENV_VERSION", "PYENV_ROOT", "SDKMAN_DIR", "DOCKER_HOST", *_PROXY_ENV):
@@ -845,7 +846,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         patcher = patch("pathlib.Path.home", return_value=self.home)
         patcher.start()
         self.addCleanup(patcher.stop)
-        env = patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        env = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         env.start()
         self.addCleanup(env.stop)
         for name in ("PYRONAUT_PYTHON_EXECUTABLE", "VIRTUAL_ENV", "PYENV_VERSION", "PYENV_ROOT"):

@@ -97,7 +97,7 @@ repositories = [
 ]
 ----
 
-Setup installs native executables into `~/.pyronaut/bin`:
+Pyronaut downloads the native launchers into `~/.pyronaut/bin` (`bin` in the data directory with the <<pyronautHome,XDG layout>>) when a command first needs them, or during `pyronaut setup --native-launchers`:
 
 [source,text]
 ----
@@ -106,6 +106,69 @@ Setup installs native executables into `~/.pyronaut/bin`:
 
 TIP: See
 <<proxyConfig,Proxy Configuration>> for proxy setup.
+
+[[pyronautHome]]
+== Relocate Pyronaut state
+
+Global Pyronaut state (setup records, the SDK tool runtime, native launchers, JDKs, caches and `settings.toml`)
+follows the XDG base directory layout described below on Linux, and whenever an `XDG_*_HOME` variable is set.
+Otherwise it lives in `~/.pyronaut`, where `~` is `$HOME`. Set `PYRONAUT_HOME` to keep all of it in one directory
+of your choice instead:
+
+[source,bash]
+----
+export PYRONAUT_HOME=/opt/pyronaut-state
+pyronaut setup
+----
+
+The CLI passes the resolved directories to every Java tool and launcher it starts (as `PYRONAUT_CONFIG_DIR`,
+`PYRONAUT_CACHE_DIR` and `PYRONAUT_DATA_DIR`), so they use the same locations even when the JVM's `user.home` (taken
+from the operating system's user database) differs from `$HOME`, for example in a build sandbox. The local Maven
+repository defaults to `$HOME/.m2/repository` on both sides; use `--local-repository` to change it.
+
+=== Use the XDG base directory layout
+
+Pyronaut follows the https://specifications.freedesktop.org/basedir-spec/latest/[XDG Base Directory Specification]
+for new installations on Linux, and on any platform when `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` or `XDG_DATA_HOME` is set.
+State is then split by kind:
+
+[cols="1,2,3"]
+|===
+|Kind |Directory |Contents
+
+|Configuration
+|`$XDG_CONFIG_HOME/pyronaut` (default `~/.config/pyronaut`)
+|`settings.toml`
+
+|Cache
+|`$XDG_CACHE_HOME/pyronaut` (default `~/.cache/pyronaut`)
+|AOT caches (`caches/aot`), IDE stubs (`ide-stubs`), GraalPy compatibility data and `pyronaut update` downloads
+
+|Data
+|`$XDG_DATA_HOME/pyronaut` (default `~/.local/share/pyronaut`)
+|JDKs and SDKs (`sdks`), native launchers (`bin`), setup records (`setup`) and the SDK tool runtime (`tools`)
+|===
+
+An existing `~/.pyronaut` installation keeps working where it is. To move it to the XDG layout, run:
+
+[source,bash]
+----
+pyronaut setup --xdg
+----
+
+Setup copies `~/.pyronaut/settings.toml` to the XDG configuration directory when that directory has none, provisions
+the SDK into the data directory, and prints a note that `~/.pyronaut` is no longer used and can be removed.
+
+`pyronaut setup` creates `$XDG_CONFIG_HOME/pyronaut` whenever the XDG layout is in use. Its existence keeps the layout
+enabled, so later commands (and the Java tools they start) use it even if a `~/.pyronaut` directory appears.
+`pyronaut doctor` reports the active layout and its paths in the *Pyronaut state* row.
+
+Set `PYRONAUT_XDG=true` or `PYRONAUT_XDG=false` to choose the layout explicitly; `false` keeps `~/.pyronaut` even on
+Linux. `PYRONAUT_HOME` always takes precedence and keeps everything in one directory.
+
+To switch back to `~/.pyronaut`, export `PYRONAUT_XDG=false` (or, outside Linux and without `XDG_*_HOME` variables,
+remove `$XDG_CONFIG_HOME/pyronaut`), move `settings.toml` back into `~/.pyronaut` and run `pyronaut setup` again. The
+XDG cache and data directories can then be removed.
 
 == Project installation
 

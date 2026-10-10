@@ -316,7 +316,10 @@ class JUnitPytestTestListenerTest {
             TestExecutionResult.failed(new PythonAssertionError("assert 4 == 5"))
         );
 
-        assertEquals(descriptor, started.get());
+        assertEquals(descriptor, started.get().getParent().orElseThrow());
+        assertEquals("tests/test_params.py::test_square[2]", started.get().getDisplayName());
+        assertEquals(descriptor.getSource(), started.get().getSource());
+        assertTrue(started.get().isTest());
         assertEquals(TestExecutionResult.Status.FAILED, finishedResult.get().getStatus());
         assertTrue(listener.hasReportedTestFailures());
     }

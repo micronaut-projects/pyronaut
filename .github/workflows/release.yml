@@ -8,6 +8,24 @@ on:
   release:
     types: [published]
 jobs:
+  advance-release-version:
+    if: ${{ !github.event.release.draft && !contains(github.event.release.tag_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          fetch-depth: 0
+      - name: Advance the release branch to the next snapshot
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
+        run: python3 .github/scripts/bump_release_version.py "${RELEASE_TAG}" "${RELEASE_COMMIT}"
+
   release:
     if: github.event_name == 'release'
     outputs:
@@ -31,13 +49,18 @@ jobs:
           java-version: '25'
       - name: Set the current release version
         id: release_version
-        run: echo "release_version=${GITHUB_REF:11}" >> $GITHUB_OUTPUT
-      - name: Run pre-release
-        uses: micronaut-projects/github-actions/pre-release@master
         env:
-          MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ ! "${version}" =~ ^[0-9]+[.][0-9]+[.][0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Unsupported release tag: ${RELEASE_TAG}"
+            exit 1
+          fi
+          echo "release_version=${version}" >> "${GITHUB_OUTPUT}"
+          # Build from the tagged OraHub source without moving its release tag.
+          sed -i "s/^projectVersion=.*/projectVersion=${version}/" gradle.properties
       - name: Publish to local build repository
         id: publish
         env:
@@ -111,13 +134,6 @@ jobs:
           DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
           DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
           DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
-      - name: Run post-release
-        if: success()
-        uses: micronaut-projects/github-actions/post-release@master
-        env:
-          MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   provenance-subject:
     needs: [release]

@@ -17,17 +17,20 @@ package io.micronaut.pyronaut.install;
 
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
+import io.micronaut.pyronaut.config.model.PyronautHome;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitResult;
+import java.nio.file.LinkOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
@@ -43,7 +46,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Materializes the non-installer launcher classpaths omitted from the SDK wheel. */
@@ -54,6 +56,10 @@ final class ToolClasspathInstaller {
     static final String TOOLS_DIR_ENV = "PYRONAUT_PACKAGED_TOOLS_DIR";
     static final String CACHE_DIR_PROPERTY = "pyronaut.tools.cache.dir";
     static final String CACHE_DIR_ENV = "PYRONAUT_TOOLS_CACHE_DIR";
+    private static final String DESCRIPTOR_HASH_PROPERTY = "descriptor.sha256";
+    private static final String SDK_VERSION_PROPERTY = "sdk.version";
+    private static final String TOOLS_DIR = "tools";
+    private static final String SHARED_LIB = "shared/lib";
     private static final Map<Path, Object> JVM_LOCKS = new ConcurrentHashMap<>();
 
     private final MavenClasspathResolver resolver;
@@ -102,8 +108,7 @@ final class ToolClasspathInstaller {
                 if (!refresh && completeLayout(current, descriptors, sdkVersion, descriptorHash, localRepository)) {
                     return current;
                 }
-                Path layout = versionRoot.resolve(descriptorHash + "-" + UUID.randomUUID());
-                materialize(layout, descriptors, sdkVersion, descriptorHash,
+                Path layout = materialize(versionRoot, descriptors, sdkVersion, descriptorHash,
                     model == null ? defaultModel() : model, localRepository, offline, refresh, progressListener);
                 updateCurrentLink(versionRoot, layout.getFileName());
             }
@@ -111,7 +116,11 @@ final class ToolClasspathInstaller {
         return versionRoot.resolve("current");
     }
 
-    private void materialize(Path layout,
+    /**
+     * Builds the layout in a temporary directory and publishes it under the hash of its contents, so identical
+     * inputs always produce the same directory name.
+     */
+    private Path materialize(Path versionRoot,
                              List<ToolDescriptor> descriptors,
                              String sdkVersion,
                              String descriptorHash,
@@ -138,56 +147,87 @@ final class ToolClasspathInstaller {
             resolvedByKey.put(ArtifactKey.of(artifacts.get(i)), resolved.get(i));
         }
 
-        Path temporary = Files.createTempDirectory(layout.getParent(), "." + layout.getFileName() + "-");
+        Path temporary = Files.createTempDirectory(versionRoot, "." + descriptorHash + "-");
         try {
-            Path temporaryTools = temporary.resolve("tools");
-            Path sharedLib = temporaryTools.resolve("shared/lib");
-            Files.createDirectories(sharedLib);
-            Map<String, Path> sourcesByFileName = new LinkedHashMap<>();
-            Map<String, Path> controlPanelSourcesByFileName = new LinkedHashMap<>();
-            for (ToolDescriptor descriptor : descriptors) {
-                Path sourceTool = descriptor.file().getParent().getParent();
-                copyDirectory(sourceTool.resolve("bin"), temporaryTools.resolve(descriptor.command()).resolve("bin"));
-                for (ToolEntry entry : descriptor.entries()) {
-                    Path source = entry.maven()
-                        ? resolvedByKey.get(entry.key())
-                        : packagedTools.resolve("shared/lib").resolve(entry.fileName());
-                    if (source == null || !Files.isRegularFile(source)) {
-                        throw new IOException("Missing Pyronaut tool artifact " + entry.fileName());
-                    }
-                    Map<String, Path> destinations = entry.controlPanel() ? controlPanelSourcesByFileName : sourcesByFileName;
-                    Path existing = destinations.get(entry.fileName());
-                    if (existing != null && Files.mismatch(existing, source) != -1L) {
-                        throw new IOException("Conflicting Pyronaut tool artifacts share filename " + entry.fileName());
-                    }
-                    // A filename can be referenced by both a Maven descriptor and a
-                    // bundled descriptor. The bundled wheel artifact must win so the
-                    // resulting cache remains valid for every descriptor, regardless
-                    // of descriptor sort order.
-                    if (existing == null || !entry.maven()) {
-                        destinations.put(entry.fileName(), source);
-                    }
-                }
-            }
-            for (Map.Entry<String, Path> entry : sourcesByFileName.entrySet()) {
-                linkOrCopy(entry.getValue(), sharedLib.resolve(entry.getKey()));
-            }
-            Path controlPanelLib = temporaryTools.resolve("pyronaut-dev/lib/control-panel");
-            for (Map.Entry<String, Path> entry : controlPanelSourcesByFileName.entrySet()) {
-                linkOrCopy(entry.getValue(), controlPanelLib.resolve(entry.getKey()));
-            }
+            populate(temporary.resolve(TOOLS_DIR), descriptors, resolvedByKey);
+            // Named before the metadata is written: it records the local repository path, which must not
+            // change the name when only the location of identical artifacts differs.
+            Path layout = versionRoot.resolve(contentHash(temporary));
             Properties metadata = new Properties();
-            metadata.setProperty("descriptor.sha256", descriptorHash);
-            metadata.setProperty("sdk.version", sdkVersion);
+            metadata.setProperty(DESCRIPTOR_HASH_PROPERTY, descriptorHash);
+            metadata.setProperty(SDK_VERSION_PROPERTY, sdkVersion);
             metadata.setProperty("local.repository", localRepository.toAbsolutePath().normalize().toString());
-            try (var output = Files.newOutputStream(temporary.resolve("tool-runtime.properties"))) {
-                metadata.store(output, null);
+            ReproducibleProperties.write(metadata, temporary.resolve(RUNTIME_PROPERTIES_FILE), null);
+            if (!Files.isDirectory(layout, LinkOption.NOFOLLOW_LINKS)
+                || !completeLayout(layout, descriptors, sdkVersion, descriptorHash, localRepository)) {
+                publish(temporary, layout);
             }
-            moveAtomically(temporary, layout);
+            return layout;
         } finally {
             if (Files.exists(temporary)) {
                 deleteDirectory(temporary);
             }
+        }
+    }
+
+    private void populate(Path tools,
+                          List<ToolDescriptor> descriptors,
+                          Map<ArtifactKey, Path> resolvedByKey) throws IOException {
+        Path sharedLib = tools.resolve(SHARED_LIB);
+        Files.createDirectories(sharedLib);
+        Map<String, Path> sourcesByFileName = new LinkedHashMap<>();
+        Map<String, Path> controlPanelSourcesByFileName = new LinkedHashMap<>();
+        for (ToolDescriptor descriptor : descriptors) {
+            Path sourceTool = descriptor.file().getParent().getParent();
+            copyDirectory(sourceTool.resolve("bin"), tools.resolve(descriptor.command()).resolve("bin"));
+            for (ToolEntry entry : descriptor.entries()) {
+                addSource(entry, resolvedByKey,
+                    entry.controlPanel() ? controlPanelSourcesByFileName : sourcesByFileName);
+            }
+        }
+        for (Map.Entry<String, Path> entry : sourcesByFileName.entrySet()) {
+            linkOrCopy(entry.getValue(), sharedLib.resolve(entry.getKey()));
+        }
+        Path controlPanelLib = tools.resolve("pyronaut-dev/lib/control-panel");
+        for (Map.Entry<String, Path> entry : controlPanelSourcesByFileName.entrySet()) {
+            linkOrCopy(entry.getValue(), controlPanelLib.resolve(entry.getKey()));
+        }
+    }
+
+    private void addSource(ToolEntry entry,
+                           Map<ArtifactKey, Path> resolvedByKey,
+                           Map<String, Path> destinations) throws IOException {
+        Path source = entry.maven()
+            ? resolvedByKey.get(entry.key())
+            : packagedTools.resolve(SHARED_LIB).resolve(entry.fileName());
+        if (source == null || !Files.isRegularFile(source)) {
+            throw new IOException("Missing Pyronaut tool artifact " + entry.fileName());
+        }
+        Path existing = destinations.get(entry.fileName());
+        if (existing != null && Files.mismatch(existing, source) != -1L) {
+            throw new IOException("Conflicting Pyronaut tool artifacts share filename " + entry.fileName());
+        }
+        // A filename can be referenced by both a Maven descriptor and a
+        // bundled descriptor. The bundled wheel artifact must win so the
+        // resulting cache remains valid for every descriptor, regardless
+        // of descriptor sort order.
+        if (existing == null || !entry.maven()) {
+            destinations.put(entry.fileName(), source);
+        }
+    }
+
+    private static void publish(Path temporary, Path layout) throws IOException {
+        if (!Files.exists(layout, LinkOption.NOFOLLOW_LINKS)) {
+            moveAtomically(temporary, layout);
+            return;
+        }
+        // A damaged layout with the same name is moved aside first, as directories cannot be replaced atomically.
+        Path damaged = Files.createTempDirectory(layout.getParent(), "." + layout.getFileName() + "-damaged-");
+        moveAtomically(layout, damaged.resolve("layout"));
+        try {
+            moveAtomically(temporary, layout);
+        } finally {
+            deleteDirectory(damaged);
         }
     }
 
@@ -196,23 +236,12 @@ final class ToolClasspathInstaller {
                                    String sdkVersion,
                                    String descriptorHash,
                                    Path localRepository) {
-        Path metadataFile = layout.resolve("tool-runtime.properties");
-        if (!Files.isRegularFile(metadataFile)) {
-            return false;
-        }
-        Properties metadata = new Properties();
-        try (InputStream input = Files.newInputStream(metadataFile)) {
-            metadata.load(input);
-        } catch (IOException e) {
-            return false;
-        }
-        if (!sdkVersion.equals(metadata.getProperty("sdk.version"))
-            || !descriptorHash.equals(metadata.getProperty("descriptor.sha256"))) {
+        if (!metadataMatches(layout, sdkVersion, descriptorHash)) {
             return false;
         }
         Map<String, Path> sharedSources = preferredSources(descriptors, localRepository);
         for (ToolDescriptor descriptor : descriptors) {
-            Path bin = layout.resolve("tools").resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
+            Path bin = layout.resolve(TOOLS_DIR).resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
             if (!Files.isRegularFile(bin)) {
                 return false;
             }
@@ -229,6 +258,21 @@ final class ToolClasspathInstaller {
             }
         }
         return true;
+    }
+
+    private static boolean metadataMatches(Path layout, String sdkVersion, String descriptorHash) {
+        Path metadataFile = layout.resolve(RUNTIME_PROPERTIES_FILE);
+        if (!Files.isRegularFile(metadataFile)) {
+            return false;
+        }
+        Properties metadata = new Properties();
+        try (InputStream input = Files.newInputStream(metadataFile)) {
+            metadata.load(input);
+        } catch (IOException _) {
+            return false;
+        }
+        return sdkVersion.equals(metadata.getProperty(SDK_VERSION_PROPERTY))
+            && descriptorHash.equals(metadata.getProperty(DESCRIPTOR_HASH_PROPERTY));
     }
 
     private Map<String, Path> preferredSources(List<ToolDescriptor> descriptors, Path localRepository) {
@@ -251,7 +295,7 @@ final class ToolClasspathInstaller {
 
     private Path expectedSource(ToolEntry entry, Path localRepository) {
         if (!entry.maven()) {
-            return packagedTools.resolve("shared/lib").resolve(entry.fileName()).toAbsolutePath().normalize();
+            return packagedTools.resolve(SHARED_LIB).resolve(entry.fileName()).toAbsolutePath().normalize();
         }
         return localRepository.toAbsolutePath().normalize()
             .resolve(entry.group().replace('.', '/'))
@@ -331,7 +375,7 @@ final class ToolClasspathInstaller {
 
     private static String readSdkVersion(Path toolsRoot) throws IOException {
         Properties properties = readRuntimeProperties(toolsRoot);
-        String version = properties.getProperty("sdk.version");
+        String version = properties.getProperty(SDK_VERSION_PROPERTY);
         if (version == null || version.isBlank()) {
             throw new IOException("Missing sdk.version in " + toolsRoot.resolve(RUNTIME_PROPERTIES_FILE));
         }
@@ -339,7 +383,7 @@ final class ToolClasspathInstaller {
     }
 
     private static String readDescriptorHash(Path toolsRoot, List<ToolDescriptor> descriptors) throws IOException {
-        String declared = readRuntimeProperties(toolsRoot).getProperty("descriptor.sha256");
+        String declared = readRuntimeProperties(toolsRoot).getProperty(DESCRIPTOR_HASH_PROPERTY);
         return declared == null || declared.isBlank() ? descriptorHash(descriptors) : declared.trim();
     }
 
@@ -366,6 +410,64 @@ final class ToolClasspathInstaller {
         } catch (IOException e) {
             throw new PyprojectModelException("Unable to fingerprint Pyronaut tool descriptors", e);
         }
+    }
+
+    /**
+     * Hashes the kind, relative path and bytes of every entry in a layout. Linked artifacts are hashed by the
+     * contents they resolve to, so the hash does not depend on where the Maven repository lives.
+     *
+     * <p>Each entry is one unambiguous record: a kind tag, the length-prefixed UTF-8 path and, for files, the
+     * fixed-width SHA-256 of the contents.
+     */
+    static String contentHash(Path root) throws IOException {
+        MessageDigest digest = sha256();
+        List<Path> entries;
+        try (var paths = Files.walk(root)) {
+            entries = paths.filter(path -> !path.equals(root))
+                .sorted(Comparator.comparing(path -> relativeName(root, path)))
+                .toList();
+        }
+        for (Path entry : entries) {
+            boolean directory = Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS);
+            digest.update(kindTag(entry, directory));
+            byte[] name = relativeName(root, entry).getBytes(StandardCharsets.UTF_8);
+            digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(name.length).array());
+            digest.update(name);
+            if (!directory) {
+                digest.update(fileHash(entry));
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static byte kindTag(Path entry, boolean directory) {
+        if (directory) {
+            return 'd';
+        }
+        return (byte) (Files.isExecutable(entry) ? 'x' : 'f');
+    }
+
+    private static byte[] fileHash(Path file) throws IOException {
+        MessageDigest digest = sha256();
+        try (InputStream input = Files.newInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            for (int read = input.read(buffer); read != -1; read = input.read(buffer)) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return digest.digest();
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
+        }
+    }
+
+    private static String relativeName(Path root, Path path) {
+        return root.relativize(path).toString().replace(path.getFileSystem().getSeparator(), "/");
     }
 
     private static void copyDirectory(Path source, Path target) throws IOException {
@@ -450,7 +552,7 @@ final class ToolClasspathInstaller {
             configured = System.getenv(CACHE_DIR_ENV);
         }
         return configured == null || configured.isBlank()
-            ? Path.of(System.getProperty("user.home"), ".pyronaut", "tools")
+            ? PyronautHome.dataHome().resolve(TOOLS_DIR)
             : Path.of(configured).toAbsolutePath().normalize();
     }
 
