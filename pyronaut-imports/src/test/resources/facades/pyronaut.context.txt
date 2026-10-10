@@ -1,4 +1,4 @@
-# pyronaut.inject
+# pyronaut.context
 
 ## clashes
 Qualifier: jakarta.inject.Qualifier (PREFER_ANNOTATIONS) over io.micronaut.context.Qualifier
