@@ -66,6 +66,11 @@ class OrchestratorTest(unittest.TestCase):
         shutil.rmtree(cls._fake_dev_delegate_root, ignore_errors=True)
 
     def setUp(self):
+        # These tests cover the ~/.pyronaut layout, whatever the platform or
+        # XDG_* variables of the machine running them.
+        xdg = patch.dict(os.environ, {"PYRONAUT_XDG": "false"})
+        xdg.start()
+        self.addCleanup(xdg.stop)
         self._previous_run_jar = os.environ.get("PYRONAUT_RUN_JAR")
         self._previous_test_jar = os.environ.get("PYRONAUT_TEST_JAR")
         os.environ["PYRONAUT_RUN_JAR"] = "/tmp/pyronaut-run.jar"

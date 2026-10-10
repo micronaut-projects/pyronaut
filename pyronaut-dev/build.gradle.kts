@@ -422,7 +422,7 @@ val nativeImageRuntimeArgs = listOf(
     "--enable-http",
     "--enable-https",
     // Modules
-    "-H:Preserve=module=java.base,module=java.sql,module=java.logging",
+    "-H:Preserve=module=java.base,module=java.sql,module=java.logging,module=java.naming",
 
     /* java.* */
     "-H:Preserve=package=java.applet.*",

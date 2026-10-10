@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import os
 import sys
 import tempfile
 import types
@@ -198,6 +199,8 @@ class RunUpdateTest(unittest.TestCase):
         self.commands = []
         self.patches = [
             patch.object(cli.Path, "home", return_value=self.home),
+            # These tests cover the ~/.pyronaut layout, whatever the platform.
+            patch.dict(os.environ, {"PYRONAUT_XDG": "false"}),
             patch.object(cli, "_setup_is_required", return_value=True),
             patch.object(cli, "_read_pyronaut_user_settings", return_value={}),
             patch.object(cli, "_setup_local_repository", return_value=self.repository),
