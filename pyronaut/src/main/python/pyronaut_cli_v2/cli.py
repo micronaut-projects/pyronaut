@@ -1817,14 +1817,74 @@ def _replace_embedded_python_vfs_classes(
             continue
     if not embedded:
         return list(entries)
-    signature = hashlib.sha256(("fileslist-v4\n" + "\n".join(sorted(embedded))).encode()).hexdigest()
-    filtered = project_dir / "__pyronaut__" / f"classes-native-runtime-{signature[:12]}"
+    output_dir = project_dir / "__pyronaut__"
+    signature = hashlib.sha256(
+        ("fileslist-v5\n" + "\n".join(sorted(embedded)) + "\n" + _directory_fingerprint(classes)).encode()
+    ).hexdigest()
+    filtered = output_dir / f"classes-native-runtime-{signature[:12]}"
+    if not _native_vfs_filter_is_current(filtered, signature):
+        staging = Path(tempfile.mkdtemp(prefix=f"{filtered.name}.", suffix=".tmp", dir=output_dir))
+        try:
+            shutil.copytree(classes, staging, dirs_exist_ok=True)
+            _filter_embedded_python_vfs(staging, embedded)
+            (staging / ".native-vfs-filter").write_text(signature, encoding="utf-8")
+            if filtered.exists():
+                shutil.rmtree(filtered, ignore_errors=True)
+            try:
+                os.replace(staging, filtered)
+            except OSError:
+                # A concurrent run may have published the same copy first.
+                if not _native_vfs_filter_is_current(filtered, signature):
+                    raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    # Copies built from earlier processed classes are never reused; drop them
+    # so repeated pyronaut process runs do not accumulate stale snapshots.
+    for stale in output_dir.glob("classes-native-runtime-*"):
+        if stale != filtered and not stale.name.endswith(".tmp") and stale.is_dir() and not stale.is_symlink():
+            shutil.rmtree(stale, ignore_errors=True)
+    return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
+
+
+def _native_vfs_filter_is_current(filtered: Path, signature: str) -> bool:
     marker = filtered / ".native-vfs-filter"
-    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == signature and filtered.is_dir():
-        return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
-    if filtered.is_dir():
-        return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
-    shutil.copytree(classes, filtered)
+    try:
+        return filtered.is_dir() and marker.read_text(encoding="utf-8").strip() == signature
+    except OSError:
+        return False
+
+
+def _directory_fingerprint(root: Path) -> str:
+    """Fingerprint a directory tree by relative path, size and mtime, plus the VFS file list."""
+    digest = hashlib.sha256()
+    pending = [root]
+    records: list[str] = []
+    while pending:
+        directory = pending.pop()
+        try:
+            children = list(os.scandir(directory))
+        except OSError:
+            continue
+        for child in children:
+            if child.is_dir(follow_symlinks=False):
+                pending.append(Path(child.path))
+                continue
+            try:
+                stat = child.stat()
+            except OSError:
+                continue
+            relative = Path(child.path).relative_to(root).as_posix()
+            records.append(f"{relative}\0{stat.st_size}\0{stat.st_mtime_ns}")
+    for record in sorted(records):
+        digest.update(record.encode("utf-8", "surrogateescape"))
+        digest.update(b"\n")
+    fileslist = root / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / "fileslist.txt"
+    if fileslist.is_file():
+        digest.update(fileslist.read_bytes())
+    return digest.hexdigest()
+
+
+def _filter_embedded_python_vfs(filtered: Path, embedded: set[str]) -> None:
     fileslist = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / "fileslist.txt"
     removed = {f"/META-INF/GRAALPY-VFS/micronaut-application/{name}" for name in embedded}
     if fileslist.is_file():
@@ -1858,8 +1918,6 @@ def _replace_embedded_python_vfs_classes(
         candidate = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / relative
         if candidate.is_file():
             candidate.unlink()
-    marker.write_text(signature, encoding="utf-8")
-    return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
 
 
 def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
