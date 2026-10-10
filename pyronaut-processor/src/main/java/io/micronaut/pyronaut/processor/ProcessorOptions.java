@@ -34,8 +34,19 @@ import java.util.TreeMap;
 
 /** Resolves annotation processor arguments from discovered visitors and application.toml. */
 final class ProcessorOptions {
+    /**
+     * The option switching static compilation of Python on: {@code annotated} or {@code all}.
+     */
+    static final String STATIC_COMPILATION = "micronaut.python.compile.static";
+    /**
+     * The option naming the directory the static compilation report is written to.
+     */
+    static final String STATIC_COMPILATION_REPORT = "micronaut.python.compile.static.report";
     private static final String CACHE_FILE = "annotation-processor-options.properties";
     private static final String OPENAPI_ENABLED = "micronaut.openapi.enabled";
+    private static final String REPORTS_DIR = "reports";
+    private static final String STATIC_COMPILATION_REPORT_DIR = "static-compilation";
+    private static final String STATIC_COMPILATION_TEST_REPORT_DIR = "static-compilation-tests";
     private static final Map<String, String> DEFAULTS = Map.of(
         "micronaut.openapi.views.spec", "swagger-ui.enabled=true,redoc.enabled=true"
     );
@@ -72,9 +83,42 @@ final class ProcessorOptions {
         if (testPass && supported.contains(OPENAPI_ENABLED)) {
             values.put(OPENAPI_ENABLED, "false");
         }
+        String staticCompilation = values.get(STATIC_COMPILATION);
+        if (staticCompilation != null && !"off".equalsIgnoreCase(staticCompilation.trim()) && !values.containsKey(STATIC_COMPILATION_REPORT)) {
+            // the compiler writes its decisions where the page is rendered from, next to the test reports
+            values.put(STATIC_COMPILATION_REPORT, staticCompilationReportDirectory(root, testPass).toString());
+        }
         List<String> result = new ArrayList<>(raw);
         values.forEach((key, value) -> result.add("-A" + key + "=" + value));
         return List.copyOf(result);
+    }
+
+    /**
+     * The directory the static compilation report of a pass is written to unless an option names
+     * another one: {@code reports/static-compilation} of the Pyronaut output directory, or
+     * {@code reports/static-compilation-tests} for the test pass.
+     *
+     * @param root     The project root
+     * @param testPass Whether the options are those of the test pass
+     * @return The directory
+     */
+    static Path staticCompilationReportDirectory(Path root, boolean testPass) {
+        Path output = ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__");
+        return output.resolve(REPORTS_DIR).resolve(testPass ? STATIC_COMPILATION_TEST_REPORT_DIR : STATIC_COMPILATION_REPORT_DIR);
+    }
+
+    /**
+     * @param options The resolved options of a pass
+     * @return The directory the static compilation report is written to, or {@code null} when the pass writes none
+     */
+    static Path staticCompilationReport(List<String> options) {
+        String prefix = "-A" + STATIC_COMPILATION_REPORT + "=";
+        for (String option : options) {
+            if (option.startsWith(prefix) && option.length() > prefix.length()) {
+                return Path.of(option.substring(prefix.length()));
+            }
+        }
+        return null;
     }
 
     private static Set<String> readSupported(Path cacheFile) {
