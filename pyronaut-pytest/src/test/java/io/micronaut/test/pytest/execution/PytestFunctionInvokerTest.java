@@ -19,6 +19,8 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -107,6 +109,35 @@ class PytestFunctionInvokerTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({
+        "example.micronaut.test_test_client, example.micronaut.TestClient",
+        "example.micronaut.test_clients, example.micronaut.test_clients.TestClient",
+        "example.test_support.test_client, example.test_support.TestClient",
+        "example.micronaut.TestClient, example.micronaut.TestClient"
+    })
+    void applicationContextWrapperStripsOnlyMatchingTypeModuleNames(String moduleName, String expectedLookupKey) throws Exception {
+        try (Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .build()) {
+            String testSupport = new String(Objects.requireNonNull(
+                getClass().getClassLoader().getResourceAsStream(
+                    "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+                )
+            ).readAllBytes(), StandardCharsets.UTF_8);
+            context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+            context.getBindings("python").putMember("module_name", moduleName);
+
+            context.eval("python", """
+                TestClient = type("TestClient", (), {"__module__": module_name})
+                wrapper = ApplicationContextWrapper(object())
+                lookup_key = wrapper._python_type_to_lookup_key(TestClient)
+                """);
+
+            assertEquals(expectedLookupKey, context.getBindings("python").getMember("lookup_key").asString());
+        }
+    }
+
     @Test
     void applicationContextWrapperFallsBackToTheGeneratedPackageOfAPythonClass() throws Exception {
         try (Context context = Context.newBuilder("python")
@@ -166,10 +197,14 @@ class PytestFunctionInvokerTest {
                 EmbeddedServer = _MicronautJavaType("java.lang.String", True)
                 wrapper = ApplicationContextWrapper(object())
                 _, lookup_key = wrapper._resolve_bean_key(EmbeddedServer)
+                _, string_lookup_key = wrapper._resolve_bean_key("java.lang.String")
+                _, foreign_lookup_key = wrapper._resolve_bean_key(java.type("java.lang.String"))
                 """);
 
             String lookupKey = context.getBindings("python").getMember("lookup_key").asString();
             assertEquals("java.lang.String", lookupKey);
+            assertEquals("java.lang.String", context.getBindings("python").getMember("string_lookup_key").asString());
+            assertEquals("java.lang.String", context.getBindings("python").getMember("foreign_lookup_key").asString());
         }
     }
 
