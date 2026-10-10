@@ -16,13 +16,18 @@
 package io.micronaut.pyronaut.config.model;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautHomeTest {
 
@@ -72,6 +77,111 @@ class PyronautHomeTest {
             properties("Linux", Map.of()),
             Map.of("HOME", ENV_HOME.toString(), PyronautHome.ENV, "~/state")
         ));
+    }
+
+    @Test
+    void defaultLayoutOutsideLinuxKeepsEverythingUnderDotPyronaut(@TempDir Path home) {
+        Map<String, String> env = Map.of("HOME", home.toString());
+        UnaryOperator<String> props = properties("Mac OS X", Map.of());
+        assertFalse(PyronautHome.xdgEnabled(props, env));
+        assertEquals(home.resolve(".pyronaut"), PyronautHome.configHome(props, env));
+        assertEquals(home.resolve(".pyronaut"), PyronautHome.cacheHome(props, env));
+        assertEquals(home.resolve(".pyronaut"), PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void freshLinuxInstallationDefaultsToXdg(@TempDir Path home) {
+        Map<String, String> env = Map.of("HOME", home.toString());
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertTrue(PyronautHome.xdgEnabled(props, env));
+        assertEquals(home.resolve(".config/pyronaut"), PyronautHome.configHome(props, env));
+        assertEquals(home.resolve(".cache/pyronaut"), PyronautHome.cacheHome(props, env));
+        assertEquals(home.resolve(".local/share/pyronaut"), PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void xdgBaseVariableEnablesXdgByDefaultOnAnyPlatform(@TempDir Path home) {
+        UnaryOperator<String> props = properties("Mac OS X", Map.of());
+        assertTrue(PyronautHome.xdgEnabled(props,
+            Map.of("HOME", home.toString(), "XDG_DATA_HOME", home.resolve("data").toString())));
+        assertFalse(PyronautHome.xdgEnabled(props, Map.of("HOME", home.toString(), "XDG_DATA_HOME", "relative")));
+    }
+
+    @Test
+    void existingDotPyronautKeepsItsLayoutOnLinux(@TempDir Path home) throws IOException {
+        Files.createDirectories(home.resolve(".pyronaut"));
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        Map<String, String> env = Map.of("HOME", home.toString(), "XDG_CONFIG_HOME", home.resolve("cfg").toString());
+        assertFalse(PyronautHome.xdgEnabled(props, env));
+        assertEquals(home.resolve(".pyronaut"), PyronautHome.dataHome(props, env));
+        assertTrue(PyronautHome.xdgEnabled(props, Map.of("HOME", home.toString(), PyronautHome.XDG_ENV, "true")));
+    }
+
+    @Test
+    void xdgConfigFolderEnablesTheXdgLayout(@TempDir Path home) throws IOException {
+        Files.createDirectories(home.resolve(".config").resolve("pyronaut"));
+        Map<String, String> env = Map.of("HOME", home.toString());
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertTrue(PyronautHome.xdgEnabled(props, env));
+        assertEquals(home.resolve(".config/pyronaut"), PyronautHome.configHome(props, env));
+        assertEquals(home.resolve(".cache/pyronaut"), PyronautHome.cacheHome(props, env));
+        assertEquals(home.resolve(".local/share/pyronaut"), PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void xdgBaseDirectoriesAreHonoured(@TempDir Path root) throws IOException {
+        Path config = Files.createDirectories(root.resolve("cfg").resolve("pyronaut")).getParent();
+        Map<String, String> env = Map.of(
+            "HOME", root.resolve("home").toString(),
+            "XDG_CONFIG_HOME", config.toString(),
+            "XDG_CACHE_HOME", root.resolve("cache").toString(),
+            "XDG_DATA_HOME", "relative/data"
+        );
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertEquals(config.resolve("pyronaut"), PyronautHome.configHome(props, env));
+        assertEquals(root.resolve("cache/pyronaut"), PyronautHome.cacheHome(props, env));
+        // Relative XDG values are ignored, as the specification requires.
+        assertEquals(root.resolve("home/.local/share/pyronaut"), PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void xdgEnvironmentFlagOverridesTheMarker(@TempDir Path home) throws IOException {
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertTrue(PyronautHome.xdgEnabled(props, Map.of("HOME", home.toString(), PyronautHome.XDG_ENV, "true")));
+        Files.createDirectories(home.resolve(".config").resolve("pyronaut"));
+        Map<String, String> disabled = Map.of("HOME", home.toString(), PyronautHome.XDG_ENV, "false");
+        assertFalse(PyronautHome.xdgEnabled(props, disabled));
+        assertEquals(home.resolve(".pyronaut"), PyronautHome.configHome(props, disabled));
+    }
+
+    @Test
+    void explicitPyronautHomeOverridesXdgAndExportedDirectories(@TempDir Path home) throws IOException {
+        Files.createDirectories(home.resolve(".config").resolve("pyronaut"));
+        Path state = home.resolve("state");
+        Map<String, String> env = Map.of(
+            "HOME", home.toString(),
+            PyronautHome.ENV, state.toString(),
+            PyronautHome.CACHE_DIR_ENV, home.resolve("exported-cache").toString()
+        );
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertFalse(PyronautHome.xdgEnabled(props, env));
+        assertEquals(state, PyronautHome.configHome(props, env));
+        assertEquals(state, PyronautHome.cacheHome(props, env));
+        assertEquals(state, PyronautHome.dataHome(props, env));
+    }
+
+    @Test
+    void exportedDirectoriesWinOverTheDetectedLayout(@TempDir Path home) {
+        Map<String, String> env = Map.of(
+            "HOME", home.toString(),
+            PyronautHome.CONFIG_DIR_ENV, home.resolve("c").toString(),
+            PyronautHome.CACHE_DIR_ENV, home.resolve("k").toString(),
+            PyronautHome.DATA_DIR_ENV, home.resolve("d").toString()
+        );
+        UnaryOperator<String> props = properties("Linux", Map.of());
+        assertEquals(home.resolve("c"), PyronautHome.configHome(props, env));
+        assertEquals(home.resolve("k"), PyronautHome.cacheHome(props, env));
+        assertEquals(home.resolve("d"), PyronautHome.dataHome(props, env));
     }
 
     private static UnaryOperator<String> properties(String osName, Map<String, String> extra) {

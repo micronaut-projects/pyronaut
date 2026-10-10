@@ -213,7 +213,7 @@ final class PythonIdeStubGenerator {
     private static Path sharedCacheDirectory(String state) {
         String configured = System.getProperty(SHARED_CACHE_DIR_PROPERTY);
         Path root = configured == null || configured.isBlank()
-            ? PyronautHome.pyronautHome().resolve(SHARED_CACHE_DIR_NAME)
+            ? PyronautHome.cacheHome().resolve(SHARED_CACHE_DIR_NAME)
             : Path.of(configured);
         return root.resolve(state.substring(0, 2)).resolve(state).normalize();
     }

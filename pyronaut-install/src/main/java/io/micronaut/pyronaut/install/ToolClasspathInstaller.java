@@ -552,7 +552,7 @@ final class ToolClasspathInstaller {
             configured = System.getenv(CACHE_DIR_ENV);
         }
         return configured == null || configured.isBlank()
-            ? PyronautHome.pyronautHome().resolve(TOOLS_DIR)
+            ? PyronautHome.dataHome().resolve(TOOLS_DIR)
             : Path.of(configured).toAbsolutePath().normalize();
     }
 
