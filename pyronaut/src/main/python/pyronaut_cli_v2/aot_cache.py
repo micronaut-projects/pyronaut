@@ -4,7 +4,7 @@ With ``tool.pyronaut.toolchain.aot-cache = true``, the first launch of a JVM
 tool is a training run (``-XX:AOTMode=record``). Once it exits, the cache is
 created in the background, and later launches with the same JVM, options and
 class path start from it (``-XX:AOTCache``). Caches live in
-``~/.pyronaut/caches/aot``, one slot per tool (and per project for the
+``caches/aot`` under the Pyronaut cache directory (``~/.pyronaut`` by default), one slot per tool (and per project for the
 application JVMs of ``dev``, ``run`` and ``test``); a slot keeps only the cache
 for its current key.
 
@@ -51,7 +51,10 @@ _JAVA_VERSION_LINE = re.compile(r'^JAVA_VERSION="(\d+)', re.MULTILINE)
 
 
 def cache_root() -> Path:
-    return Path.home() / ".pyronaut" / "caches" / "aot"
+    # Imported here: in script mode this module has no package.
+    from .home import cache_home
+
+    return cache_home() / "caches" / "aot"
 
 
 @dataclass

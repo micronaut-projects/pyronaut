@@ -182,7 +182,7 @@ class AutoInstallTest(unittest.TestCase):
 
         self.assertEqual(["process", "run"], self._commands())
         self.assertIn(
-            "skipped install ([install] auto = false in ~/.pyronaut/settings.toml), run pyronaut install",
+            f"skipped install ([install] auto = false in {cli._settings_label()}), run pyronaut install",
             self.output.getvalue(),
         )
 

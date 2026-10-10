@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.install;
 import io.micronaut.pyronaut.config.model.ControlPanelFeature;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
+import io.micronaut.pyronaut.config.model.PyronautHome;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.testresources.buildtools.MavenDependency;
 import io.micronaut.testresources.buildtools.ModuleIdentifier;
@@ -1715,7 +1716,7 @@ final class MavenClasspathResolver {
         if (configuredLocalRepo != null && !configuredLocalRepo.isBlank()) {
             return Path.of(configuredLocalRepo).toAbsolutePath().normalize();
         }
-        return Path.of(System.getProperty("user.home"), ".m2", "repository");
+        return PyronautHome.userHome().resolve(".m2").resolve("repository");
     }
 
     private ResolvedEditorArtifact toResolvedEditorArtifact(Artifact artifact,
