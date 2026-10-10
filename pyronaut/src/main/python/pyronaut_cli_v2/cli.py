@@ -48,7 +48,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "update", "doctor", "clean", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "update", "doctor", "clean", "install", "lock", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -458,6 +458,10 @@ def run(
         _print_build_usage()
         return SUCCESS
 
+    if command == "lock" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_lock_usage()
+        return SUCCESS
+
     if _extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h"):
         _print_usage()
         return SUCCESS
@@ -578,6 +582,14 @@ def run(
         process_runner=process_runner,
         project_dir=Path(project_dir),
     )
+
+    if command == "lock":
+        return _run_lock(
+            forwarded_args,
+            execute,
+            locate,
+            java_home_provider=effective_java_home_provider,
+        )
 
     if command == "build":
         if _looks_like_direct_build_invocation(forwarded_args):
@@ -2601,6 +2613,8 @@ def _has_direct_install_sources(args: Sequence[str]) -> bool:
         "--scope",
         "--progress",
         "--color",
+        "--lock-file",
+        "--lock-repository",
     }
     skip_next = False
     for token in args:
@@ -9335,7 +9349,7 @@ def _is_supported_project_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|lock|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_create_usage(stream=None) -> None:
@@ -9357,11 +9371,13 @@ def _print_setup_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--xdg] "
+        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--locked] [--xdg] "
         "[--progress <auto|on|off>] [--allow-draft-release]\n"
     )
     stream.write("Provision the global Pyronaut SDK toolchain, GraalPy interpreter, launchers, and native compiler classpaths.\n")
     stream.write("\nOptions:\n")
+    stream.write("      --locked   Resolve the SDK Maven artifacts again and require each one to be listed, with a\n")
+    stream.write("                 matching checksum, in the pyronaut.lock of the current directory.\n")
     stream.write("      --xdg      Switch an existing ~/.pyronaut installation to the XDG base directory layout:\n")
     stream.write("                 configuration in $XDG_CONFIG_HOME/pyronaut, caches in $XDG_CACHE_HOME/pyronaut and\n")
     stream.write("                 data in $XDG_DATA_HOME/pyronaut. New installations use it by default on Linux or\n")
@@ -9635,7 +9651,7 @@ def _cached_native_image(
 
 def _validate_setup_arguments(args: Sequence[str]) -> None:
     value_options = {"--local-repository", "--local-repo", "--progress"}
-    flag_options = {"--offline", "--refresh", "--xdg"}
+    flag_options = {"--offline", "--refresh", "--locked", "--xdg"}
     index = 0
     while index < len(args):
         token = args[index]
@@ -9715,7 +9731,9 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
         with _native_image_cache_lock(lock_path):
-            if not refresh:
+            # A locked setup resolves again so every SDK artifact is checked
+            # against pyronaut.lock, also when the SDK is already set up.
+            if not refresh and not _extract_flag(args, "--locked"):
                 try:
                     _read_valid_setup_manifest(args)
                 except RuntimeError:
@@ -9774,31 +9792,17 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                         "\n".join(entries) + "\n", encoding="utf-8"
                     )
 
-                command_line = [
-                    str(installer),
-                    "--resolve-tools-only",
-                    "--native-classpaths-dir",
-                    str(request_dir),
-                    "--local-repository",
-                    str(local_repository),
-                ]
-                for repository in expectation["repositories"]:
-                    command_line.extend(["--repository", str(repository)])
-                if offline:
-                    command_line.append("--offline")
-                if refresh:
-                    command_line.append("--refresh")
-                # The nested installer renders its own per-artifact progress
-                # directly on the terminal, so the setup spinner is suspended
-                # while it runs.
-                command_line.extend(["--progress", _extract_option_value(args, "--progress") or "auto"])
-                env = _terminal_environment(dict(os.environ))
-                env["JAVA_HOME"] = java_home
-                java_bin = str(Path(java_home) / "bin")
-                env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
-                packaged_tools = Path(__file__).resolve().parent / "tools"
-                env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
-                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(_data_home() / "tools")
+                command_line, env = _sdk_tool_resolution_invocation(
+                    installer,
+                    request_dir,
+                    local_repository,
+                    expectation["repositories"],
+                    java_home,
+                    offline=offline,
+                    refresh=refresh,
+                    progress_mode=_extract_option_value(args, "--progress") or "auto",
+                    locked=_extract_flag(args, "--locked"),
+                )
                 with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"):
                     with progress.suspend():
                         install_code = runner(command_line, env)
@@ -9859,6 +9863,211 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+def _sdk_tool_resolution_invocation(
+    installer: str | Path,
+    request_dir: Path,
+    local_repository: str | Path,
+    repositories: Sequence[object],
+    java_home: str,
+    *,
+    offline: bool,
+    refresh: bool,
+    progress_mode: str,
+    locked: bool = False,
+    lock_args: Sequence[str] = (),
+) -> tuple[list[str], dict[str, str]]:
+    """The pyronaut-install invocation resolving the SDK launcher classpaths."""
+    command_line = [
+        str(installer),
+        "--resolve-tools-only",
+        "--native-classpaths-dir",
+        str(request_dir),
+        "--local-repository",
+        str(local_repository),
+    ]
+    for repository in repositories:
+        command_line.extend(["--repository", str(repository)])
+    if offline:
+        command_line.append("--offline")
+    if refresh:
+        command_line.append("--refresh")
+    if locked:
+        command_line.append("--locked")
+    command_line.extend(lock_args)
+    # The nested installer renders its own per-artifact progress
+    # directly on the terminal, so the setup spinner is suspended
+    # while it runs.
+    command_line.extend(["--progress", progress_mode])
+    env = _terminal_environment(dict(os.environ))
+    env["JAVA_HOME"] = java_home
+    java_bin = str(Path(java_home) / "bin")
+    env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
+    env["PYRONAUT_TOOLS_CACHE_DIR"] = str(_data_home() / "tools")
+    return command_line, env
+
+
+# -- pyronaut lock -----------------------------------------------------------
+#
+# `pyronaut lock` records every Maven artifact that `pyronaut setup`,
+# `pyronaut install` and `pyronaut build` resolve for a project into
+# pyronaut.lock, with the repository it came from and its SHA-256 checksum.
+# pyronaut-install does the recording: the SDK launcher classpaths are
+# resolved first (when this wheel needs `pyronaut setup`), then the project
+# scopes, both into one temporary lock that replaces pyronaut.lock only once
+# everything resolved.
+
+LOCK_FILE_NAME = "pyronaut.lock"
+
+
+def _print_lock_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut lock [--project-dir <dir>] [--local-repository <dir>] [--offline] [--check] "
+        "[--progress <auto|on|off>]\n"
+    )
+    stream.write(
+        "Write pyronaut.lock: every Maven artifact needed by setup, install and build, "
+        "with its repository URL and SHA-256 checksum.\n"
+    )
+    stream.write("  --check   Fail when pyronaut.lock is missing or out of date instead of writing it.\n")
+
+
+def _validate_lock_arguments(args: Sequence[str]) -> None:
+    value_options = {"--project-dir", "--local-repository", "--local-repo", "--progress", "--color"}
+    flag_options = {"--offline", "--check"}
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in value_options:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token in flag_options:
+            index += 1
+            continue
+        raise ValueError(f"Unknown pyronaut lock option: {token}")
+    progress = _extract_option_value(args, "--progress")
+    if progress is not None and progress not in {"auto", "on", "off"}:
+        raise ValueError("Invalid value for --progress. Use auto, on, or off")
+
+
+def _record_sdk_lock(
+    lock_args: Sequence[str],
+    runner: RunnerWithEnv,
+    *,
+    offline: bool,
+    progress_mode: str,
+) -> int:
+    """Records the SDK launcher classpaths `pyronaut setup` resolves."""
+    manifest = _read_valid_setup_manifest([])
+    installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
+    if installer is None or not _is_executable_file(installer):
+        raise RuntimeError("Installed Pyronaut wheel is missing executable pyronaut-install")
+    images = manifest.get("images")
+    if not isinstance(images, dict):
+        raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    with tempfile.TemporaryDirectory(prefix=".lock-") as temp_dir:
+        request_dir = Path(temp_dir) / "native-classpaths"
+        request_dir.mkdir()
+        for image_name in _SETUP_IMAGE_COMMANDS:
+            image = images.get(image_name)
+            executable = image.get("executable") if isinstance(image, dict) else None
+            if not isinstance(executable, str):
+                raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+            entries = _native_compile_descriptor_entries(executable)
+            (request_dir / f"{image_name}.tsv").write_text("\n".join(entries) + "\n", encoding="utf-8")
+        command_line, env = _sdk_tool_resolution_invocation(
+            installer,
+            request_dir,
+            _setup_local_repository([]),
+            list(manifest.get("repositories") or []),
+            str(manifest["javaHome"]),
+            offline=offline,
+            refresh=False,
+            progress_mode=progress_mode,
+            lock_args=lock_args,
+        )
+        return runner(command_line, env) or SUCCESS
+
+
+def _run_lock(
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    *,
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    try:
+        _validate_lock_arguments(args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    if not (project_dir / "pyproject.toml").is_file():
+        if _is_external_build_project(project_dir):
+            print(
+                "pyronaut lock does not support Maven or Gradle projects; use the build tool's own "
+                "dependency locking and checksum verification.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"pyronaut lock requires a pyproject.toml in {project_dir}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    offline = _extract_offline(args)
+    check = _extract_flag(args, "--check")
+    progress_mode = _extract_option_value(args, "--progress") or "auto"
+    lock_path = project_dir / LOCK_FILE_NAME
+    with tempfile.TemporaryDirectory(prefix=".pyronaut-lock-", dir=project_dir) as temp_dir:
+        recorded = Path(temp_dir) / LOCK_FILE_NAME
+        lock_args = ["--write-lock", "--lock-file", str(recorded)]
+        if _setup_is_required():
+            try:
+                code = _record_sdk_lock(lock_args, runner, offline=offline, progress_mode=progress_mode)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
+            if code != SUCCESS:
+                return code
+        install_args = [
+            "--project-dir",
+            str(project_dir),
+            *_local_repository_install_args(_extract_local_repository(args)),
+            *lock_args,
+            "--progress",
+            progress_mode,
+        ]
+        color = _extract_option_value(args, "--color")
+        if color is not None:
+            install_args.extend(["--color", color])
+        if offline:
+            install_args.append("--offline")
+        code = _delegate("install", install_args, runner, resolver, java_home_provider=java_home_provider)
+        if code != SUCCESS:
+            return code
+        if not recorded.is_file():
+            print("pyronaut-install did not record a dependency lock", file=sys.stderr)
+            return PRECONDITION_FAILED
+        contents = recorded.read_text(encoding="utf-8")
+        count = sum(1 for line in contents.splitlines() if line == "[[artifact]]")
+        if check:
+            existing = lock_path.read_text(encoding="utf-8") if lock_path.is_file() else None
+            if existing != contents:
+                state = "missing" if existing is None else "out of date"
+                print(f"{lock_path} is {state}. Run `pyronaut lock` to update it.", file=sys.stderr)
+                return PRECONDITION_FAILED
+            print(f"{lock_path} is up to date ({count} artifacts)")
+            return SUCCESS
+        os.replace(recorded, lock_path)
+    print(f"Wrote {lock_path} ({count} artifacts)")
+    return SUCCESS
 
 
 # -- pyronaut update ---------------------------------------------------------

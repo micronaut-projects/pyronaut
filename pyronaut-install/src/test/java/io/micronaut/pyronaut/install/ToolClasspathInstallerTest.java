@@ -60,6 +60,30 @@ final class ToolClasspathInstallerTest {
     }
 
     @Test
+    void recordsToolArtifactsIntoALockAlsoWhenTheLayoutIsComplete(@TempDir Path tempDir) throws Exception {
+        Path packagedTools = packagedTools(tempDir);
+        Path localRepository = tempDir.resolve("repository");
+        writeArtifact(localRepository, "com.example", "external", "1.0", new byte[]{1, 2, 3});
+        writeTool(packagedTools, "pyronaut-run", List.of("maven\tcom.example\texternal\t1.0\tjar\t\texternal-1.0.jar"));
+        ToolClasspathInstaller installer = new ToolClasspathInstaller(new MavenClasspathResolver(), packagedTools, tempDir.resolve("cache"));
+        installer.install(null, localRepository, true, false);
+
+        Path lockFile = tempDir.resolve(DependencyLock.FILE_NAME);
+        DependencyLock lock = DependencyLock.open(lockFile, true, false, null);
+        DependencyLock.activate(lock);
+        try {
+            installer.install(null, localRepository, true, false);
+            lock.write();
+        } finally {
+            DependencyLock.activate(null);
+        }
+
+        List<DependencyLock.Entry> entries = DependencyLock.read(lockFile);
+        assertEquals(List.of("com/example/external/1.0/external-1.0.jar"), entries.stream().map(DependencyLock.Entry::path).toList());
+        assertEquals(DependencyLock.LOCAL_REPOSITORY, entries.getFirst().repository());
+    }
+
+    @Test
     void repairsCorruptLayoutsAndPublishesRefreshesAtomically(@TempDir Path tempDir) throws Exception {
         Path packagedTools = packagedTools(tempDir);
         writeTool(packagedTools, "pyronaut-run", List.of("bundled\tmicronaut-pyronaut-run-1.0.jar"));

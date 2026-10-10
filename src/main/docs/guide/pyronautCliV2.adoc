@@ -84,7 +84,7 @@ Provisions the complete SDK before any project command runs:
 
 [source,bash]
 ----
-pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--progress <auto|on|off>]
+pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--locked] [--progress <auto|on|off>]
 ----
 
 Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAVA_HOME` or a preinstalled Java runtime.
@@ -106,6 +106,7 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 
 `--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK, GraalPy, and native images.
 `--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
+`--locked` resolves the SDK launcher classpaths again and requires every Maven artifact to be listed, with a matching checksum, in the `pyronaut.lock` of the current directory; see <<dependencyLocking,Locking Maven Dependencies>>.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
 
 === `pyronaut update`
@@ -293,6 +294,11 @@ Common options:
 - `--no-python-deps`: use the existing GraalPy `.venv` without installing Python dependencies (see <<python-self-managed-venv,Managing `.venv` yourself>>)
 - `--no-cache`: bypass Pyronaut manifest cache reads before rewriting manifests
 - `--offline`: resolve using offline repository mode
+- `--locked`: require every resolved Maven artifact to be listed in `pyronaut.lock` with a matching checksum (also `PYRONAUT_LOCKED=true`)
+- `--lock-repository <dir>`: resolve only from this directory of locked artifacts in Maven repository layout; implies `--locked` (also `PYRONAUT_LOCK_REPOSITORY`)
+- `--lock-file <file>`: the lock file to verify against (default `pyronaut.lock` in the project directory, or `PYRONAUT_LOCK_FILE`)
+
+When `pyronaut.lock` exists, every resolved artifact it lists must match its recorded checksum; see <<dependencyLocking,Locking Maven Dependencies>>.
 
 When several scopes are selected, their Maven resolutions run in parallel. On an interactive terminal,
 `pyronaut install` renders one live row per scope (`Collecting …` while the dependency graph is read,
@@ -410,6 +416,19 @@ Annotation processor options:
 - Existing user-managed `#:schema ...` directives at the top of `pyproject.toml` are left untouched.
 - Existing user-managed `#:schema ...` directives at the top of `application.toml` in the configured resources directory are left untouched.
 - Pyronaut removes older generated `.taplo.toml` files from previous installs to avoid conflicting schema associations. It leaves user-managed `.taplo.toml` files untouched.
+
+=== `pyronaut lock`
+
+Records every Maven artifact that `pyronaut setup`, `pyronaut install`, and `pyronaut build` resolve for the project into `pyronaut.lock`, with its repository URL and SHA-256 checksum:
+
+[source,bash]
+----
+pyronaut lock [--project-dir <dir>] [--local-repository <dir>] [--offline] [--check] [--progress <auto|on|off>]
+----
+
+`pyronaut.lock` is replaced only when every artifact resolved. `--check` writes nothing and exits with code `8` when `pyronaut.lock` is missing or out of date.
+`--offline` records from the local repository without downloading.
+See <<dependencyLocking,Locking Maven Dependencies>> for the file format, checksum verification, and locked resolution.
 
 === `pyronaut process`
 
@@ -1169,6 +1188,9 @@ ASCII set for the Java tools.
 == Environment variables
 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
+- `PYRONAUT_LOCKED=true`: requires every resolved Maven artifact to be listed in `pyronaut.lock`, for every command that installs dependencies; see <<dependencyLocking,Locking Maven Dependencies>>.
+- `PYRONAUT_LOCK_REPOSITORY=<dir>`: resolves Maven artifacts only from this directory of locked artifacts; implies `PYRONAUT_LOCKED`.
+- `PYRONAUT_LOCK_FILE=<file>`: uses this lock file instead of `pyronaut.lock` in the project directory.
 - `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `dev` and `test`.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides the GraalPy interpreter that `pyronaut setup` recorded for delegated commands, and the Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.

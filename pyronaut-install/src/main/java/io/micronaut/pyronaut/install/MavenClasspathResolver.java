@@ -309,9 +309,12 @@ final class MavenClasspathResolver {
         // Keep repository identities in offline mode so Maven Resolver's
         // enhanced local repository manager can match _remote.repositories
         // provenance. The offline session still prohibits every download.
-        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory);
+        DependencyLock lock = DependencyLock.current();
+        List<RemoteRepository> repositories = lock.repositories(
+            toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
+        );
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
             List<ArtifactRequest> requests = artifacts.stream()
                 .map(artifact -> new ArtifactRequest(artifact, repositories, null))
                 .toList();
@@ -320,13 +323,15 @@ final class MavenClasspathResolver {
                 progressListener.begin();
                 artifacts.forEach(artifact -> progressListener.artifactPlanned(artifact.toString()));
             }
-            return repositorySystem.resolveArtifacts(session, requests).stream()
+            List<Path> resolved = repositorySystem.resolveArtifacts(session, requests).stream()
                 .map(ArtifactResult::getArtifact)
                 .map(Artifact::getPath)
                 .filter(Objects::nonNull)
                 .map(Path::toAbsolutePath)
                 .map(Path::normalize)
                 .toList();
+            lock.check();
+            return resolved;
         } catch (ArtifactResolutionException e) {
             if (progressListener != null) {
                 e.getResults().stream()
@@ -351,6 +356,7 @@ final class MavenClasspathResolver {
             if (proxyConfiguration != null) {
                 details += " (proxy " + proxyConfiguration.summary() + ")";
             }
+            details += lock.resolutionHint();
             throw new PyprojectModelException("Failed to resolve required Pyronaut tool runtime artifacts" + mode + details, e);
         }
     }
@@ -368,9 +374,12 @@ final class MavenClasspathResolver {
         // recorded origin repository (_remote.repositories) is part of the request,
         // so dropping the remote repositories would reject previously downloaded
         // artifacts. The offline session still prohibits every download.
-        List<RemoteRepository> repositories = toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory);
+        DependencyLock lock = DependencyLock.current();
+        List<RemoteRepository> repositories = lock.repositories(
+            toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
+        );
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
             if (progressListener != null) progressListener.reset();
             Map<String, String> managedVersions = new LinkedHashMap<>();
@@ -504,6 +513,7 @@ final class MavenClasspathResolver {
                 .map(artifact -> toResolvedEditorArtifact(artifact, repositories, session))
                 .toList();
             validateProductionControlPanelSecurity(model, scope, result);
+            lock.check();
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
         } catch (DependencyResolutionException | DependencyCollectionException e) {
             String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage()
@@ -511,6 +521,7 @@ final class MavenClasspathResolver {
             if (proxyConfiguration != null) {
                 message = message + " (proxy " + proxyConfiguration.summary() + ")";
             }
+            message = message + lock.resolutionHint();
             throw new PyprojectModelException(message, e);
         }
     }
@@ -1449,9 +1460,25 @@ final class MavenClasspathResolver {
                                         boolean offline,
                                         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration,
                                         boolean forceUpdates,
-                                        DependencyProgressListener progressListener) {
+                                        DependencyProgressListener progressListener,
+                                        DependencyLock lock) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        if (lock.repository() != null) {
+            // The lock repository is a local directory: it stays usable when
+            // the session is offline, which is how air-gapped builds run.
+            sessionBuilder.setConfigProperty("aether.offline.repositories", DependencyLock.LOCK_REPOSITORY_ID);
+        }
+        if (lock.active()) {
+            sessionBuilder.withRepositoryListener(new AbstractRepositoryListener() {
+                @Override
+                public void artifactResolved(RepositoryEvent event) {
+                    if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
+                        lock.artifactResolved(event.getArtifact(), event.getRepository());
+                    }
+                }
+            });
+        }
         // The supplier's default policy treats a missing POM as an empty
         // descriptor, so a JAR cached without its POM (or one whose POM cannot
         // be fetched, for example offline) silently loses every transitive
