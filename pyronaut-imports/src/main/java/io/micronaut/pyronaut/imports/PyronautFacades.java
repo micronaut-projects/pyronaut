@@ -53,7 +53,7 @@ public final class PyronautFacades implements PythonImportMapper {
 
     @Override
     public List<PythonModuleMapping> getMappings() {
-        return List.of(http(), httpStatus(), httpClient(), inject(), serde(), validation(), data(), tx(), security(),
+        return List.of(http(), httpStatus(), httpClient(), context(), serde(), validation(), data(), tx(), security(),
             securityJwt(), securityOauth2(), scheduling(), reactive(), kafka(), rabbitmq(), jms(), mqtt(), email(),
             websocket(), tracing(), micrometer(), objectStorage(), graphql(), mcp(), openapi(), cache(), retry(),
             views(), management());
@@ -121,12 +121,12 @@ public final class PyronautFacades implements PythonImportMapper {
             .build();
     }
 
-    private static PythonModuleMapping inject() {
-        return PythonModuleMapping.builder("pyronaut.inject")
+    private static PythonModuleMapping context() {
+        return PythonModuleMapping.builder("pyronaut.context")
             .documentation("""
-                Dependency injection: the scopes and qualifiers (Singleton, Prototype, Named, Refreshable,
-                RequestScope, ...), the bean definition annotations (Factory, Bean, Requires, Value,
-                ConfigurationProperties, ...), lifecycle (PostConstruct, PreDestroy), application events
+                The application context and dependency injection: the scopes and qualifiers (Singleton, Prototype,
+                Named, Refreshable, RequestScope, ...), the bean definition annotations (Factory, Bean, Requires,
+                Value, ConfigurationProperties, ...), lifecycle (PostConstruct, PreDestroy), application events
                 (EventListener, StartupEvent, ...), the context types (ApplicationContext, BeanContext, Environment,
                 MessageSource, ResourceLoader, Argument, ...) and the core annotations (Introspected, Nullable, ...).""")
             .javaPackage("jakarta.inject")

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from pyronaut import http, inject, serde, validation
+from pyronaut import context, http, serde, validation
 
 
 @serde.Serdeable
@@ -12,7 +12,7 @@ class Person:
     telephone: Annotated[str | None, validation.Pattern(regexp=r"\d{10}")] = None
 
 
-@inject.Singleton
+@context.Singleton
 class PeopleService:
     def find(self, name: str) -> Person | None:
         return Person(name=name, age=42) if name != "nobody" else None
