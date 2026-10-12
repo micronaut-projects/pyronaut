@@ -18,11 +18,13 @@ package io.micronaut.pyronaut.dev;
 import io.micronaut.dev.MicronautDevMain;
 import io.micronaut.dev.compile.SourceCompiler;
 import io.micronaut.dev.compile.SourceKind;
+import io.micronaut.dev.loader.DevClassLoader;
 import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyronautRuntimeProperties;
+import io.micronaut.pyronaut.config.output.ProcessedOutputLock;
 import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.pyronaut.test.PyronautTestMain;
@@ -87,6 +89,12 @@ public final class PyronautTestReload extends MicronautDevMain {
      */
     static final String PYTHON_SOURCES_PROPERTY = "pyronaut.dev.test.python-sources";
 
+    /**
+     * The port of test mode's LiveReload server, which serves the live HTML report: the one after that of development
+     * mode's, {@code 35729}, so that {@code pyronaut dev} and {@code pyronaut test -t} run at once.
+     */
+    static final int LIVERELOAD_PORT = 35730;
+
     private static final String TEST_DIR = "test";
     private static final String CLASSES_DIR = "classes";
     private static final String TEST_CLASSES_DIR = "test-classes";
@@ -95,8 +103,7 @@ public final class PyronautTestReload extends MicronautDevMain {
     private static final String RUNTIME_DEPENDENCIES_MANIFEST = "resolved-runtime-dependencies";
     private static final String TEST_DEPENDENCIES_MANIFEST = "resolved-test-dependencies";
     private static final String TEST_PROCESSOR_OPTIONS = "resolved-test-processor-options";
-    private static final String PROCESSOR_HASHES = "processor-%s.sha256";
-    private static final String PROCESSOR_INCREMENTAL = "incremental/%s";
+    private static final String[] PASSES = {"main", TEST_DIR};
     private static final int TESTS_FAILED = 7;
     private static final int PRECONDITION_FAILED = 8;
 
@@ -161,6 +168,14 @@ public final class PyronautTestReload extends MicronautDevMain {
         return LauncherProcessorState.releasingAfterCompilation(super.createCompilers(manifest));
     }
 
+    @Override
+    protected DevClassLoader createClassLoader(DevManifest manifest) {
+        // under the runtime's own lock of the processed classes: a pyronaut process that ran after prepare released
+        // the lock, and before the runtime took it, wrote its state again
+        DevReloadFiles.forgetProcessorStateUnchecked(manifest.projectDir().resolve(DevReloadFiles.PYRONAUT_DIR), PASSES);
+        return super.createClassLoader(manifest);
+    }
+
     /**
      * Whether the CLI asked the native image's test command for test mode, {@code -Dpyronaut.test.reload=true}.
      *
@@ -196,31 +211,32 @@ public final class PyronautTestReload extends MicronautDevMain {
      */
     static Path prepare(Layout layout, List<String> tests) throws IOException {
         Path pyronautDir = layout.root().resolve(DevReloadFiles.PYRONAUT_DIR);
-        // from here on the development runtime writes the processed classes and the tests': the next pyronaut process
-        // must not take them for its own output, by its source fingerprint or its incremental state
-        for (String pass : List.of("main", TEST_DIR)) {
-            Files.deleteIfExists(pyronautDir.resolve(PROCESSOR_HASHES.formatted(pass)));
-            DevReloadFiles.deleteRecursively(pyronautDir.resolve(PROCESSOR_INCREMENTAL.formatted(pass)));
-        }
-        // the test pass compiles the application with the tests, into the tests' output, where the copy would hide a
-        // change of the application from the tests: the development runtime compiles the tests alone, against the
-        // processed classes, when it starts
-        DevReloadFiles.deleteRecursively(layout.testClasses());
-        DevReloadFiles.deleteRecursively(pyronautDir.resolve(TEST_SOURCES_DIR));
         Files.createDirectories(layout.reports());
         Path devDir = Files.createDirectories(pyronautDir.resolve(DevReloadFiles.DEV_DIR).resolve(TEST_DIR));
         Files.deleteIfExists(devDir.resolve(PyronautDevReload.RELAUNCH_MARKER));
-        List<Path> buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
-        return writeManifest(layout, devDir,
-            DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST)),
-            DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)),
-            // in a native image the processors the image holds run from it, as pyronaut process runs them there
-            DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies),
-            DevReloadFiles.withOpenApiAdoc(
-                DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), layout.pythonBytecode()),
-                buildDependencies),
-            options(pyronautDir),
-            filterPatterns(tests));
+        // under the lock of the processed classes, which pyronaut process holds while it writes them and their
+        // options, as pyronaut dev may run it for a launch of its own meanwhile
+        try (ProcessedOutputLock.Hold hold = ProcessedOutputLock.lock(layout.classes(), () -> { })) {
+            // from here on the development runtime writes the processed classes and the tests': the next pyronaut
+            // process must not take them for its own output, by its source fingerprint or its incremental state
+            DevReloadFiles.forgetProcessorState(pyronautDir, PASSES);
+            // the test pass compiles the application with the tests, into the tests' output, where the copy would hide
+            // a change of the application from the tests: the development runtime compiles the tests alone, against
+            // the processed classes, when it starts
+            DevReloadFiles.deleteRecursively(layout.testClasses());
+            DevReloadFiles.deleteRecursively(pyronautDir.resolve(TEST_SOURCES_DIR));
+            List<Path> buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
+            return writeManifest(layout, devDir,
+                DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST)),
+                DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)),
+                // in a native image the processors the image holds run from it, as pyronaut process runs them there
+                DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies),
+                DevReloadFiles.withOpenApiAdoc(
+                    DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), layout.pythonBytecode()),
+                    buildDependencies),
+                options(pyronautDir),
+                filterPatterns(tests));
+        }
     }
 
     private static List<String> options(Path pyronautDir) {
@@ -265,6 +281,9 @@ public final class PyronautTestReload extends MicronautDevMain {
         properties.setProperty(prefix + "test.reports", layout.reports().resolve("junit").toString());
         properties.setProperty(prefix + "test.html-report", layout.reports().toString());
         properties.setProperty(prefix + "test.html-report-path", layout.reportPath());
+        // a port of its own, so that the report is served while pyronaut dev runs the application of the project, its
+        // LiveReload server on the default port; -Dmicronaut.dev.livereload.port chooses another
+        properties.setProperty(prefix + "livereload.port", String.valueOf(LIVERELOAD_PORT));
         if (!filter.isEmpty()) {
             properties.setProperty(prefix + "test.filter", String.join(",", filter));
         }

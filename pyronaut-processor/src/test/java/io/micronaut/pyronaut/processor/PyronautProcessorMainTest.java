@@ -8,15 +8,23 @@ import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.io.UncheckedIOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautProcessorMainTest {
@@ -335,6 +343,88 @@ class PyronautProcessorMainTest {
         assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
         assertEquals(1, executor.requests.size());
         assertEquals(project.resolve("__pyronaut__/classes").toAbsolutePath().normalize(), executor.requests.getFirst().targetDir());
+    }
+
+    @Test
+    void processingWritesTheOutputsUnderTheLockOfTheDevelopmentRuntime() throws Exception {
+        Path project = tempDir.resolve("project-locked");
+        setupProjectWithSourcesAndCaches(project);
+        Path lockFile = project.resolve("__pyronaut__/classes.micronaut-dev.lock").toAbsolutePath().normalize();
+        List<Boolean> heldWhileCompiling = new ArrayList<>();
+        PyronautCompilerExecutor executor = request -> {
+            // pyronaut dev or pyronaut test -t, compiling into the same classes, waits for the file lock
+            try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.WRITE)) {
+                Files.createDirectories(request.targetDir());
+                channel.tryLock().close();
+                heldWhileCompiling.add(false);
+            } catch (OverlappingFileLockException e) {
+                heldWhileCompiling.add(true);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        };
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        assertEquals(List.of(true, true), heldWhileCompiling);
+        try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.WRITE); FileLock released = channel.tryLock()) {
+            assertNotNull(released);
+        }
+    }
+
+    @Test
+    void processingIntoAnotherTargetDirectoryAlsoTakesTheLockOfTheProjectsProcessedClasses() throws Exception {
+        Path project = tempDir.resolve("project-locked-target");
+        setupProjectWithSourcesAndCaches(project);
+        List<Path> lockFiles = List.of(
+            project.resolve("__pyronaut__/classes.micronaut-dev.lock").toAbsolutePath().normalize(),
+            project.resolve("out/classes.micronaut-dev.lock").toAbsolutePath().normalize());
+        List<Boolean> heldWhileCompiling = new ArrayList<>();
+        PyronautCompilerExecutor executor = request -> {
+            try {
+                Files.createDirectories(request.targetDir());
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            for (Path lockFile : lockFiles) {
+                try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.WRITE)) {
+                    channel.tryLock().close();
+                    heldWhileCompiling.add(false);
+                } catch (OverlappingFileLockException e) {
+                    heldWhileCompiling.add(true);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        };
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), executor);
+        command.projectDir = project;
+        command.targetDir = Path.of("out/classes");
+        command.pass = "main";
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+
+        assertEquals(List.of(true, true), heldWhileCompiling);
+        for (Path lockFile : lockFiles) {
+            try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.WRITE); FileLock released = channel.tryLock()) {
+                assertNotNull(released);
+            }
+        }
+    }
+
+    @Test
+    void processingAnExternalBuildTakesNoLock() throws Exception {
+        Path project = externalProject("external-unlocked");
+
+        PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
+        command.projectDir = project;
+
+        assertEquals(PyronautProcessorExitCode.SUCCESS.code(), command.call());
+        try (Stream<Path> files = Files.walk(project)) {
+            assertTrue(files.noneMatch(file -> file.getFileName().toString().endsWith(".micronaut-dev.lock")));
+        }
     }
 
     @Test

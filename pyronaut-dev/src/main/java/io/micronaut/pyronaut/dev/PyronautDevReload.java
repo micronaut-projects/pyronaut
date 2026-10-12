@@ -23,6 +23,7 @@ import io.micronaut.dev.loader.DevClassLoader;
 import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.dev.manifest.ResourceRoot;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.output.ProcessedOutputLock;
 import io.micronaut.pyronaut.run.PyronautRunMain;
 
 
@@ -71,8 +72,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
     static final String RELAUNCH_MARKER = "relaunch";
 
     private static final String MAIN_CLASS = "pyronaut_application.PyronautMain";
-    private static final String PROCESSOR_MAIN_HASH = "processor-main.sha256";
-    private static final String PROCESSOR_MAIN_INCREMENTAL = "incremental/main";
+    private static final String MAIN_PASS = "main";
 
     private ClassLoader parent;
     private Path generations;
@@ -127,18 +127,23 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         this.launcher = launcher;
 
         Path pyronautDir = root.resolve(DevReloadFiles.PYRONAUT_DIR);
-        // from here on the development runtime writes the processed classes: the next pyronaut process must not
-        // take them for its own output, by its source fingerprint or its incremental state
-        Files.deleteIfExists(pyronautDir.resolve(PROCESSOR_MAIN_HASH));
-        DevReloadFiles.deleteRecursively(pyronautDir.resolve(PROCESSOR_MAIN_INCREMENTAL));
         Path devDir = Files.createDirectories(pyronautDir.resolve(DevReloadFiles.DEV_DIR));
         this.generations = devDir.resolve("generations");
         this.relaunchMarker = devDir.resolve(RELAUNCH_MARKER);
         Files.deleteIfExists(relaunchMarker);
-        List<Path> buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
-        List<String> options = DevReloadFiles.withOpenApiAdoc(
-            DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), model),
-            buildDependencies);
+        List<Path> buildDependencies;
+        List<String> options;
+        // under the lock of the processed classes, which pyronaut process holds while it writes them and their
+        // options, as pyronaut test -t may run it for a launch of its own meanwhile
+        try (ProcessedOutputLock.Hold hold = ProcessedOutputLock.lock(classes, () -> { })) {
+            // from here on the development runtime writes the processed classes: the next pyronaut process must not
+            // take them for its own output, by its source fingerprint or its incremental state
+            DevReloadFiles.forgetProcessorState(pyronautDir, MAIN_PASS);
+            buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
+            options = DevReloadFiles.withOpenApiAdoc(
+                DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), model),
+                buildDependencies);
+        }
         // in a native image the processors the image holds run from it, as pyronaut process runs them there
         List<Path> processorPath = DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies);
         Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, runtime, processorPath, options);
@@ -248,6 +253,9 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
 
     @Override
     protected DevClassLoader createClassLoader(DevManifest manifest) {
+        // under the runtime's own lock of the processed classes: a pyronaut process that ran after start released
+        // the lock, and before the runtime took it, wrote its state again
+        DevReloadFiles.forgetProcessorStateUnchecked(manifest.projectDir().resolve(DevReloadFiles.PYRONAUT_DIR), MAIN_PASS);
         // the generations live under __pyronaut__ rather than build/
         List<Path> live = new ArrayList<>();
         for (ResourceRoot resourceRoot : manifest.resourceRoots()) {

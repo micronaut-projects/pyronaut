@@ -236,6 +236,36 @@ final class DevReloadFiles {
     }
 
     /**
+     * Makes the next {@code pyronaut process} compile the passes again, from here on written by the development
+     * runtime: their source fingerprints and incremental state describe the output as the processor left it.
+     *
+     * @param pyronautDir The {@code __pyronaut__} directory
+     * @param passes The passes, {@code main} or {@code test}
+     * @throws IOException if a file cannot be deleted
+     */
+    static void forgetProcessorState(Path pyronautDir, String... passes) throws IOException {
+        for (String pass : passes) {
+            Files.deleteIfExists(pyronautDir.resolve("processor-" + pass + ".sha256"));
+            deleteRecursively(pyronautDir.resolve("incremental").resolve(pass));
+        }
+    }
+
+    /**
+     * {@link #forgetProcessorState(Path, String...)} as the development runtime takes the outputs over, under its
+     * lock of them.
+     *
+     * @param pyronautDir The {@code __pyronaut__} directory
+     * @param passes The passes
+     */
+    static void forgetProcessorStateUnchecked(Path pyronautDir, String... passes) {
+        try {
+            forgetProcessorState(pyronautDir, passes);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot take the processed outputs over from pyronaut process", e);
+        }
+    }
+
+    /**
      * Deletes a directory and what it holds, if it exists.
      *
      * @param directory The directory

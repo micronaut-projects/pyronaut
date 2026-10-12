@@ -205,7 +205,11 @@ The runs write the reports of `pyronaut test` under
 `events.ndjson` for every engine, rewritten for each run, and an `index.html`
 that keeps the latest result of every test, failures first. While
 `pyronaut test -t` runs, the LiveReload server also serves that page at
-`http://localhost:35729/tests/` and updates it test by test. Choose the path
+`http://localhost:35730/tests/` and updates it test by test. The port is not
+that of `pyronaut dev`, `35729`, so both can run on one project at once: each
+waits for the other while it compiles into `__pyronaut__/classes`, as
+`pyronaut process` does, and each keeps its own class loader generations.
+`-Dmicronaut.dev.livereload.port=<port>` chooses another port. Choose the path
 with:
 
 [source,toml]

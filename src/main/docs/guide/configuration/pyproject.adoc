@@ -104,7 +104,7 @@ context and runs the tests it affects, on a new class loader generation for any
 other change. `process` processes the project and starts a new test process for
 every run instead, as external Maven or Gradle builds always do. `report-path` is the path, `/tests/` by
 default, at which the LiveReload server serves the live HTML report of those
-runs, `http://localhost:35729/tests/`.
+runs, `http://localhost:35730/tests/`.
 
 Native image settings and Docker image settings also live under `[tool.pyronaut.build]`.
 For a Crema format, set `native-base = "default"` to use the configured
