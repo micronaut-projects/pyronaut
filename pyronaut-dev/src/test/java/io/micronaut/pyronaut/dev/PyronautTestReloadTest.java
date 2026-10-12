@@ -1,11 +1,14 @@
 package io.micronaut.pyronaut.dev;
 
 import io.micronaut.dev.compile.SourceKind;
+import io.micronaut.dev.livereload.LiveReloadServer;
+import io.micronaut.dev.loader.DevClassLoader;
 import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.dev.manifest.DevMode;
 import io.micronaut.dev.manifest.TestSettings;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.config.output.ProcessedOutputLock;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -13,9 +16,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -154,6 +162,65 @@ class PyronautTestReloadTest {
         // the application compiles with the bytecode setting pyronaut process compiled it with, so that both write the same files
         assertEquals(List.of("-Amain=true", "-Amicronaut.python.bytecode=true"), manifest.compileOptions(SourceKind.PYTHON));
         assertEquals(List.of("-Atest=true"), manifest.testView().compileOptions(SourceKind.PYTHON));
+    }
+
+    @Test
+    void theLiveReportIsServedOnAPortOtherThanThatOfDevelopmentMode() throws Exception {
+        PyronautTestReload.Layout layout = layout("");
+        Path pyronaut = project.resolve("__pyronaut__").toAbsolutePath().normalize();
+        Path testDir = Files.createDirectories(pyronaut.resolve("micronaut-dev/test"));
+        Path devDir = pyronaut.resolve("micronaut-dev");
+
+        DevManifest tests = DevManifest.load(PyronautTestReload.writeManifest(layout, testDir, List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
+        DevManifest dev = DevManifest.load(PyronautDevReload.writeManifest(project, devDir, layout.classes(), layout.python(), layout.java(),
+            List.of(), List.of(), List.of(), List.of(), List.of()));
+
+        // pyronaut dev keeps the default port; the report of pyronaut test -t is served beside it
+        assertEquals(LiveReloadServer.DEFAULT_PORT, dev.liveReload().port());
+        assertEquals(PyronautTestReload.LIVERELOAD_PORT, tests.liveReload().port());
+        assertNotEquals(dev.liveReload().port(), tests.liveReload().port());
+        // and both compile into the processed classes, under the same lock, each with generations of its own
+        assertEquals(dev.classOutput(SourceKind.PYTHON), tests.classOutput(SourceKind.PYTHON));
+        assertEquals(pyronaut.resolve("micronaut-dev/test/generations"), tests.generations());
+    }
+
+    @Test
+    void preparingWaitsForAProcessWritingTheProcessedClasses() throws Exception {
+        PyronautTestReload.Layout layout = layout("");
+        Path hash = project.resolve("__pyronaut__/processor-main.sha256");
+        Files.writeString(hash, "x");
+
+        CompletableFuture<Path> prepared;
+        // as pyronaut process holds it, run by pyronaut dev for its launch
+        try (ProcessedOutputLock.Hold hold = ProcessedOutputLock.lock(layout.classes(), () -> { })) {
+            prepared = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return PyronautTestReload.prepare(layout, List.of());
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            assertThrows(TimeoutException.class, () -> prepared.get(300, TimeUnit.MILLISECONDS));
+            assertTrue(Files.exists(hash));
+        }
+        prepared.get(10, TimeUnit.SECONDS);
+        assertFalse(Files.exists(hash));
+    }
+
+    @Test
+    void theRuntimeForgetsTheProcessorStateAgainUnderItsOwnLock() throws Exception {
+        PyronautTestReload.Layout layout = layout("");
+        Path pyronaut = project.resolve("__pyronaut__");
+        Path manifest = PyronautTestReload.prepare(layout, List.of());
+        // a pyronaut process run between prepare and the runtime's launch, as pyronaut dev's
+        Files.writeString(pyronaut.resolve("processor-main.sha256"), "x");
+        Files.createDirectories(pyronaut.resolve("incremental/main"));
+
+        DevClassLoader loader = new PyronautTestReload().createClassLoader(DevManifest.load(manifest));
+
+        assertNotNull(loader);
+        assertFalse(Files.exists(pyronaut.resolve("processor-main.sha256")));
+        assertFalse(Files.exists(pyronaut.resolve("incremental/main")));
     }
 
     @Test
