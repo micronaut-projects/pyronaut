@@ -284,7 +284,7 @@ class DoctorChecksTest(unittest.TestCase):
         self._env_patch = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
-        for name in ("JAVA_HOME", "PYENV_VERSION", "PYENV_ROOT", "SDKMAN_DIR", "DOCKER_HOST", *_PROXY_ENV):
+        for name in ("PYRONAUT_HOME", "JAVA_HOME", "PYENV_VERSION", "PYENV_ROOT", "SDKMAN_DIR", "DOCKER_HOST", *_PROXY_ENV):
             os.environ.pop(name, None)
 
     # -- python --------------------------------------------------------------
@@ -847,7 +847,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         env = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         env.start()
         self.addCleanup(env.stop)
-        for name in ("PYRONAUT_PYTHON_EXECUTABLE", "VIRTUAL_ENV", "PYENV_VERSION", "PYENV_ROOT"):
+        for name in ("PYRONAUT_HOME", "PYRONAUT_PYTHON_EXECUTABLE", "VIRTUAL_ENV", "PYENV_VERSION", "PYENV_ROOT"):
             os.environ.pop(name, None)
         self.project = self.root / "app"
         (self.project / "config").mkdir(parents=True)
