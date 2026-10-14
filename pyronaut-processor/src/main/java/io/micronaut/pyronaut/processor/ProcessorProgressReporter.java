@@ -165,6 +165,32 @@ final class ProcessorProgressReporter implements AutoCloseable {
         done(passName, "Skipped " + passName + " sources (0 files, no processable sources)");
     }
 
+    /**
+     * Says where the static compilation report of a pass was rendered, as a link on a terminal.
+     *
+     * @param html The page
+     */
+    void staticCompilationReport(Path html) {
+        if (!enabled) {
+            return;
+        }
+        if (interactive) {
+            region.printAbove(region.paint(LiveRegion.DIM, "  Static compilation report: " + Terminal.link(displayPath(html), html.toUri().toString())));
+        } else {
+            output.println("Static compilation report: " + html);
+        }
+    }
+
+    private static String displayPath(Path path) {
+        try {
+            Path cwd = Path.of("").toAbsolutePath();
+            Path absolute = path.toAbsolutePath().normalize();
+            return absolute.startsWith(cwd) ? cwd.relativize(absolute).toString() : absolute.toString();
+        } catch (RuntimeException e) {
+            return path.toString();
+        }
+    }
+
     void complete(String mainStatus, String testStatus) {
         if (!enabled) {
             return;
