@@ -37,6 +37,31 @@ See the https://www.graalvm.org/python/compatibility/[GraalPy package compatibil
 Pydantic 2 depends on `pydantic-core`, which is partially written in Rust and exposed to Python as native code.
 Because native-extension support remains experimental, test the exact Pydantic, GraalPy, and Pyronaut versions under the threading and deployment model your application uses. A passing compatibility-checker result covers only its tested configuration.
 
+[[filesystemAccess]]
+== Files, file descriptors, and time zones
+
+Pyronaut runs Python with GraalPy's Java POSIX backend.
+Application sources and the virtual environment are served from a read-only virtual filesystem.
+All other paths are ordinary host files that the JVM reads and writes for Python.
+Most of `os`, `io`, `pathlib`, `shutil`, and `tempfile` behave as they do on CPython.
+The backend has these differences:
+
+* `os.rename` and `os.replace` are atomic when the source and target are on the same file store.
+Across file stores they fall back to a move that replaces the target non-atomically.
+Renaming a file inside the virtual filesystem fails because that filesystem is read-only.
+* The backend does not expose real operating-system file descriptors to native extensions.
+Native code that needs one fails with `NotImplementedError: 'PyObject_AsFileDescriptor' not supported when using 'java' posix backend`.
+For NumPy this affects `numpy.fromfile` and `ndarray.tofile`, and `numpy.load` and `numpy.save`, which use them for regular files.
+Go through bytes instead, for example `numpy.frombuffer(path.read_bytes(), dtype=...)` and `path.write_bytes(array.tobytes())`.
+Test `numpy.memmap` before you rely on it.
+* Unix domain sockets (`socket.AF_UNIX`) are not available.
+* `zoneinfo` searches the system time zone database in the locations CPython uses by default: `/usr/share/zoneinfo`, `/usr/lib/zoneinfo`, `/usr/share/lib/zoneinfo`, and `/etc/zoneinfo`.
+Set `PYTHONTZPATH` to search other locations.
+Install the `tzdata` package on systems without a time zone database, such as Windows or minimal container images.
+
+GraalPy's native POSIX backend lifts these restrictions.
+It needs the Python resources extracted to a real directory instead of the virtual filesystem, so Pyronaut does not offer it yet.
+
 Many common Python library use cases have high-performance JVM alternatives that integrate directly with Micronaut:
 
 |===
