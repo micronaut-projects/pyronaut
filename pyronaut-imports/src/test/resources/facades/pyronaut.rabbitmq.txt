@@ -1,0 +1,37 @@
+# pyronaut.rabbitmq
+
+## members
+AddressTypeConverter	CLASS	io.micronaut.rabbitmq.connect.AddressTypeConverter
+Binding	ANNOTATION	io.micronaut.rabbitmq.annotation.Binding
+BuiltinExchangeType	ENUM	com.rabbitmq.client.BuiltinExchangeType
+CONSISTENT_HASH	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#CONSISTENT_HASH
+Channel	INTERFACE	com.rabbitmq.client.Channel
+ChannelInitializer	CLASS	io.micronaut.rabbitmq.connect.ChannelInitializer
+ChannelPool	INTERFACE	io.micronaut.rabbitmq.connect.ChannelPool
+ClusterRabbitConnectionFactoryConfig	CLASS	io.micronaut.rabbitmq.connect.ClusterRabbitConnectionFactoryConfig
+DIRECT	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#DIRECT
+DefaultChannelPool	CLASS	io.micronaut.rabbitmq.connect.DefaultChannelPool
+FANOUT	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#FANOUT
+HEADERS	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#HEADERS
+LOCAL_RANDOM	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#LOCAL_RANDOM
+MODULUS_HASH	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#MODULUS_HASH
+Mandatory	ANNOTATION	io.micronaut.rabbitmq.annotation.Mandatory
+MessageBody	ANNOTATION	io.micronaut.messaging.annotation.MessageBody
+MessageHeader	ANNOTATION	io.micronaut.messaging.annotation.MessageHeader
+MessageHeaders	ANNOTATION	io.micronaut.messaging.annotation.MessageHeaders
+MessageListener	ANNOTATION	io.micronaut.messaging.annotation.MessageListener
+MessageMapping	ANNOTATION	io.micronaut.messaging.annotation.MessageMapping
+MessageProducer	ANNOTATION	io.micronaut.messaging.annotation.MessageProducer
+Queue	ANNOTATION	io.micronaut.rabbitmq.annotation.Queue
+RANDOM	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#RANDOM
+RabbitClient	ANNOTATION	io.micronaut.rabbitmq.annotation.RabbitClient
+RabbitConnection	ANNOTATION	io.micronaut.rabbitmq.annotation.RabbitConnection
+RabbitConnectionFactory	CLASS	io.micronaut.rabbitmq.connect.RabbitConnectionFactory
+RabbitConnectionFactoryConfig	CLASS	io.micronaut.rabbitmq.connect.RabbitConnectionFactoryConfig
+RabbitHeaders	ANNOTATION	io.micronaut.rabbitmq.annotation.RabbitHeaders
+RabbitListener	ANNOTATION	io.micronaut.rabbitmq.annotation.RabbitListener
+RabbitProperties	ANNOTATION	io.micronaut.rabbitmq.annotation.RabbitProperties
+RabbitProperty	ANNOTATION	io.micronaut.rabbitmq.annotation.RabbitProperty
+SendTo	ANNOTATION	io.micronaut.messaging.annotation.SendTo
+SingleRabbitConnectionFactoryConfig	CLASS	io.micronaut.rabbitmq.connect.SingleRabbitConnectionFactoryConfig
+TOPIC	CONSTANT	com.rabbitmq.client.BuiltinExchangeType#TOPIC

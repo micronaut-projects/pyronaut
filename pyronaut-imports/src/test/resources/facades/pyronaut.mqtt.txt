@@ -1,0 +1,22 @@
+# pyronaut.mqtt
+
+## clashes
+MqttPublisher: io.micronaut.mqtt.annotation.v5.MqttPublisher (SOURCE_ORDER) over io.micronaut.mqtt.annotation.v3.MqttPublisher
+
+## members
+Id	ANNOTATION	io.micronaut.mqtt.annotation.Id
+MessageBody	ANNOTATION	io.micronaut.messaging.annotation.MessageBody
+MessageHeader	ANNOTATION	io.micronaut.messaging.annotation.MessageHeader
+MessageHeaders	ANNOTATION	io.micronaut.messaging.annotation.MessageHeaders
+MessageListener	ANNOTATION	io.micronaut.messaging.annotation.MessageListener
+MessageMapping	ANNOTATION	io.micronaut.messaging.annotation.MessageMapping
+MessageProducer	ANNOTATION	io.micronaut.messaging.annotation.MessageProducer
+MqttProperties	ANNOTATION	io.micronaut.mqtt.annotation.v5.MqttProperties
+MqttProperty	ANNOTATION	io.micronaut.mqtt.annotation.v5.MqttProperty
+MqttPublisher	ANNOTATION	io.micronaut.mqtt.annotation.v5.MqttPublisher
+MqttSubscriber	ANNOTATION	io.micronaut.mqtt.annotation.MqttSubscriber
+Qos	ANNOTATION	io.micronaut.mqtt.annotation.Qos
+Retained	ANNOTATION	io.micronaut.mqtt.annotation.Retained
+SendTo	ANNOTATION	io.micronaut.messaging.annotation.SendTo
+Topic	ANNOTATION	io.micronaut.mqtt.annotation.Topic
+Topics	ANNOTATION	io.micronaut.mqtt.annotation.Topics

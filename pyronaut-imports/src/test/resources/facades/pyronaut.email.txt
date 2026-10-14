@@ -1,0 +1,35 @@
+# pyronaut.email
+
+## members
+AbstractTransactionalEmailSender	CLASS	io.micronaut.email.AbstractTransactionalEmailSender
+AsyncEmailSender	INTERFACE	io.micronaut.email.AsyncEmailSender
+AsyncTransactionalEmailSender	INTERFACE	io.micronaut.email.AsyncTransactionalEmailSender
+Attachment	CLASS	io.micronaut.email.Attachment
+Body	INTERFACE	io.micronaut.email.Body
+BodyType	ENUM	io.micronaut.email.BodyType
+Contact	CLASS	io.micronaut.email.Contact
+DefaultAsyncEmailSender	CLASS	io.micronaut.email.DefaultAsyncEmailSender
+DefaultEmailSender	CLASS	io.micronaut.email.DefaultEmailSender
+DefaultSessionProvider	CLASS	io.micronaut.email.javamail.sender.DefaultSessionProvider
+DefaultTemplateBodyDecorator	CLASS	io.micronaut.email.template.DefaultTemplateBodyDecorator
+Email	CLASS	io.micronaut.email.Email
+EmailComposer	INTERFACE	io.micronaut.email.EmailComposer
+EmailDecorator	INTERFACE	io.micronaut.email.EmailDecorator
+EmailException	CLASS	io.micronaut.email.EmailException
+EmailSender	INTERFACE	io.micronaut.email.EmailSender
+FromDecorator	CLASS	io.micronaut.email.FromDecorator
+HTML	CONSTANT	io.micronaut.email.BodyType#HTML
+JavaMailConfiguration	INTERFACE	io.micronaut.email.javamail.sender.JavaMailConfiguration
+JavaMailConfigurationProperties	CLASS	io.micronaut.email.javamail.sender.JavaMailConfigurationProperties
+JavaxEmailComposer	CLASS	io.micronaut.email.javamail.sender.JavaxEmailComposer
+JavaxEmailSender	CLASS	io.micronaut.email.javamail.sender.JavaxEmailSender
+MailPropertiesProvider	INTERFACE	io.micronaut.email.javamail.sender.MailPropertiesProvider
+MailPropertiesProviderFactory	CLASS	io.micronaut.email.javamail.sender.MailPropertiesProviderFactory
+MultipartBody	CLASS	io.micronaut.email.MultipartBody
+SessionProvider	INTERFACE	io.micronaut.email.javamail.sender.SessionProvider
+StringBody	CLASS	io.micronaut.email.StringBody
+TEXT	CONSTANT	io.micronaut.email.BodyType#TEXT
+TemplateBody	CLASS	io.micronaut.email.template.TemplateBody
+TemplateBodyDecorator	INTERFACE	io.micronaut.email.template.TemplateBodyDecorator
+TrackLinks	ENUM	io.micronaut.email.TrackLinks
+TransactionalEmailSender	INTERFACE	io.micronaut.email.TransactionalEmailSender
