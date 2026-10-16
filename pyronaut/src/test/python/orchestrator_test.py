@@ -7519,6 +7519,114 @@ additional-test-resources = ["test-fixtures"]
                 self.assertEqual("native", cli._read_pyproject_toolchain_type(project_dir))
             tomli.load.assert_called_once()
 
+    def test_pyproject_is_not_ignored_when_no_toml_parser_is_available(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            with patch.dict(__import__("sys").modules, {"tomllib": None, "tomli": None}):
+                self.assertIsNone(cli._read_pyproject_data(project_dir))
+                (project_dir / "pyproject.toml").write_text(
+                    "[tool.pyronaut.test-resources]\nenabled = true\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises(RuntimeError) as raised:
+                    cli._read_pyproject_data(project_dir)
+
+        self.assertEqual(
+            "pyproject.toml cannot be read: Python 3.10 needs the tomli package (pip install tomli) or use Python 3.11+",
+            str(raised.exception),
+        )
+
+    def test_invalid_pyproject_error_names_the_file_and_the_parse_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pyproject = Path(temp_dir) / "pyproject.toml"
+            pyproject.write_text("[tool.pyronaut\nenabled = true\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError) as raised:
+                cli._read_pyproject_data(Path(temp_dir))
+
+        message = str(raised.exception)
+        self.assertTrue(message.startswith(f"{pyproject} cannot be read: "), message)
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        self.assertIn(str(raised.exception.__cause__), message)
+
+    def test_valid_pyproject_is_still_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir)
+            self.assertIsNone(cli._read_pyproject_data(project_dir))
+            (project_dir / "pyproject.toml").write_text(
+                "[project]\nname = 'demo'\n\n[tool.pyronaut.test-resources]\nenabled = true\n",
+                encoding="utf-8",
+            )
+            data = cli._read_pyproject_data(project_dir)
+
+        self.assertEqual(
+            {"project": {"name": "demo"}, "tool": {"pyronaut": {"test-resources": {"enabled": True}}}},
+            data,
+        )
+
+    def test_commands_stop_with_the_pyproject_error_instead_of_ignoring_the_file(self):
+        for command in ("test", "build"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as temp_dir:
+                project_dir = Path(temp_dir)
+                (project_dir / "pyproject.toml").write_text("[tool.pyronaut\n", encoding="utf-8")
+                executed = []
+                stderr = io.StringIO()
+
+                def runner(command_line):
+                    executed.append(command_line)
+                    return 0
+
+                with redirect_stderr(stderr):
+                    exit_code = cli.run(
+                        [command, "--project-dir", str(project_dir)],
+                        runner=runner,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                    )
+
+                self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+                self.assertIn(f"{project_dir / 'pyproject.toml'} cannot be read: ", stderr.getvalue())
+                self.assertEqual([], executed)
+
+    def test_pyproject_above_the_project_does_not_break_uv_lock_discovery(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "pyproject.toml").write_text("[tool.uv\n", encoding="utf-8")
+            project_dir = Path(temp_dir) / "app"
+            project_dir.mkdir()
+
+            self.assertIsNone(cli._uv_lock_file(project_dir))
+
+    def test_user_settings_use_tomli_when_tomllib_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.toml"
+            settings_path.write_text("[install]\nauto = false\n", encoding="utf-8")
+            tomli = Mock(load=Mock(return_value={"install": {"auto": False}}))
+            with (
+                patch.object(cli, "_settings_path", return_value=settings_path),
+                patch.dict(__import__("sys").modules, {"tomllib": None, "tomli": tomli}),
+            ):
+                settings = cli._read_pyronaut_user_settings()
+
+        self.assertEqual({"install": {"auto": False}}, settings)
+        tomli.load.assert_called_once()
+
+    def test_user_settings_without_a_toml_parser_fail_with_the_fix(self):
+        def read_settings(settings_path):
+            with (
+                patch.object(cli, "_settings_path", return_value=settings_path),
+                patch.dict(__import__("sys").modules, {"tomllib": None, "tomli": None}),
+            ):
+                return cli._read_pyronaut_user_settings()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.toml"
+            self.assertEqual({}, read_settings(settings_path))
+            settings_path.write_text("[install]\nauto = false\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError) as raised:
+                read_settings(settings_path)
+
+        self.assertIn(" cannot be read: ", str(raised.exception))
+        self.assertIn(cli._TOML_PARSER_FIX, str(raised.exception))
+
     def test_build_native_requires_processed_classes(self):
         stderr = io.StringIO()
 

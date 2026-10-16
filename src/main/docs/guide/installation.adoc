@@ -4,7 +4,7 @@ Install the Pyronaut CLI, then run `pyronaut setup` to provision the SDK that ru
 
 == Install the Pyronaut CLI
 
-The CLI requires Python 3.10 or later.
+The CLI requires Python 3.10 or later. On Python 3.10, which has no built-in TOML parser, the `tomli` package is installed automatically with the CLI.
 
 Install Pyronaut from PyPI:
 
