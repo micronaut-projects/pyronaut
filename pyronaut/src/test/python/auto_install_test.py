@@ -265,6 +265,40 @@ class AutoInstallTest(unittest.TestCase):
         )
         self.assertTrue(cli._python_requirements_stale(self.project_dir))
 
+    def test_test_installs_python_dependencies_when_requirements_test_file_changed(self):
+        self._write_pyproject()
+        self._write_installed_state()
+        requirements_test = self.project_dir / "requirements-test.txt"
+        requirements_test.write_text("pypdf==5.0.0\n", encoding="utf-8")
+        venv_dir = self.project_dir / ".venv"
+        venv_dir.mkdir()
+        # What `pyronaut install` records after `pip install -r requirements-test.txt`.
+        plan = cli._python_dependency_plan(self.project_dir)
+        self.assertEqual([requirements_test], plan.requirement_files)
+        (venv_dir / cli._PROJECT_VENV_STATE).write_text(json.dumps(plan.state(Path("/tmp/graalpy"))), encoding="utf-8")
+
+        with self._forbid_virtualenv_install():
+            self.assertEqual(cli.SUCCESS, self._run(["test", "--project-dir", str(self.project_dir)]))
+        self.assertEqual(["process", "test"], self._commands())
+
+        requirements_test.write_text("pypdf==5.1.0\n", encoding="utf-8")
+        self.calls.clear()
+        venv_calls = []
+
+        def ensure_venv(project_dir, runner, **_kwargs):
+            venv_calls.append(project_dir)
+            return cli.SUCCESS
+
+        with patch.object(cli, "_ensure_project_virtualenv", side_effect=ensure_venv):
+            self.assertEqual(cli.SUCCESS, self._run(["test", "--project-dir", str(self.project_dir)]))
+
+        self.assertEqual([self.project_dir], venv_calls)
+        self.assertEqual(["process", "test"], self._commands())
+        self.assertIn(
+            "Python dependencies changed since the last install; running pyronaut install before test",
+            self.output.getvalue(),
+        )
+
     def _forbid_virtualenv_install(self):
         def fail(*_args, **_kwargs):
             raise AssertionError("dev/run/test must not reinstall Python dependencies")

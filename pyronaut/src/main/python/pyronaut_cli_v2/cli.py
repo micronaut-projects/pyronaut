@@ -10847,13 +10847,17 @@ def _graalpy_for_project_environment() -> Path | None:
 # -- Project Python environment -----------------------------------------------
 #
 # `pyronaut install` creates the project `.venv` with the configured GraalPy and
-# installs the Python dependencies declared in pyproject.toml and
-# requirements.txt, so the embedded runtime and pytest can import them. A uv
-# project is synced with `uv sync` instead, because pip can neither run in a uv
-# venv nor see uv workspace members and indexes; a project that manages `.venv`
-# itself opts out with `[tool.pyronaut.python] manage-dependencies = false`.
+# installs the Python dependencies declared in pyproject.toml,
+# requirements.txt and requirements-test.txt, so the embedded runtime and
+# pytest can import them. A uv project is synced with `uv sync` instead, because
+# pip can neither run in a uv venv nor see uv workspace members and indexes (and
+# uv ignores both requirements files); a project that manages `.venv` itself
+# opts out with `[tool.pyronaut.python] manage-dependencies = false`.
 
 _PROJECT_VENV_STATE = ".pyronaut-requirements.json"
+# pip requirements files `pyronaut install` reads, in install order. The test
+# file keeps test-only packages (for example pypdf) out of requirements.txt.
+_REQUIREMENT_FILE_NAMES = ("requirements.txt", "requirements-test.txt")
 NO_PYTHON_DEPS_FLAG = "--no-python-deps"
 
 
@@ -10915,7 +10919,9 @@ def _project_python_requirements_and_implicit_pytest(project_dir: Path) -> tuple
     groups = data.get("dependency-groups") if isinstance(data, dict) else None
     if isinstance(groups, dict):
         requirements.extend(_expand_dependency_groups(groups))
-    requirement_files = [project_dir / "requirements.txt"] if (project_dir / "requirements.txt").is_file() else []
+    requirement_files = [
+        project_dir / name for name in _REQUIREMENT_FILE_NAMES if (project_dir / name).is_file()
+    ]
     declared_names = {
         _canonical_package_name(match.group(1))
         for value in requirements
@@ -10982,7 +10988,8 @@ class _PythonDependencyPlan(NamedTuple):
     implicit_pytest: bool
     uv: str | None
     # Files whose content decides whether `.venv` is stale: uv.lock (or
-    # pyproject.toml without one) for uv, requirements.txt for pip.
+    # pyproject.toml without one) for uv, requirements.txt and
+    # requirements-test.txt for pip.
     state_files: list[Path]
 
     @property

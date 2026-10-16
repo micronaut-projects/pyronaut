@@ -244,10 +244,10 @@ before using it.
 
 Resolves dependencies into the configured local Maven repository and writes scoped manifests under `__pyronaut__/`.
 
-Before resolving Java dependencies, `pyronaut install` prepares the project Python environment when the project declares Python dependencies in `[project].dependencies`, PEP 735 `[dependency-groups]`, or a `requirements.txt` file, or has a Python test directory:
+Before resolving Java dependencies, `pyronaut install` prepares the project Python environment when the project declares Python dependencies in `[project].dependencies`, PEP 735 `[dependency-groups]`, a `requirements.txt` file, or a `requirements-test.txt` file, or has a Python test directory:
 
 - It creates `.venv` in the project directory with the GraalPy interpreter recorded by `pyronaut setup`, unless `.venv` already exists.
-- It runs `pip install` inside `.venv` for every declared requirement and `requirements.txt`. When the project has Python tests but does not declare `pytest`, Pyronaut adds `pytest` because `pyronaut test` imports it from `.venv`.
+- It runs `pip install` inside `.venv` for every declared requirement, `requirements.txt` and `requirements-test.txt`. When the project has Python tests but does not declare `pytest`, Pyronaut adds `pytest` because `pyronaut test` imports it from `.venv`.
 - It records the installed declarations in `.venv/.pyronaut-requirements.json` and skips `pip` until they change. `--refresh` reinstalls; `--offline` skips `pip`.
 
 An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again.
@@ -266,7 +266,7 @@ uv sync --project <project-dir> --python <project-dir>/.venv/bin/python
 uv resolves `[tool.uv.sources]` (including `{ workspace = true }` members), `[[tool.uv.index]]` indexes and the lock file itself, none of which `pip` can see, and works in a venv without `pip`.
 `.venv` is still created with GraalPy first, and the command fails if `uv sync` replaces it with another interpreter.
 Pyronaut records the lock file's hash and syncs again when it changes; `--refresh` always syncs and `--offline` skips the sync.
-uv installs only what the project declares (including its default dependency groups) and ignores `requirements.txt`, so declare `pytest` in a dependency group if the project has Python tests.
+uv installs only what the project declares (including its default dependency groups) and ignores `requirements.txt` and `requirements-test.txt`, so declare `pytest` and other test-only packages in a dependency group if the project has Python tests.
 Without `uv` on the `PATH`, Pyronaut falls back to `pip`.
 
 [[python-self-managed-venv]]
@@ -481,7 +481,7 @@ The command refuses to run in a directory without a `pyproject.toml`, `pom.xml`,
 `pyronaut dev`, `pyronaut run` and `pyronaut test` run the install step first when the project dependencies changed since the last `pyronaut install`, so editing `pyproject.toml` does not require a manual install:
 
 - Java dependencies: the CLI records the `[tool.pyronaut]` table and the Pyronaut version in `__pyronaut__/install-state.json` after each install. A difference, or missing classpath manifests, runs `pyronaut install`.
-- Python dependencies: the declarations `pyronaut install` last applied to `.venv` (recorded in `.venv/.pyronaut-requirements.json`) are compared with the current ones: `[project].dependencies`, `[dependency-groups]` and `requirements.txt` for pip, or `uv.lock` for uv projects. A difference installs only the Python dependencies into `.venv`. A project that sets `[tool.pyronaut.python] manage-dependencies = false` manages `.venv` itself and is never reinstalled.
+- Python dependencies: the declarations `pyronaut install` last applied to `.venv` (recorded in `.venv/.pyronaut-requirements.json`) are compared with the current ones: `[project].dependencies`, `[dependency-groups]`, `requirements.txt` and `requirements-test.txt` for pip, or `uv.lock` for uv projects. A difference installs only the Python dependencies into `.venv`. A project that sets `[tool.pyronaut.python] manage-dependencies = false` manages `.venv` itself and is never reinstalled.
 
 The CLI prints one line naming the reason before the install renders its own progress, for example:
 
