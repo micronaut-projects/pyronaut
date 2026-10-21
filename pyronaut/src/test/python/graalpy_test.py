@@ -547,6 +547,94 @@ class ProjectVirtualenvTest(unittest.TestCase):
             (self.project / "uv.lock").write_text("version = 1\nrevision = 2\n", encoding="utf-8")
             self.assertTrue(cli._python_requirements_stale(self.project))
 
+    def test_installs_requirements_test_file_after_requirements_file(self):
+        (self.project / "pyproject.toml").write_text("[project]\nname = 'app'\n", encoding="utf-8")
+        (self.project / "requirements.txt").write_text("attrs==24.2.0\n", encoding="utf-8")
+        (self.project / "requirements-test.txt").write_text("pypdf==5.1.0\n", encoding="utf-8")
+
+        self.assertEqual(cli.SUCCESS, self.ensure())
+
+        venv = self.project / ".venv"
+        self.assertEqual(
+            [
+                str(venv / "bin" / "python"), "-m", "pip", "install", "--disable-pip-version-check",
+                "-r", str(self.project / "requirements.txt"),
+                "-r", str(self.project / "requirements-test.txt"),
+            ],
+            self.commands[1][0],
+        )
+
+        # Unchanged files do not reinstall; a changed test file does.
+        self.commands.clear()
+        self.assertFalse(cli._python_requirements_stale(self.project))
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual([], self.commands)
+        (self.project / "requirements-test.txt").write_text("pypdf==5.2.0\n", encoding="utf-8")
+        self.assertTrue(cli._python_requirements_stale(self.project))
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual(1, len(self.commands))
+        self.assertIn(str(self.project / "requirements-test.txt"), self.commands[0][0])
+
+    def test_requirements_test_file_alone_is_installed(self):
+        (self.project / "pyproject.toml").write_text("[project]\nname = 'app'\n", encoding="utf-8")
+        (self.project / "requirements-test.txt").write_text("pypdf\n", encoding="utf-8")
+
+        self.assertEqual(cli.SUCCESS, self.ensure())
+
+        self.assertEqual(
+            ["-r", str(self.project / "requirements-test.txt")], self.commands[1][0][5:]
+        )
+
+    def test_requirements_test_file_that_declares_pytest_replaces_the_implicit_one(self):
+        (self.project / "pyproject.toml").write_text("[project]\nname = 'app'\n", encoding="utf-8")
+        (self.project / "requirements-test.txt").write_text("pytest>=8\npypdf\n", encoding="utf-8")
+        (self.project / "tests").mkdir()
+
+        self.assertEqual(cli.SUCCESS, self.ensure())
+
+        self.assertEqual(
+            ["-r", str(self.project / "requirements-test.txt")], self.commands[1][0][5:]
+        )
+
+    def test_absent_requirements_test_file_installs_nothing_extra(self):
+        (self.project / "pyproject.toml").write_text("[project]\nname = 'app'\n", encoding="utf-8")
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual([], self.commands)
+        self.assertFalse((self.project / ".venv").exists())
+
+        (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")
+        self.assertEqual(cli.SUCCESS, self.ensure())
+        self.assertEqual(
+            ["-r", str(self.project / "requirements.txt")], self.commands[1][0][5:]
+        )
+        self.assertFalse(any("requirements-test.txt" in argument for argument in self.commands[1][0]))
+
+    def test_requirements_test_file_is_not_pip_installed_into_a_uv_project(self):
+        (self.project / "pyproject.toml").write_text(
+            "[project]\nname = 'app'\ndependencies = ['weather-core']\n\n"
+            "[tool.uv.sources]\nweather-core = { workspace = true }\n",
+            encoding="utf-8",
+        )
+        (self.project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        (self.project / "requirements-test.txt").write_text("pypdf==5.1.0\n", encoding="utf-8")
+
+        with patch.object(cli, "_find_uv", return_value="/usr/bin/uv"):
+            self.assertEqual(cli.SUCCESS, self.ensure())
+
+            self.assertEqual(["/usr/bin/uv", "sync"], self.commands[1][0][:2])
+            self.assertEqual(2, len(self.commands))
+            for command, _env in self.commands:
+                self.assertNotIn("pip", command)
+                self.assertNotIn("-r", command)
+                self.assertFalse(any("requirements-test.txt" in argument for argument in command))
+
+            # uv ignores the file, so editing it neither goes stale nor syncs again.
+            self.commands.clear()
+            (self.project / "requirements-test.txt").write_text("pypdf==5.2.0\n", encoding="utf-8")
+            self.assertFalse(cli._python_requirements_stale(self.project))
+            self.assertEqual(cli.SUCCESS, self.ensure())
+            self.assertEqual([], self.commands)
+
     def test_self_managed_venv_is_never_stale(self):
         (self.project / "pyproject.toml").write_text(
             "[project]\nname = 'app'\ndependencies = ['attrs']\n\n"

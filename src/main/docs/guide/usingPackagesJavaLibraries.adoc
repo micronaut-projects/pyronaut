@@ -5,7 +5,8 @@ Install Python packages into a GraalPy virtual environment and declare Java libr
 
 == Create a GraalPy virtual environment
 
-Declare Python packages in the standard `[project].dependencies` table in `pyproject.toml` or in a `requirements.txt` file, then run:
+Declare Python packages in the standard `[project].dependencies` table in `pyproject.toml` or in a `requirements.txt` file.
+Packages that only the tests import can go in a `requirements-test.txt` file next to it. Then run:
 
 [source,bash]
 ----
