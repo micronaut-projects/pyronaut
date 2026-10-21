@@ -416,7 +416,7 @@ model on top of Micronaut.</p>
 <h2 id="_install_the_pyronaut_cli">Install the Pyronaut CLI</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The CLI requires Python 3.10 or later.</p>
+<p>The CLI requires Python 3.10 or later. On Python 3.10, which has no built-in TOML parser, the <code>tomli</code> package is installed automatically with the CLI.</p>
 </div>
 <div class="paragraph">
 <p>Install Pyronaut from PyPI:</p>
@@ -4073,7 +4073,8 @@ Install Python packages into a GraalPy virtual environment and declare Java libr
 <h2 id="_create_a_graalpy_virtual_environment">Create a GraalPy virtual environment</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Declare Python packages in the standard <code>[project].dependencies</code> table in <code>pyproject.toml</code> or in a <code>requirements.txt</code> file, then run:</p>
+<p>Declare Python packages in the standard <code>[project].dependencies</code> table in <code>pyproject.toml</code> or in a <code>requirements.txt</code> file.
+Packages that only the tests import can go in a <code>requirements-test.txt</code> file next to it. Then run:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -4808,12 +4809,28 @@ It creates <code>.venv</code> with the GraalPy interpreter provisioned by <code>
 <p><code>requirements.txt</code> in the project directory</p>
 </li>
 <li>
+<p><code>requirements-test.txt</code> in the project directory, for packages only the tests import</p>
+</li>
+<li>
 <p><code>pytest</code>, when the project has Python tests and does not declare it</p>
 </li>
 </ul>
 </div>
 <div class="paragraph">
-<p>Pyronaut skips <code>pip</code> while these declarations are unchanged. Use <code>pyronaut install --refresh</code> to reinstall them.</p>
+<p>Pyronaut skips <code>pip</code> while these declarations are unchanged. Use <code>pyronaut install --refresh</code> to reinstall them.
+<code>pyronaut dev</code>, <code>pyronaut run</code> and <code>pyronaut test</code> run the install step first when any of these declarations, including <code>requirements-test.txt</code>, changed since the last install.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+A project managed by uv is synced with <code>uv sync</code> instead of <code>pip</code>, which reads neither <code>requirements.txt</code> nor <code>requirements-test.txt</code>. Pyronaut reads <code>requirements-test.txt</code> only for virtual environments it installs with <code>pip</code>; in a uv project declare test-only packages in a <code>[dependency-groups]</code> group such as <code>test</code>. See <a href="#python-uv-projects">uv projects</a>.
+</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
@@ -8349,6 +8366,9 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 <p>Python: the interpreter running the CLI is 3.10 or newer.</p>
 </li>
 <li>
+<p>TOML parser: <code>tomllib</code> (Python 3.11 and newer) or the <code>tomli</code> package (Python 3.10) can be imported, so <code>pyproject.toml</code> can be read.</p>
+</li>
+<li>
 <p>Pyronaut SDK: the installed wheel version and whether the cached setup state below <code>~/.pyronaut/setup</code> is valid for it (suggests <code>pyronaut setup</code>, or <code>pyronaut setup --refresh</code> when stale state exists).</p>
 </li>
 <li>
@@ -8503,7 +8523,7 @@ before using it.</p>
 <p>Resolves dependencies into the configured local Maven repository and writes scoped manifests under <code><em>pyronaut</em>/</code>.</p>
 </div>
 <div class="paragraph">
-<p>Before resolving Java dependencies, <code>pyronaut install</code> prepares the project Python environment when the project declares Python dependencies in <code>[project].dependencies</code>, PEP 735 <code>[dependency-groups]</code>, or a <code>requirements.txt</code> file, or has a Python test directory:</p>
+<p>Before resolving Java dependencies, <code>pyronaut install</code> prepares the project Python environment when the project declares Python dependencies in <code>[project].dependencies</code>, PEP 735 <code>[dependency-groups]</code>, a <code>requirements.txt</code> file, or a <code>requirements-test.txt</code> file, or has a Python test directory:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -8511,7 +8531,7 @@ before using it.</p>
 <p>It creates <code>.venv</code> in the project directory with the GraalPy interpreter recorded by <code>pyronaut setup</code>, unless <code>.venv</code> already exists.</p>
 </li>
 <li>
-<p>It runs <code>pip install</code> inside <code>.venv</code> for every declared requirement and <code>requirements.txt</code>. When the project has Python tests but does not declare <code>pytest</code>, Pyronaut adds <code>pytest</code> because <code>pyronaut test</code> imports it from <code>.venv</code>.</p>
+<p>It runs <code>pip install</code> inside <code>.venv</code> for every declared requirement, <code>requirements.txt</code> and <code>requirements-test.txt</code>. When the project has Python tests but does not declare <code>pytest</code>, Pyronaut adds <code>pytest</code> because <code>pyronaut test</code> imports it from <code>.venv</code>.</p>
 </li>
 <li>
 <p>It records the installed declarations in <code>.venv/.pyronaut-requirements.json</code> and skips <code>pip</code> until they change. <code>--refresh</code> reinstalls; <code>--offline</code> skips <code>pip</code>.</p>
@@ -8536,7 +8556,7 @@ before using it.</p>
 uv resolves <code>[tool.uv.sources]</code> (including <code>{ workspace = true }</code> members), <code><a id="tool.uv.index"></a></code> indexes and the lock file itself, none of which <code>pip</code> can see, and works in a venv without <code>pip</code>.
 <code>.venv</code> is still created with GraalPy first, and the command fails if <code>uv sync</code> replaces it with another interpreter.
 Pyronaut records the lock file&#8217;s hash and syncs again when it changes; <code>--refresh</code> always syncs and <code>--offline</code> skips the sync.
-uv installs only what the project declares (including its default dependency groups) and ignores <code>requirements.txt</code>, so declare <code>pytest</code> in a dependency group if the project has Python tests.
+uv installs only what the project declares (including its default dependency groups) and ignores <code>requirements.txt</code> and <code>requirements-test.txt</code>, so declare <code>pytest</code> and other test-only packages in a dependency group if the project has Python tests.
 Without <code>uv</code> on the <code>PATH</code>, Pyronaut falls back to <code>pip</code>.</p>
 </div>
 </div>
@@ -8926,7 +8946,7 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 <p>Java dependencies: the CLI records the <code>[tool.pyronaut]</code> table and the Pyronaut version in <code><em>pyronaut</em>/install-state.json</code> after each install. A difference, or missing classpath manifests, runs <code>pyronaut install</code>.</p>
 </li>
 <li>
-<p>Python dependencies: the declarations <code>pyronaut install</code> last applied to <code>.venv</code> (recorded in <code>.venv/.pyronaut-requirements.json</code>) are compared with the current ones: <code>[project].dependencies</code>, <code>[dependency-groups]</code> and <code>requirements.txt</code> for pip, or <code>uv.lock</code> for uv projects. A difference installs only the Python dependencies into <code>.venv</code>. A project that sets <code>[tool.pyronaut.python] manage-dependencies = false</code> manages <code>.venv</code> itself and is never reinstalled.</p>
+<p>Python dependencies: the declarations <code>pyronaut install</code> last applied to <code>.venv</code> (recorded in <code>.venv/.pyronaut-requirements.json</code>) are compared with the current ones: <code>[project].dependencies</code>, <code>[dependency-groups]</code>, <code>requirements.txt</code> and <code>requirements-test.txt</code> for pip, or <code>uv.lock</code> for uv projects. A difference installs only the Python dependencies into <code>.venv</code>. A project that sets <code>[tool.pyronaut.python] manage-dependencies = false</code> manages <code>.venv</code> itself and is never reinstalled.</p>
 </li>
 </ul>
 </div>
