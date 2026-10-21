@@ -27,6 +27,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path, PureWindowsPath
+from types import ModuleType
 from typing import Callable, Iterable, Iterator, NamedTuple, Protocol, Sequence
 
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
@@ -3047,6 +3048,9 @@ def _run_build(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     fat_jar = packaging_format == "fat-jar"
     mode = "jvm" if packaging_format in {"fat-jar", "wheel-jvm", "docker-jvm"} else "native"
     docker_build = packaging_format.startswith("docker-")
@@ -3508,22 +3512,44 @@ def _read_pyproject_project_metadata(project_dir: Path) -> tuple[str, str]:
     return resolved_name, resolved_version
 
 
+_TOML_PARSER_FIX = "Python 3.10 needs the tomli package (pip install tomli) or use Python 3.11+"
+
+
+def _toml_parser(source: str) -> ModuleType:
+    """Return ``tomllib`` (Python 3.11+) or the ``tomli`` backport (Python 3.10).
+
+    Raises ``RuntimeError`` naming ``source`` when neither is importable, so a TOML file is never
+    silently ignored.
+    """
+    try:
+        import tomllib
+
+        return tomllib
+    except ImportError:
+        pass
+    try:
+        import tomli
+
+        return tomli
+    except ImportError as exc:
+        raise RuntimeError(f"{source} cannot be read: {_TOML_PARSER_FIX}") from exc
+
+
 def _read_pyproject_data(project_dir: Path) -> dict[str, object] | None:
+    """Parse ``pyproject.toml``; ``None`` only when the file does not exist.
+
+    A file that cannot be read or parsed raises ``RuntimeError`` rather than being treated as empty,
+    because ignoring it would silently drop every ``[tool.pyronaut]`` setting.
+    """
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
         return None
-    try:
-        import tomllib
-    except Exception:
-        try:
-            import tomli as tomllib
-        except Exception:
-            return None
+    tomllib = _toml_parser("pyproject.toml")
     try:
         with pyproject.open("rb") as fp:
             data = tomllib.load(fp)
-    except Exception:
-        return None
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"{pyproject} cannot be read: {exc}") from exc
     return data if isinstance(data, dict) else None
 
 
@@ -4023,8 +4049,8 @@ def _record_native_base_configuration(
     which settings to add.
     """
     import copy
-    import tomllib
 
+    tomllib = _toml_parser("pyproject.toml")
     pyproject = project_dir / "pyproject.toml"
     updates = [
         (("tool", "pyronaut", "packaging"), "format", packaging_format),
@@ -6978,10 +7004,8 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
 
     settings_path = _settings_path()
     try:
-        import tomllib
-
         with settings_path.open("rb") as settings_file:
-            proxy_config = tomllib.load(settings_file).get("proxy", {})
+            proxy_config = _toml_parser(_settings_label()).load(settings_file).get("proxy", {})
         if isinstance(proxy_config, dict):
             configured_url = proxy_config.get("url")
             if isinstance(configured_url, str) and configured_url.strip():
@@ -7000,7 +7024,7 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
                     credentials += "@"
                 configured_url = f"{protocol}://{credentials}{host.strip()}:{int(port)}"
                 return configured_url, _proxy_bypass_value(proxy_config)
-    except (OSError, ValueError, TypeError, ImportError):
+    except (OSError, ValueError, TypeError):
         pass
 
     maven_settings = Path.home() / ".m2" / "settings.xml"
@@ -7056,11 +7080,9 @@ def _read_pyronaut_user_settings() -> dict[str, object]:
     if not settings_path.is_file():
         return {}
     try:
-        import tomllib
-
         with settings_path.open("rb") as settings_file:
-            settings = tomllib.load(settings_file)
-    except (OSError, ValueError, TypeError, ImportError) as exc:
+            settings = _toml_parser(_settings_label()).load(settings_file)
+    except (OSError, ValueError, TypeError) as exc:
         raise RuntimeError(f"Failed reading {settings_path}: {exc}") from exc
     if not isinstance(settings, dict):
         raise RuntimeError(f"Invalid Pyronaut settings in {settings_path}")
@@ -10880,7 +10902,11 @@ def _uv_lock_file(project_dir: Path) -> Path | None:
     if (project_dir / "uv.lock").is_file():
         return project_dir / "uv.lock"
     for parent in project_dir.parents:
-        data = _read_pyproject_data(parent)
+        try:
+            data = _read_pyproject_data(parent)
+        except RuntimeError:
+            # An unreadable pyproject.toml above the project is not this project's configuration.
+            continue
         tool = data.get("tool") if isinstance(data, dict) else None
         uv = tool.get("uv") if isinstance(tool, dict) else None
         if isinstance(uv, dict) and isinstance(uv.get("workspace"), dict):
@@ -11367,6 +11393,7 @@ def _doctor_platform() -> str:
 def _doctor_checks(args: Sequence[str], project_dir: Path | None, *, offline: bool = False) -> list[tuple[str, str, _doctor.Check]]:
     checks: list[tuple[str, str, _doctor.Check]] = [
         ("python", "Python", _doctor_check_python),
+        ("toml", "TOML parser", _doctor_check_toml_parser),
         ("pyronaut", "Pyronaut SDK", lambda: _doctor_check_setup_state(args)),
         ("home", "Pyronaut state", _doctor_check_pyronaut_dirs),
         ("graalvm", "GraalVM JDK", lambda: _doctor_check_graalvm(project_dir)),
@@ -11442,6 +11469,24 @@ def _doctor_check_python() -> _doctor.CheckResult:
             data,
         )
     return _doctor.CheckResult("python", "Python", _doctor.PASS, f"{version} ({implementation}) at {sys.executable}", data=data)
+
+
+def _doctor_check_toml_parser() -> _doctor.CheckResult:
+    try:
+        parser = _toml_parser("pyproject.toml")
+    except RuntimeError:
+        info = sys.version_info
+        return _doctor.CheckResult(
+            "toml",
+            "TOML parser",
+            _doctor.FAIL,
+            f"Python {info.major}.{info.minor}.{info.micro} has no tomllib and tomli is not installed, so pyproject.toml cannot be read",
+            _TOML_PARSER_FIX,
+            {"module": None},
+        )
+    return _doctor.CheckResult(
+        "toml", "TOML parser", _doctor.PASS, f"{parser.__name__} is available", data={"module": parser.__name__}
+    )
 
 
 def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
@@ -12199,12 +12244,8 @@ def _read_application_config(project_dir: Path) -> tuple[dict[str, object], Path
     unparsed: list[str] = []
     toml_file = resources_dir / "application.toml"
     if toml_file.is_file():
-        try:
-            import tomllib
-        except ImportError:  # pragma: no cover - Python 3.10 without tomli
-            import tomli as tomllib  # type: ignore[no-redef]
         with toml_file.open("rb") as handle:
-            data = tomllib.load(handle)
+            data = _toml_parser(toml_file.name).load(handle)
         return (data if isinstance(data, dict) else {}), toml_file, unparsed
     properties_file = resources_dir / "application.properties"
     if properties_file.is_file():

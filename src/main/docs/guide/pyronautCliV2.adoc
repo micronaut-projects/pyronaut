@@ -152,6 +152,7 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 The checks, in order:
 
 - Python: the interpreter running the CLI is 3.10 or newer.
+- TOML parser: `tomllib` (Python 3.11 and newer) or the `tomli` package (Python 3.10) can be imported, so `pyproject.toml` can be read.
 - Pyronaut SDK: the installed wheel version and whether the cached setup state below `~/.pyronaut/setup` is valid for it (suggests `pyronaut setup`, or `pyronaut setup --refresh` when stale state exists).
 - GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. The check reports a warning when it silently ignores `JAVA_HOME` because it does not point to a compatible GraalVM.
 - GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks the GraalPy recorded by `pyronaut setup`, or a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.

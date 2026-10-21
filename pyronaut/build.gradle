@@ -475,7 +475,7 @@ authors = [{name = "Graeme Rocher"}]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ['tomli>=2.0; python_version < "3.11"']
 keywords = ["micronaut", "python", "java", "graalpy", "graalvm"]
 classifiers = [
     "Environment :: Console",
