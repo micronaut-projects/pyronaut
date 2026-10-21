@@ -62,6 +62,7 @@ class GraalPyProvisioningTest(unittest.TestCase):
         )
         self._env.start()
         os.environ.pop("PYENV_VERSION", None)
+        os.environ.pop("PYRONAUT_HOME", None)
         self._home_patch = patch("pathlib.Path.home", return_value=self.home)
         self._home_patch.start()
         self._impl_patch = patch.object(cli, "_running_graalpy", return_value=None)

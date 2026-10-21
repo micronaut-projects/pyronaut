@@ -183,6 +183,8 @@ class RunUpdateTest(unittest.TestCase):
         ]
         for active in self.patches:
             active.start()
+        # An inherited PYRONAUT_HOME would take precedence over Path.home.
+        os.environ.pop("PYRONAUT_HOME", None)
         self.downloads = []
 
     def tearDown(self):
