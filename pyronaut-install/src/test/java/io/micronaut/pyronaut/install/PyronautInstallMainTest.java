@@ -6,6 +6,11 @@ import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
+import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
+import org.eclipse.aether.supplier.RepositorySystemSupplier;
+import org.eclipse.aether.spi.connector.transport.TransporterFactory;
+import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +20,8 @@ import java.io.IOException;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.io.StringWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1873,6 +1880,122 @@ class PyronautInstallMainTest {
             model, InstallScope.RUNTIME, tempDir.resolve("m2-custom-bom"), false);
         assertTrue(result.classpath().stream().anyMatch(path -> path.getFileName().toString().contains("root-1.0.0")));
         assertTrue(result.classpath().stream().noneMatch(path -> path.getFileName().toString().contains("transitive-1.0.0")));
+    }
+
+    @Test
+    void resolvesUnusedVersionlessBomEntryAlongsideGenuineImport() throws Exception {
+        Path repository = tempDir.resolve("repo-unused-versionless-bom");
+        writeBom(repository, "com.example", "imported-bom", "1.0.0",
+            List.of(new ManagedDependency("com.example", "root", "2.3.4")));
+        Path customBom = repository.resolve("com/example/custom-bom/1.0.0/custom-bom-1.0.0.pom");
+        Files.createDirectories(customBom.getParent());
+        Files.writeString(customBom, """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>custom-bom</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.example</groupId>
+                    <artifactId>imported-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                  <dependency>
+                    <groupId>io.grpc</groupId>
+                    <artifactId>grpc-bom</artifactId>
+                    <exclusions>
+                      <exclusion>
+                        <groupId>io.grpc</groupId>
+                        <artifactId>grpc-netty-shaded</artifactId>
+                      </exclusion>
+                    </exclusions>
+                  </dependency>
+                  <dependency>
+                    <groupId>com.example</groupId>
+                    <artifactId>metadata-pom</artifactId>
+                    <type>pom</type>
+                    <scope>runtime</scope>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """, StandardCharsets.UTF_8);
+        writeArtifact(repository, "com.example", "root", "2.3.4");
+        Path localRepository = tempDir.resolve("m2-unused-versionless-bom");
+        RepositorySystem delegate = new RepositorySystemSupplier() {
+            @Override
+            protected Map<String, TransporterFactory> createTransporterFactories() {
+                return Map.of(FileTransporterFactory.NAME, new FileTransporterFactory());
+            }
+        }.get();
+        RepositorySystem recordingSystem = (RepositorySystem) Proxy.newProxyInstance(
+            RepositorySystem.class.getClassLoader(), new Class<?>[]{RepositorySystem.class}, (proxy, method, args) -> {
+                if ("readArtifactDescriptor".equals(method.getName())) {
+                    var requested = ((ArtifactDescriptorRequest) args[1]).getArtifact();
+                    assertFalse(List.of("io.grpc:grpc-bom", "com.example:metadata-pom")
+                            .contains(requested.getGroupId() + ":" + requested.getArtifactId()),
+                        "Versionless managed entries must not trigger a descriptor lookup");
+                }
+                try {
+                    return method.invoke(delegate, args);
+                } catch (InvocationTargetException e) {
+                    throw e.getCause();
+                }
+            });
+        MavenClasspathResolver resolver = new MavenClasspathResolver(recordingSystem, new ProxyConfigurationLoader());
+        MavenClasspathResolver.ResolvedScopeDetails result = resolver.resolveScopeDetails(
+            bomManagementModel(repository, "com.example:root", "custom-bom"),
+            InstallScope.RUNTIME, localRepository, false);
+        assertTrue(hasJar(result, "root-2.3.4.jar"));
+        assertFalse(Files.exists(localRepository.resolve("io/grpc/grpc-bom")));
+        assertFalse(Files.exists(localRepository.resolve("com/example/metadata-pom")));
+    }
+
+    @Test
+    void reportsInvalidConfiguredBomCoordinates() throws Exception {
+        Path repository = tempDir.resolve("repo-invalid-bom-coordinates");
+        Files.createDirectories(repository);
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("com.example:root:2.3.4"), List.of(), List.of(), List.of(),
+                List.of("com.example:invalid-bom:.."), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, () ->
+            new MavenClasspathResolver().resolveScopeDetails(model, InstallScope.RUNTIME,
+                tempDir.resolve("m2-invalid-bom-coordinates"), false));
+        assertTrue(failure.getMessage().contains("com.example:invalid-bom:pom:.."), failure.getMessage());
+        assertTrue(failure.getCause() instanceof IllegalArgumentException, failure.toString());
+    }
+
+    @Test
+    void keepsFailedInferredBomLookupsOptional() throws Exception {
+        Path repository = tempDir.resolve("repo-invalid-optional-bom-coordinates");
+        writeBom(repository, "com.example", "custom-bom", "1.0.0", List.of(
+            new ManagedDependency("com.example", "root", "2.3.4"),
+            new ManagedDependency("com.example", "invalid-bom", ".."),
+            new ManagedDependency("com.example", "unavailable-bom", "1.0.0")));
+        writeArtifact(repository, "com.example", "root", "2.3.4");
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            bomManagementModel(repository, "com.example:root", "custom-bom"), InstallScope.RUNTIME,
+            tempDir.resolve("m2-invalid-optional-bom-coordinates"), false);
+        assertTrue(hasJar(result, "root-2.3.4.jar"));
+    }
+
+    private static PyprojectModel bomManagementModel(Path repository, String dependency, String... bomNames) {
+        return new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of(dependency), List.of(dependency), List.of(dependency), List.of(dependency),
+                Stream.of(bomNames).map(name -> "com.example:" + name + ":1.0.0").toList(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+    }
+
+    private static boolean hasJar(MavenClasspathResolver.ResolvedScopeDetails result, String filename) {
+        return result.classpath().stream().anyMatch(path -> path.getFileName().toString().equals(filename));
     }
 
     @Test

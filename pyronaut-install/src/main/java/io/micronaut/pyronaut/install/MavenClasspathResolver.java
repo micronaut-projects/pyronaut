@@ -1331,6 +1331,10 @@ final class MavenClasspathResolver {
                                                LinkedHashSet<String> visitedBoms,
                                                Map<String, Dependency> managedDependencies) {
         String bomKey = bomArtifact.getGroupId() + ":" + bomArtifact.getArtifactId() + ":" + bomArtifact.getVersion();
+        if (normalizedVersion(bomArtifact.getVersion()) == null) {
+            throw new PyprojectModelException("Cannot read managed dependency BOM "
+                + bomArtifact.getGroupId() + ":" + bomArtifact.getArtifactId() + ": version is missing");
+        }
         if (!visitedBoms.add(bomKey)) {
             return;
         }
@@ -1341,8 +1345,10 @@ final class MavenClasspathResolver {
         ArtifactDescriptorResult result;
         try {
             result = repositorySystem.readArtifactDescriptor(session, request);
-        } catch (ArtifactDescriptorException e) {
-            throw new PyprojectModelException("Failed to read managed dependency BOM: " + bomArtifact, e);
+        } catch (ArtifactDescriptorException | RuntimeException e) {
+            Throwable reason = e.getCause() == null ? e : e.getCause();
+            throw new PyprojectModelException("Failed to read managed dependency BOM: " + bomArtifact
+                + ": " + reason.getMessage(), e);
         }
         for (Dependency dependency : result.getManagedDependencies()) {
             Artifact artifact = dependency.getArtifact();
@@ -1354,6 +1360,11 @@ final class MavenClasspathResolver {
                 continue;
             }
             managedDependencies.putIfAbsent(managedDependencyKey(artifact), dependency);
+            // A management entry can supply exclusions without a version. Keep its
+            // metadata, but never construct an inferred BOM lookup with an empty version.
+            if (normalizedVersion(artifact.getVersion()) == null) {
+                continue;
+            }
             if ("pom".equals(artifact.getExtension())) {
                 addManagedDependenciesFromBom(artifact, repositories, session, visitedBoms, managedDependencies);
             } else if (artifact.getArtifactId().endsWith("-bom")) {
