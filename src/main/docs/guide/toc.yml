@@ -34,6 +34,7 @@ configuration:
   mavenGradle: Using Maven and Gradle Projects
   directSourceDeclarations: Declaring Direct Source Dependencies
   mavenRepositories: Configuring Maven Repositories
+  dependencyLocking: Locking Maven Dependencies
   proxyConfig: Proxy Configuration
   incrementalProcessing: Incremental Processing
 packaging:

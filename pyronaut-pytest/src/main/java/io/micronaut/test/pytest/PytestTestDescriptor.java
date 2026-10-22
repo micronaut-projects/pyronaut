@@ -23,7 +23,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Test descriptor for an individual Python test function or method.
+ * Source container for a Python test function or method and its runtime pytest cases.
  */
 public final class PytestTestDescriptor extends AbstractTestDescriptor {
 
@@ -47,7 +47,12 @@ public final class PytestTestDescriptor extends AbstractTestDescriptor {
 
     @Override
     public Type getType() {
-        return Type.TEST;
+        return Type.CONTAINER;
+    }
+
+    @Override
+    public boolean mayRegisterTests() {
+        return true;
     }
 
     public Path getFilePath() {

@@ -215,18 +215,13 @@ class ApplicationContextWrapper:
                 raise KeyError(f"Key '{key}' not found in context")
 
         if isinstance(key, type):
-            lookup_key = self._python_type_to_lookup_key(key)
-            try:
-                return java.type(lookup_key), lookup_key
-            except BaseException:
-                class_name = key.__name__
-                if lookup_key == f"{class_name}.{class_name}":
-                    fallback_key = f"python.{class_name}"
-                    try:
-                        return java.type(fallback_key), fallback_key
-                    except BaseException:
-                        pass
-                raise KeyError(f"Key '{lookup_key}' not found in context")
+            candidates = self._python_type_lookup_candidates(key)
+            for candidate in candidates:
+                try:
+                    return java.type(candidate), candidate
+                except BaseException:
+                    continue
+            raise KeyError(f"Key '{candidates[0]}' not found in context")
 
         foreign_key = self._unwrap_micronaut_java_type(key)
         lookup_key = self._foreign_java_class_name(foreign_key)
@@ -252,6 +247,17 @@ class ApplicationContextWrapper:
                 pass
         return getattr(key, "_target", key)
 
+    def _python_type_lookup_candidates(self, key):
+        """Return the Java class names Core may generate for a Python class."""
+        candidates = [self._python_type_to_lookup_key(key)]
+        # Core puts the classes of a top-level module in the 'python' package
+        # and the classes of a module inside a package in that package.
+        package = key.__module__.rpartition('.')[0] or 'python'
+        fallback = f"{package}.{key.__qualname__}"
+        if fallback not in candidates:
+            candidates.append(fallback)
+        return candidates
+
     def _python_type_to_lookup_key(self, key):
         module_name = key.__module__
         qualname = key.__qualname__
@@ -265,8 +271,8 @@ class ApplicationContextWrapper:
             fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
         else:
             snake_class_name = self._camel_to_snake(class_name)
-            if module_name.endswith(f'.{snake_class_name}'):
-                stripped_module = module_name[:-len(f'.{snake_class_name}')]
+            if module_name.endswith((f'.{snake_class_name}', f'.test_{snake_class_name}')):
+                stripped_module = module_name.rsplit('.', 1)[0]
                 fqn = f"{stripped_module}.{qualname}" if stripped_module else qualname
         return fqn
 

@@ -20,7 +20,9 @@ import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.AnnotationMemberDeclaration;
+import com.github.javaparser.ast.body.CallableDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.EnumConstantDeclaration;
 import com.github.javaparser.ast.body.EnumDeclaration;
@@ -31,18 +33,25 @@ import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.comments.JavadocComment;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.type.ArrayType;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.PrimitiveType;
 import com.github.javaparser.ast.type.Type;
+import com.github.javaparser.ast.type.TypeParameter;
 import com.github.javaparser.ast.type.VarType;
 import com.github.javaparser.javadoc.Javadoc;
 import com.github.javaparser.javadoc.JavadocBlockTag;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -98,6 +107,7 @@ final class SourceDocumentationParser {
         List<String> typeAnnotations = typeDeclaration.getAnnotations().stream()
             .map(SourceDocumentationParser::annotationName)
             .toList();
+        Map<String, Type> typeVariables = enclosingTypeVariables(typeDeclaration);
         Map<MemberKey, MemberMetadata> members = new LinkedHashMap<>();
         for (ConstructorDeclaration constructor : typeDeclaration.getConstructors()) {
             members.putIfAbsent(
@@ -105,7 +115,7 @@ final class SourceDocumentationParser {
                     MemberKind.CONSTRUCTOR,
                     constructor.getNameAsString(),
                     constructor.getParameters().size(),
-                    parameterTypes(constructor)
+                    parameterTypes(constructor, typeVariables)
                 ),
                 new MemberMetadata(
                     extractDocumentation(constructor.getJavadocComment()),
@@ -119,7 +129,7 @@ final class SourceDocumentationParser {
                     MemberKind.METHOD,
                     method.getNameAsString(),
                     method.getParameters().size(),
-                    parameterTypes(method)
+                    parameterTypes(method, typeVariables)
                 ),
                 new MemberMetadata(
                     extractDocumentation(method.getJavadocComment()),
@@ -164,7 +174,7 @@ final class SourceDocumentationParser {
                 );
             }
         }
-        return new ParsedSourceDocumentation(classDocumentation, typeAnnotations, Map.copyOf(members));
+        return new ParsedSourceDocumentation(classDocumentation, typeAnnotations, Collections.unmodifiableMap(members));
     }
 
     private static String annotationName(AnnotationExpr annotationExpr) {
@@ -173,20 +183,54 @@ final class SourceDocumentationParser {
         return dotIndex > -1 ? name.substring(dotIndex + 1) : name;
     }
 
-    private static List<String> parameterNames(com.github.javaparser.ast.body.CallableDeclaration<?> declaration) {
+    private static List<String> parameterNames(CallableDeclaration<?> declaration) {
         return declaration.getParameters().stream()
             .map(Parameter::getNameAsString)
             .toList();
     }
 
-    private static List<String> parameterTypes(com.github.javaparser.ast.body.CallableDeclaration<?> declaration) {
-        return declaration.getParameters().stream()
-            .map(Parameter::getType)
-            .map(SourceDocumentationParser::normalizeType)
-            .toList();
+    /**
+     * Normalizes each parameter type to the simple name of its erasure, which is what the
+     * bytecode and reflection descriptors expose: type variables become their first bound
+     * (or {@code Object}) and varargs become arrays.
+     */
+    private static List<String> parameterTypes(CallableDeclaration<?> declaration, Map<String, Type> enclosingTypeVariables) {
+        Map<String, Type> typeVariables = enclosingTypeVariables;
+        if (!declaration.getTypeParameters().isEmpty()) {
+            typeVariables = new HashMap<>(enclosingTypeVariables);
+            for (TypeParameter typeParameter : declaration.getTypeParameters()) {
+                typeVariables.put(typeParameter.getNameAsString(), firstBound(typeParameter));
+            }
+        }
+        List<String> types = new ArrayList<>(declaration.getParameters().size());
+        for (Parameter parameter : declaration.getParameters()) {
+            String type = normalizeType(parameter.getType(), typeVariables, new HashSet<>());
+            types.add(parameter.isVarArgs() ? type + "[]" : type);
+        }
+        return List.copyOf(types);
     }
 
-    private static String normalizeType(Type type) {
+    private static Map<String, Type> enclosingTypeVariables(TypeDeclaration<?> typeDeclaration) {
+        List<Node> enclosing = new ArrayList<>();
+        for (Node node = typeDeclaration; node != null; node = node.getParentNode().orElse(null)) {
+            enclosing.add(0, node);
+        }
+        Map<String, Type> typeVariables = new HashMap<>();
+        for (Node node : enclosing) {
+            if (node instanceof NodeWithTypeParameters<?> withTypeParameters) {
+                for (TypeParameter typeParameter : withTypeParameters.getTypeParameters()) {
+                    typeVariables.put(typeParameter.getNameAsString(), firstBound(typeParameter));
+                }
+            }
+        }
+        return typeVariables;
+    }
+
+    private static Type firstBound(TypeParameter typeParameter) {
+        return typeParameter.getTypeBound().isEmpty() ? null : typeParameter.getTypeBound().get(0);
+    }
+
+    private static String normalizeType(Type type, Map<String, Type> typeVariables, Set<String> resolving) {
         if (type == null) {
             return "Any";
         }
@@ -194,10 +238,18 @@ final class SourceDocumentationParser {
             return primitiveType.asString();
         }
         if (type instanceof ArrayType arrayType) {
-            return normalizeType(arrayType.getComponentType()) + "[]";
+            return normalizeType(arrayType.getComponentType(), typeVariables, resolving) + "[]";
         }
         if (type instanceof ClassOrInterfaceType classOrInterfaceType) {
-            return classOrInterfaceType.getName().getIdentifier();
+            String identifier = classOrInterfaceType.getName().getIdentifier();
+            if (classOrInterfaceType.getScope().isEmpty() && typeVariables.containsKey(identifier)) {
+                Type bound = typeVariables.get(identifier);
+                if (bound == null || !resolving.add(identifier)) {
+                    return "Object";
+                }
+                return normalizeType(bound, typeVariables, resolving);
+            }
+            return identifier;
         }
         if (type instanceof VarType) {
             return "var";
@@ -449,13 +501,19 @@ final class SourceDocumentationParser {
             if (exact != null) {
                 return exact;
             }
+            // Without an exact signature match, only a sole same-arity candidate is unambiguous; borrowing
+            // documentation from an arbitrary overload would pair its parameter names with other types.
+            MemberMetadata candidate = null;
             for (Map.Entry<MemberKey, MemberMetadata> entry : members.entrySet()) {
                 MemberKey key = entry.getKey();
                 if (key.kind() == kind && key.arity() == arity && key.name().equals(name)) {
-                    return entry.getValue();
+                    if (candidate != null) {
+                        return null;
+                    }
+                    candidate = entry.getValue();
                 }
             }
-            return null;
+            return candidate;
         }
     }
 }

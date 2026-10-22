@@ -104,6 +104,81 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void cachedFailurePrintsFirstErrorsFromJsonReport() throws Exception {
+        Path project = prepareProject();
+        AtomicInteger runs = new AtomicInteger();
+        PyronautValidateConfigMain command = new PyronautValidateConfigMain(
+            new io.micronaut.pyronaut.config.model.PyprojectModelReader(),
+            settings -> {
+                runs.incrementAndGet();
+                Path reportDir = settings.outputDir();
+                Files.createDirectories(reportDir);
+                StringBuilder errors = new StringBuilder();
+                for (int i = 0; i < 7; i++) {
+                    errors.append(i == 0 ? "" : ",").append("""
+                        {"property":"micronaut.server.p%d","type":"ERROR","message":"Expected integer","originLocation":"application.toml","lineNumber":2}
+                        """.formatted(i).trim());
+                }
+                Files.writeString(reportDir.resolve("configuration-errors.json"),
+                    "{\"configurationErrors\":[" + errors + "],\"dependencyInjectionErrors\":[]}\n");
+                return new PyronautValidateConfigMain.ValidationExecutionResult(true);
+            }
+        );
+
+        assertEquals(1, new CommandLine(command).execute("--project-dir", project.toString(), "--format", "json"));
+        int exit;
+        String output;
+        try (CapturedStderr err = new CapturedStderr()) {
+            exit = new CommandLine(command).execute("--project-dir", project.toString(), "--format", "json");
+            output = err.output();
+        }
+
+        assertEquals(1, exit);
+        assertEquals(1, runs.get());
+        assertTrue(output.contains("Configuration validation failed (cached)"), output);
+        assertTrue(output.contains("  micronaut.server.p0: Expected integer (application.toml)"), output);
+        assertTrue(output.contains("  micronaut.server.p4: Expected integer"), output);
+        assertFalse(output.contains("micronaut.server.p5"), output);
+        assertTrue(output.contains("  ... and 2 more"), output);
+    }
+
+    @Test
+    void cachedErrorsIncludeDependencyInjectionErrorsAndSkipWarnings() throws Exception {
+        Path reportDir = Files.createDirectories(tempDir.resolve("reports"));
+        Files.writeString(reportDir.resolve("configuration-errors.json"), """
+            {"configurationErrors":[
+              {"property":"a.b","type":"WARNING","message":"Suppressed"},
+              {"property":"micronaut.server.port","type":"ERROR","message":"Expected integer"}
+            ],"dependencyInjectionErrors":[{"bean":"Consumer","details":"No bean of type [Collaborator] exists"}]}
+            """);
+
+        String output;
+        try (CapturedStderr err = new CapturedStderr()) {
+            PyronautValidateConfigMain.printCachedErrors(System.err, reportDir);
+            output = err.output();
+        }
+
+        assertEquals(String.join(System.lineSeparator(),
+            "  micronaut.server.port: Expected integer",
+            "  Consumer: No bean of type [Collaborator] exists",
+            ""), output);
+    }
+
+    @Test
+    void cachedErrorsPrintNothingWithoutAReadableJsonReport() throws Exception {
+        Path reportDir = Files.createDirectories(tempDir.resolve("reports"));
+        String output;
+        try (CapturedStderr err = new CapturedStderr()) {
+            PyronautValidateConfigMain.printCachedErrors(System.err, reportDir);
+            Files.writeString(reportDir.resolve("configuration-errors.json"), "not json");
+            PyronautValidateConfigMain.printCachedErrors(System.err, reportDir);
+            output = err.output();
+        }
+
+        assertEquals("", output);
+    }
+
+    @Test
     void validateConfigReturnsValidationErrorWhenDiErrorsPresentAndEnabled() throws Exception {
         Path project = prepareProject();
         PyronautValidateConfigMain command = new PyronautValidateConfigMain(
@@ -683,6 +758,24 @@ class PyronautValidateConfigMainTest {
             return (String) method.invoke(null, property);
         } catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private static final class CapturedStderr implements AutoCloseable {
+        private final PrintStream original = System.err;
+        private final ByteArrayOutputStream captured = new ByteArrayOutputStream();
+
+        CapturedStderr() {
+            System.setErr(new PrintStream(captured, true, UTF_8));
+        }
+
+        String output() {
+            return captured.toString(UTF_8);
+        }
+
+        @Override
+        public void close() {
+            System.setErr(original);
         }
     }
 

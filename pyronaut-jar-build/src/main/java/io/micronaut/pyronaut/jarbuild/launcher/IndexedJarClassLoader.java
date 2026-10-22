@@ -27,7 +27,12 @@ import java.security.SecureClassLoader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -47,6 +52,7 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
     private final JarFile jarFile;
     private final List<Root> roots;
     private final String mainClass;
+    private final AtomicReference<Map<String, Set<String>>> directoryIndex = new AtomicReference<>();
 
     IndexedJarClassLoader(Path archive) throws IOException {
         super(ClassLoader.getPlatformClassLoader());
@@ -96,7 +102,16 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
             }
         }
         JarEntry services = findMicronautServiceDirectory(name);
-        return services == null ? null : entryUrlOrNull(services);
+        if (services != null) {
+            return entryUrlOrNull(services);
+        }
+        for (Root root : roots) {
+            URL url = directoryUrlOrNull(root, name);
+            if (url != null) {
+                return url;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -111,11 +126,9 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
         }
         for (Root root : roots) {
             JarEntry entry = findEntry(root, name);
-            if (entry != null) {
-                URL url = entryUrlOrNull(entry);
-                if (url != null) {
-                    resources.add(url);
-                }
+            URL url = entry != null ? entryUrlOrNull(entry) : directoryUrlOrNull(root, name);
+            if (url != null) {
+                resources.add(url);
             }
         }
         return Collections.enumeration(resources);
@@ -145,7 +158,10 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
                     }
                     String prefix = value.substring(0, separator);
                     boolean multiRelease = Boolean.parseBoolean(value.substring(separator + 1));
-                    configuredRoots.add(new Root(prefix, multiRelease, readManifest(prefix), rootUrl(prefix)));
+                    configuredRoots.add(new Root(
+                        prefix, multiRelease, readManifest(prefix), rootUrl(prefix),
+                        new RootJarUrlHandler(archive, prefix, () -> directories(prefix))
+                    ));
                 }
             }
         }
@@ -192,6 +208,64 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
     private byte[] read(JarEntry entry) throws IOException {
         try (InputStream input = jarFile.getInputStream(entry)) {
             return input.readAllBytes();
+        }
+    }
+
+    /**
+     * Returns a URL for {@code name} as a directory of {@code root}, or
+     * {@code null} when the root holds nothing below it. Roots carry no
+     * directory entries, and a plain {@code jar:} URL into the outer archive
+     * would make scanners such as Flyway's list the archive root rather than
+     * this classpath root, so directories are served through
+     * {@link RootJarUrlHandler}.
+     */
+    private URL directoryUrlOrNull(Root root, String name) {
+        String directory = name.endsWith("/") ? name.substring(0, name.length() - 1) : name;
+        if (directory.startsWith("/") || !directories(root.prefix()).contains(directory)) {
+            return null;
+        }
+        return root.urlHandler().url(directory.isEmpty() ? "" : directory + "/");
+    }
+
+    /**
+     * Lazily lists every directory below each root, including the root itself
+     * as {@code ""}, from the entries of the archive. Built on the first
+     * directory lookup so plain resource and class loading never pay for it.
+     */
+    private Map<String, Set<String>> directoryIndex() {
+        // Building is idempotent, so a rare concurrent duplicate build is harmless.
+        return directoryIndex.updateAndGet(existing -> existing != null ? existing : buildDirectoryIndex());
+    }
+
+    private Map<String, Set<String>> buildDirectoryIndex() {
+        Map<String, Set<String>> byPrefix = new HashMap<>();
+        for (Root root : roots) {
+            byPrefix.put(root.prefix(), new HashSet<>());
+        }
+        Enumeration<JarEntry> entries = jarFile.entries();
+        while (entries.hasMoreElements()) {
+            String name = entries.nextElement().getName();
+            for (int slash = name.indexOf('/'); slash >= 0; slash = name.indexOf('/', slash + 1)) {
+                Set<String> directories = byPrefix.get(name.substring(0, slash + 1));
+                if (directories != null) {
+                    addParentDirectories(directories, name.substring(slash + 1));
+                    break;
+                }
+            }
+        }
+        Map<String, Set<String>> completed = new HashMap<>();
+        byPrefix.forEach((prefix, directories) -> completed.put(prefix, Set.copyOf(directories)));
+        return Map.copyOf(completed);
+    }
+
+    private Set<String> directories(String prefix) {
+        return directoryIndex().getOrDefault(prefix, Set.of());
+    }
+
+    private static void addParentDirectories(Set<String> directories, String relativeName) {
+        directories.add("");
+        for (int slash = relativeName.indexOf('/'); slash > 0; slash = relativeName.indexOf('/', slash + 1)) {
+            directories.add(relativeName.substring(0, slash));
         }
     }
 
@@ -295,6 +369,6 @@ final class IndexedJarClassLoader extends SecureClassLoader implements AutoClose
     private record Index(String mainClass, List<Root> roots) {
     }
 
-    private record Root(String prefix, boolean multiRelease, Manifest manifest, URL url) {
+    private record Root(String prefix, boolean multiRelease, Manifest manifest, URL url, RootJarUrlHandler urlHandler) {
     }
 }

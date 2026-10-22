@@ -25,6 +25,7 @@ import org.junit.platform.engine.EngineExecutionListener;
 import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.reporting.ReportEntry;
+import org.junit.platform.engine.support.descriptor.AbstractTestDescriptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +38,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,6 +67,9 @@ public class JUnitPytestTestListener implements PytestTestListener {
     private final Map<String, TestStreamOutput> outputByTest = new LinkedHashMap<>();
     private final Map<String, TestExecutionResult> lifecycleFailures = new LinkedHashMap<>();
     private final Map<String, Long> testStartNanos = new HashMap<>();
+    private final Map<String, TestDescriptor> invocations = new LinkedHashMap<>();
+    private final Set<PytestTestDescriptor> startedSources = new LinkedHashSet<>();
+    private final Set<PytestTestDescriptor> finishedSources = new HashSet<>();
     private final Instant sessionStartedAt = Instant.now();
     private final long sessionStartNanos = System.nanoTime();
     private TestExecutionResult sessionResult = TestExecutionResult.successful();
@@ -147,7 +152,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
         writeEvent("test_started", testId, null, Map.of());
         testStartNanos.put(testId, System.nanoTime());
 
-        PytestTestDescriptor testDescriptor = findDescriptor(testId);
+        TestDescriptor testDescriptor = invocation(testId);
         if (testDescriptor != null) {
             junitListener.executionStarted(testDescriptor);
             runBeforeEach(testId, item);
@@ -158,7 +163,7 @@ public class JUnitPytestTestListener implements PytestTestListener {
     public void afterTest(String testId, Value item, TestExecutionResult result) {
         LOG.debug("Pytest finished test: {} with result: {}", testId, result);
         TestExecutionResult finalResult = mergeLifecycleFailure(testId, result);
-        PytestTestDescriptor testDescriptor = findDescriptor(testId);
+        TestDescriptor testDescriptor = invocation(testId);
         if (testDescriptor != null) {
             runAfterEach(testId, item);
         }
@@ -198,6 +203,35 @@ public class JUnitPytestTestListener implements PytestTestListener {
         return null;
     }
 
+    private TestDescriptor invocation(String testId) {
+        TestDescriptor existing = invocations.get(testId);
+        if (existing != null) {
+            return existing;
+        }
+        PytestTestDescriptor source = findDescriptor(testId);
+        if (source == null) {
+            return null;
+        }
+        if (startedSources.add(source)) {
+            junitListener.executionStarted(source);
+        }
+        int separator = testId.indexOf("::");
+        String invocationId = separator < 0 ? testId
+            : testId.substring(0, separator).replace('\\', '/') + testId.substring(separator);
+        TestDescriptor invocation = new AbstractTestDescriptor(
+            source.getUniqueId().append("invocation", invocationId),
+            testId, source.getSource().orElse(null)) {
+            @Override
+            public Type getType() {
+                return Type.TEST;
+            }
+        };
+        source.addChild(invocation);
+        invocations.put(testId, invocation);
+        junitListener.dynamicTestRegistered(invocation);
+        return invocation;
+    }
+
     @Override
     public void onResult(TestExecutionResult result) {
         LOG.debug("Pytest session completed");
@@ -212,6 +246,22 @@ public class JUnitPytestTestListener implements PytestTestListener {
         payload.put("skipped", Long.toString(skipped));
         writeEvent("session_finished", null, result.getStatus().name(), payload);
         writeHtmlReport();
+    }
+
+    /**
+     * Completes source containers after the executor has validated the pytest session.
+     *
+     * @param result the validated session result
+     */
+    public void finishSources(TestExecutionResult result) {
+        for (TestDescriptor descriptor : allDescriptors) {
+            if (descriptor instanceof PytestTestDescriptor source && finishedSources.add(source)) {
+                if (startedSources.add(source)) {
+                    junitListener.executionStarted(source);
+                }
+                junitListener.executionFinished(source, result);
+            }
+        }
     }
 
     TestExecutionResult sessionResult() {
@@ -255,10 +305,10 @@ public class JUnitPytestTestListener implements PytestTestListener {
             payload.put("text", text);
             writeEvent("test_output", testId, null, payload);
         }
-        allDescriptors
-            .stream()
-            .filter(child -> child instanceof PytestTestDescriptor ptd && ptd.matchesId(testId))
-            .findAny().ifPresent(td -> junitListener.reportingEntryPublished(td, ReportEntry.from(stream, text)));
+        TestDescriptor invocation = invocations.get(testId);
+        if (invocation != null) {
+            junitListener.reportingEntryPublished(invocation, ReportEntry.from(stream, text));
+        }
     }
 
     private void runBeforeEach(String testId, Value item) {

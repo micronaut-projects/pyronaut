@@ -22,9 +22,13 @@ It creates `.venv` with the GraalPy interpreter provisioned by `pyronaut setup` 
 - the requirements in `[project].dependencies`
 - every group in PEP 735 `[dependency-groups]`, following `include-group` entries
 - `requirements.txt` in the project directory
+- `requirements-test.txt` in the project directory, for packages only the tests import
 - `pytest`, when the project has Python tests and does not declare it
 
 Pyronaut skips `pip` while these declarations are unchanged. Use `pyronaut install --refresh` to reinstall them.
+`pyronaut dev`, `pyronaut run` and `pyronaut test` run the install step first when any of these declarations, including `requirements-test.txt`, changed since the last install.
+
+NOTE: A project managed by uv is synced with `uv sync` instead of `pip`, which reads neither `requirements.txt` nor `requirements-test.txt`. Pyronaut reads `requirements-test.txt` only for virtual environments it installs with `pip`; in a uv project declare test-only packages in a `[dependency-groups]` group such as `test`. See <<python-uv-projects,uv projects>>.
 
 == Java dependencies
 

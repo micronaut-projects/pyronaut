@@ -95,6 +95,8 @@ apt-get install --yes --no-install-recommends ca-certificates curl docker.io jq 
 rm -rf /work
 mkdir -p /work/downloads /work/home /work/logs /work/projects
 export HOME=/work/home
+# The checks below inspect ~/.pyronaut; Linux otherwise defaults to the XDG layout.
+export PYRONAUT_XDG=false
 export PATH=/work/cpython-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 : "${PYRONAUT_RELEASE_TOKEN:?PYRONAUT_RELEASE_TOKEN is required}"
@@ -727,7 +729,8 @@ runners are too small; see [GitLab CI](#gitlab-ci) for the pipeline.
   an `aarch64` bundle is trained on an `aarch64` host. Do not train under
   emulation: it skews the profile and is very slow.
 - A GraalPy installation matching `pyronautPyenvVersion` in `gradle.properties`
-  (`~/.pyenv/versions/<version>/bin/graalpy`), or pass
+  (`$PYENV_ROOT/versions/<version>/bin/graalpy`, where `PYENV_ROOT` defaults to
+  `~/.pyenv`), or pass
   `-Ppyronaut.pgo.graalpy=/path/to/graalpy`. It runs the Pyronaut CLI during
   training.
 - No Docker, database or Test Resources containers.

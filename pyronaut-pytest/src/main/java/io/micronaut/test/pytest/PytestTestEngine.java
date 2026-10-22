@@ -28,6 +28,7 @@ import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.engine.discovery.DirectorySelector;
 import org.junit.platform.engine.discovery.FileSelector;
 import org.junit.platform.engine.discovery.PackageNameFilter;
+import org.junit.platform.engine.discovery.UniqueIdSelector;
 import org.junit.platform.engine.support.descriptor.EngineDescriptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +71,7 @@ public class PytestTestEngine implements TestEngine {
     @Override
     public TestDescriptor discover(EngineDiscoveryRequest discoveryRequest, UniqueId uniqueId) {
         LOG.debug("Starting test discovery with uniqueId: {}", uniqueId);
+        rejectUnsupportedUniqueIdSelectors(discoveryRequest);
         var configurationParameters = discoveryRequest.getConfigurationParameters();
         if (this.context == null) {
             createGraalPyContext(configurationParameters);
@@ -120,6 +122,16 @@ public class PytestTestEngine implements TestEngine {
         LOG.debug("Discovery completed. Found {} test descriptors", engineDescriptor.getChildren().size());
 
         return engineDescriptor;
+    }
+
+    static void rejectUnsupportedUniqueIdSelectors(EngineDiscoveryRequest request) {
+        for (UniqueIdSelector selector : request.getSelectorsByType(UniqueIdSelector.class)) {
+            String engine = selector.getUniqueId().getEngineId().orElse("");
+            if (ENGINE_ID.equals(engine) || "pytest-engine".equals(engine)) {
+                throw new IllegalArgumentException("Pytest UniqueId selection is not supported: "
+                    + selector.getUniqueId() + ". Select a Python file or directory instead.");
+            }
+        }
     }
 
     private void createGraalPyContext(ConfigurationParameters configurationParameters) {

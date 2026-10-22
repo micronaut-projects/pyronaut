@@ -27,6 +27,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path, PureWindowsPath
+from types import ModuleType
 from typing import Callable, Iterable, Iterator, NamedTuple, Protocol, Sequence
 
 from .progress import PROGRESS_EPOCH_ENV as _PROGRESS_EPOCH_ENV
@@ -35,6 +36,11 @@ from .progress import console as _progress_console
 from .progress import format_bytes as _format_bytes
 from .progress import progress_epoch_ms as _progress_epoch_ms
 from . import aot_cache as _aot_cache
+from . import home as _home
+from .home import cache_home as _cache_home
+from .home import config_home as _config_home
+from .home import data_home as _data_home
+from .home import export_pyronaut_home as _export_pyronaut_home
 from . import doctor as _doctor
 
 SUCCESS = 0
@@ -43,7 +49,7 @@ PRECONDITION_FAILED = 8
 PLATFORM_UNSUPPORTED = 9
 INTERNAL_ERROR = 10
 
-SUPPORTED_COMMANDS = {"setup", "update", "doctor", "clean", "install", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
+SUPPORTED_COMMANDS = {"setup", "update", "doctor", "clean", "install", "lock", "process", "dev", "run", "test", "build", "create", "validate-config", "test-resources-server"}
 LOCAL_REPOSITORY_ENV = "PYRONAUT_LOCAL_REPOSITORY"
 COMMAND_TO_EXECUTABLE = {
     "install": "pyronaut-install",
@@ -272,6 +278,10 @@ class _ProjectLayout(NamedTuple):
 
 
 def main() -> None:
+    # Java tools take user.home from the passwd entry rather than $HOME, so
+    # the resolved config, cache and data directories are handed to every
+    # child process explicitly. setup --xdg re-exports them.
+    _export_pyronaut_home()
     code = run(sys.argv[1:])
     raise SystemExit(code)
 
@@ -404,6 +414,10 @@ def run(
     forwarded_args = _normalize_tests_selection_flag(forwarded_args)
     no_validate = _extract_no_validate(forwarded_args)
     forwarded_args = _remove_no_validate(forwarded_args)
+    no_install = False
+    if command in {"dev", "run", "test"}:
+        no_install = _extract_flag(forwarded_args, NO_INSTALL_FLAG)
+        forwarded_args = _remove_no_install(forwarded_args)
     continuous = _extract_continuous(forwarded_args)
     forwarded_args = _remove_continuous(forwarded_args)
     try:
@@ -443,6 +457,10 @@ def run(
 
     if command == "build" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
         _print_build_usage()
+        return SUCCESS
+
+    if command == "lock" and (_extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h")):
+        _print_lock_usage()
         return SUCCESS
 
     if _extract_flag(forwarded_args, "--help") or _extract_flag(forwarded_args, "-h"):
@@ -566,6 +584,14 @@ def run(
         project_dir=Path(project_dir),
     )
 
+    if command == "lock":
+        return _run_lock(
+            forwarded_args,
+            execute,
+            locate,
+            java_home_provider=effective_java_home_provider,
+        )
+
     if command == "build":
         if _looks_like_direct_build_invocation(forwarded_args):
             return _run_direct_source_build(
@@ -611,6 +637,19 @@ def run(
             if install_code != SUCCESS:
                 return install_code
             external_install_done = True
+        if command in {"dev", "run"}:
+            install_code = _ensure_install_current(
+                Path(project_dir).resolve(),
+                command,
+                no_install=no_install,
+                no_cache=no_cache,
+                local_repository=local_repository,
+                runner=execute,
+                resolver=locate,
+                java_home_provider=effective_java_home_provider,
+            )
+            if install_code != SUCCESS:
+                return install_code
         disable_test_resources_requested = _extract_flag(forwarded_args, "--disable-test-resources")
         test_resources_enabled = (
             not disable_test_resources_requested
@@ -677,6 +716,7 @@ def run(
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
                 process_pass="main",
+                no_install=no_install,
             )
 
         if command in {"dev", "run"}:
@@ -760,6 +800,7 @@ def run(
                     java_home_provider=effective_java_home_provider,
                     local_repository=local_repository,
                     external_install_done=external_install_done,
+                    no_install=no_install,
                 )
 
             test_exit_code, _ = _run_test_cycle(
@@ -775,9 +816,13 @@ def run(
                 java_home_provider=effective_java_home_provider,
                 local_repository=local_repository,
                 external_install_done=external_install_done,
+                no_install=no_install,
             )
             return test_exit_code
 
+        if command == "install":
+            manage_python_dependencies = not _extract_flag(forwarded_args, NO_PYTHON_DEPS_FLAG)
+            forwarded_args = _remove_no_python_deps(forwarded_args)
         if command == "install" and not _has_direct_install_sources(forwarded_args):
             install_project_dir = Path(project_dir).resolve()
             if (install_project_dir / "pyproject.toml").is_file() or (install_project_dir / "requirements.txt").is_file():
@@ -786,17 +831,26 @@ def run(
                     execute,
                     refresh=_extract_flag(forwarded_args, "--refresh"),
                     offline=_extract_offline(forwarded_args),
+                    manage_dependencies=manage_python_dependencies,
                 )
                 if venv_code != SUCCESS:
                     return venv_code
         if command in {"install", "process", "validate-config"}:
-            return _delegate(
+            delegate_code = _delegate(
                 command,
                 forwarded_args,
                 execute,
                 locate,
                 java_home_provider=effective_java_home_provider,
             )
+            if (
+                command == "install"
+                and delegate_code == SUCCESS
+                and not _has_direct_install_sources(forwarded_args)
+                and not _is_external_build_project(Path(project_dir))
+            ):
+                _record_install_state(Path(project_dir).resolve())
+            return delegate_code
         if command == "test-resources-server":
             return _delegate(
                 command,
@@ -1019,11 +1073,15 @@ def _delegate(
     env = _apply_project_virtualenv(env, Path(_extract_project_dir(args)).resolve())
     if command == "install" and _has_direct_install_sources(args):
         try:
-            direct_launcher = _resolve_pyronaut_dev_native_executable(resolver)
+            # Only the compiler classpath is needed here, which setup resolved
+            # from the wheel's descriptor; do not download the native launcher.
+            direct_launcher = _resolve_pyronaut_dev_native_executable(resolver, provision=False)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return PRECONDITION_FAILED
-        direct_classpath = _native_launcher_compile_classpath_entries(direct_launcher)
+        direct_classpath = _native_launcher_compile_classpath_entries(
+            direct_launcher, image_name=DEV_NATIVE_EXECUTABLE
+        )
         if direct_classpath:
             env = dict(env or os.environ)
             env["PYRONAUT_DIRECT_CLASSPATH"] = os.pathsep.join(direct_classpath)
@@ -1776,14 +1834,74 @@ def _replace_embedded_python_vfs_classes(
             continue
     if not embedded:
         return list(entries)
-    signature = hashlib.sha256(("fileslist-v4\n" + "\n".join(sorted(embedded))).encode()).hexdigest()
-    filtered = project_dir / "__pyronaut__" / f"classes-native-runtime-{signature[:12]}"
+    output_dir = project_dir / "__pyronaut__"
+    signature = hashlib.sha256(
+        ("fileslist-v5\n" + "\n".join(sorted(embedded)) + "\n" + _directory_fingerprint(classes)).encode()
+    ).hexdigest()
+    filtered = output_dir / f"classes-native-runtime-{signature[:12]}"
+    if not _native_vfs_filter_is_current(filtered, signature):
+        staging = Path(tempfile.mkdtemp(prefix=f"{filtered.name}.", suffix=".tmp", dir=output_dir))
+        try:
+            shutil.copytree(classes, staging, dirs_exist_ok=True)
+            _filter_embedded_python_vfs(staging, embedded)
+            (staging / ".native-vfs-filter").write_text(signature, encoding="utf-8")
+            if filtered.exists():
+                shutil.rmtree(filtered, ignore_errors=True)
+            try:
+                os.replace(staging, filtered)
+            except OSError:
+                # A concurrent run may have published the same copy first.
+                if not _native_vfs_filter_is_current(filtered, signature):
+                    raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    # Copies built from earlier processed classes are never reused; drop them
+    # so repeated pyronaut process runs do not accumulate stale snapshots.
+    for stale in output_dir.glob("classes-native-runtime-*"):
+        if stale != filtered and not stale.name.endswith(".tmp") and stale.is_dir() and not stale.is_symlink():
+            shutil.rmtree(stale, ignore_errors=True)
+    return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
+
+
+def _native_vfs_filter_is_current(filtered: Path, signature: str) -> bool:
     marker = filtered / ".native-vfs-filter"
-    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == signature and filtered.is_dir():
-        return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
-    if filtered.is_dir():
-        return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
-    shutil.copytree(classes, filtered)
+    try:
+        return filtered.is_dir() and marker.read_text(encoding="utf-8").strip() == signature
+    except OSError:
+        return False
+
+
+def _directory_fingerprint(root: Path) -> str:
+    """Fingerprint a directory tree by relative path, size and mtime, plus the VFS file list."""
+    digest = hashlib.sha256()
+    pending = [root]
+    records: list[str] = []
+    while pending:
+        directory = pending.pop()
+        try:
+            children = list(os.scandir(directory))
+        except OSError:
+            continue
+        for child in children:
+            if child.is_dir(follow_symlinks=False):
+                pending.append(Path(child.path))
+                continue
+            try:
+                stat = child.stat()
+            except OSError:
+                continue
+            relative = Path(child.path).relative_to(root).as_posix()
+            records.append(f"{relative}\0{stat.st_size}\0{stat.st_mtime_ns}")
+    for record in sorted(records):
+        digest.update(record.encode("utf-8", "surrogateescape"))
+        digest.update(b"\n")
+    fileslist = root / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / "fileslist.txt"
+    if fileslist.is_file():
+        digest.update(fileslist.read_bytes())
+    return digest.hexdigest()
+
+
+def _filter_embedded_python_vfs(filtered: Path, embedded: set[str]) -> None:
     fileslist = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / "fileslist.txt"
     removed = {f"/META-INF/GRAALPY-VFS/micronaut-application/{name}" for name in embedded}
     if fileslist.is_file():
@@ -1817,8 +1935,6 @@ def _replace_embedded_python_vfs_classes(
         candidate = filtered / "META-INF" / "GRAALPY-VFS" / "micronaut-application" / relative
         if candidate.is_file():
             candidate.unlink()
-    marker.write_text(signature, encoding="utf-8")
-    return [str(filtered.resolve()) if Path(entry).resolve() == classes.resolve() else entry for entry in entries]
 
 
 def _build_native_application_classpath_entries(command: str, project_dir: Path) -> list[str]:
@@ -2099,10 +2215,18 @@ def _native_launcher_provided_manifest_file_names(launcher_executable: str | Non
 def _native_launcher_compile_classpath_entries(
     launcher_executable: str | None,
     local_repository: str | None = None,
+    *,
+    image_name: str | None = None,
 ) -> list[str]:
-    if not launcher_executable:
+    """Return the resolved compiler classpath of a native launcher.
+
+    An installed SDK records it during setup, so ``image_name`` can stand in
+    for a launcher that has not been downloaded.
+    """
+    if launcher_executable:
+        image_name = _native_image_command_name(launcher_executable)
+    elif image_name is None or not _setup_is_required() or local_repository:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-    image_name = _native_image_command_name(launcher_executable)
     if image_name not in _NATIVE_IMAGE_COMMANDS:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     if local_repository or not _setup_is_required():
@@ -2153,7 +2277,11 @@ def _native_launcher_compile_classpath_entries(
     try:
         manifest = _validated_setup_manifest or _read_valid_setup_manifest(())
         image = manifest["images"][image_name]
-        entries = _native_compile_descriptor_entries(launcher_executable)
+        entries = (
+            _native_compile_descriptor_entries(launcher_executable)
+            if launcher_executable
+            else _packaged_native_compile_descriptor_entries(image_name)
+        )
         if image["descriptorSha256"] != _native_descriptor_hash(entries):
             raise ValueError("native descriptor changed")
         resolved = image["classpath"]
@@ -2560,6 +2688,8 @@ def _has_direct_install_sources(args: Sequence[str]) -> bool:
         "--scope",
         "--progress",
         "--color",
+        "--lock-file",
+        "--lock-repository",
     }
     skip_next = False
     for token in args:
@@ -2918,6 +3048,9 @@ def _run_build(
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return USAGE_ERROR
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     fat_jar = packaging_format == "fat-jar"
     mode = "jvm" if packaging_format in {"fat-jar", "wheel-jvm", "docker-jvm"} else "native"
     docker_build = packaging_format.startswith("docker-")
@@ -3379,22 +3512,44 @@ def _read_pyproject_project_metadata(project_dir: Path) -> tuple[str, str]:
     return resolved_name, resolved_version
 
 
+_TOML_PARSER_FIX = "Python 3.10 needs the tomli package (pip install tomli) or use Python 3.11+"
+
+
+def _toml_parser(source: str) -> ModuleType:
+    """Return ``tomllib`` (Python 3.11+) or the ``tomli`` backport (Python 3.10).
+
+    Raises ``RuntimeError`` naming ``source`` when neither is importable, so a TOML file is never
+    silently ignored.
+    """
+    try:
+        import tomllib
+
+        return tomllib
+    except ImportError:
+        pass
+    try:
+        import tomli
+
+        return tomli
+    except ImportError as exc:
+        raise RuntimeError(f"{source} cannot be read: {_TOML_PARSER_FIX}") from exc
+
+
 def _read_pyproject_data(project_dir: Path) -> dict[str, object] | None:
+    """Parse ``pyproject.toml``; ``None`` only when the file does not exist.
+
+    A file that cannot be read or parsed raises ``RuntimeError`` rather than being treated as empty,
+    because ignoring it would silently drop every ``[tool.pyronaut]`` setting.
+    """
     pyproject = project_dir / "pyproject.toml"
     if not pyproject.exists():
         return None
-    try:
-        import tomllib
-    except Exception:
-        try:
-            import tomli as tomllib
-        except Exception:
-            return None
+    tomllib = _toml_parser("pyproject.toml")
     try:
         with pyproject.open("rb") as fp:
             data = tomllib.load(fp)
-    except Exception:
-        return None
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"{pyproject} cannot be read: {exc}") from exc
     return data if isinstance(data, dict) else None
 
 
@@ -3894,8 +4049,8 @@ def _record_native_base_configuration(
     which settings to add.
     """
     import copy
-    import tomllib
 
+    tomllib = _toml_parser("pyproject.toml")
     pyproject = project_dir / "pyproject.toml"
     updates = [
         (("tool", "pyronaut", "packaging"), "format", packaging_format),
@@ -5597,6 +5752,7 @@ def _run_with_auto_restart(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     process_pass: str | None = None,
+    no_install: bool = False,
 ) -> int:
     validate_on_restart = True
     if poll_interval <= 0:
@@ -5670,6 +5826,9 @@ def _run_with_auto_restart(
                 stop_ok: bool | None = None
                 refresh_code: int | None = None
                 refresh_exception: BaseException | None = None
+                # A dependency change reinstalls before processing. Stop the
+                # application first so the install owns the terminal alone.
+                reinstall = _stale_install_reason(project_root) is not None
 
                 def _stop_worker() -> None:
                     nonlocal stop_ok
@@ -5678,6 +5837,19 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
+                        if reinstall:
+                            refresh_code = _ensure_install_current(
+                                project_root,
+                                "restarting",
+                                no_install=no_install,
+                                no_cache=no_cache,
+                                local_repository=local_repository,
+                                runner=execute,
+                                resolver=resolver,
+                                java_home_provider=java_home_provider,
+                            )
+                            if refresh_code != SUCCESS:
+                                return
                         # validation reads the configuration metadata of this processing pass
                         refresh_code = _run_preflight(
                             str(project_root),
@@ -5703,6 +5875,8 @@ def _run_with_auto_restart(
                 stop_thread = threading.Thread(target=_stop_worker, name="pyronaut-stop-for-restart", daemon=True)
                 refresh_thread = threading.Thread(target=_refresh_worker, name="pyronaut-refresh-for-restart", daemon=True)
                 stop_thread.start()
+                if reinstall:
+                    stop_thread.join()
                 refresh_thread.start()
                 stop_thread.join()
                 refresh_thread.join()
@@ -5744,6 +5918,7 @@ def _run_test_cycle(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     external_install_done: bool = False,
+    no_install: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
     if _is_external_build_project(project_dir):
         preflight_code = _run_preflight(
@@ -5760,6 +5935,18 @@ def _run_test_cycle(
         if preflight_code != SUCCESS:
             return preflight_code, test_resources_env_overrides
     else:
+        install_code = _ensure_install_current(
+            project_dir.resolve(),
+            "test",
+            no_install=no_install,
+            no_cache=no_cache,
+            local_repository=local_repository,
+            runner=execute,
+            resolver=resolver,
+            java_home_provider=java_home_provider,
+        )
+        if install_code != SUCCESS:
+            return install_code, test_resources_env_overrides
         # The validator reads the configuration metadata processing generates:
         # validating first checks the configuration against the previous pass.
         preflight_code = _run_preflight(
@@ -5828,6 +6015,7 @@ def _run_test_continuously(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     external_install_done: bool = False,
+    no_install: bool = False,
 ) -> int:
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
@@ -5878,6 +6066,7 @@ def _run_test_continuously(
                     java_home_provider=java_home_provider,
                     local_repository=local_repository,
                     external_install_done=external_install_done,
+                    no_install=no_install,
                 )
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
@@ -5993,28 +6182,9 @@ def _build_dev_delegate_invocation(
     )
     if dev_command_line is not None:
         dev_command_line = [value for value in dev_command_line if value not in {"--jvm", "--native"}]
-        # The native launcher accepts only its subcommand and source selectors;
-        # convenience JVM properties are applied by the Python/fallback path.
-        # Do not leak them into native picocli parsing.
-        if _control_panel_requested(project_dir, args):
-            executable_path = _resolve_pyronaut_dev_native_executable(resolver)
-            control_panel = _select_control_panel_entries(
-                _direct_control_panel_classpath_entries(executable_path),
-                _control_panel_application_entries(project_dir),
-            )
-            if control_panel:
-                classpath_property = next((i for i, value in enumerate(dev_command_line) if value.startswith("-Djava.class.path=")), None)
-                if classpath_property is not None:
-                    existing = dev_command_line[classpath_property].split("=", 1)[1]
-                    dev_command_line[classpath_property] = f"-Djava.class.path={os.pathsep.join(dict.fromkeys([existing, *control_panel]))}"
-                command_index = dev_command_line.index("run")
-                dev_command_line[command_index:command_index] = [
-                    "-Dmicronaut.control-panel.enabled=true",
-                    "-Dmicronaut.control-panel.path=/control-panel",
-                    "-Dmicronaut.control-panel.security.access=ANONYMOUS",
-                    f"-Dpyronaut.dev.control.panel.class.path={os.pathsep.join(control_panel)}",
-                ]
-        env = _build_non_test_resources_env("dev", java_home_provider)
+        # _pyronaut_dev_native_command_line adds the selected Control Panel
+        # modules for the "dev" classpath command.
+        env =_build_non_test_resources_env("dev", java_home_provider)
         if dev_jvm_args:
             env["JAVA_TOOL_OPTIONS"] = " ".join(dev_jvm_args)
         env = _merge_env_overrides(env, env_overrides)
@@ -6610,12 +6780,28 @@ def _ensure_graalvm_java_home(
     return None
 
 
+def _home_display(path: Path) -> str:
+    """Show ``path`` with ``~`` for the user's home directory, as in messages."""
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _settings_path() -> Path:
+    return _config_home() / "settings.toml"
+
+
+def _settings_label() -> str:
+    return _home_display(_settings_path())
+
+
 def _graalvm_jdks_root() -> Path:
-    return Path.home() / ".pyronaut" / "sdks"
+    return _data_home() / "sdks"
 
 
 def _legacy_graalvm_jdks_root() -> Path:
-    return Path.home() / ".pyronaut" / "jdks"
+    return _data_home() / "jdks"
 
 
 def _find_compatible_cached_jdk(jdks_root: Path, toolchain: _ToolchainSpec | None = None) -> Path | None:
@@ -6816,12 +7002,10 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
     if proxy:
         return _normalize_proxy_url(proxy), no_proxy
 
-    settings_path = Path.home() / ".pyronaut" / "settings.toml"
+    settings_path = _settings_path()
     try:
-        import tomllib
-
         with settings_path.open("rb") as settings_file:
-            proxy_config = tomllib.load(settings_file).get("proxy", {})
+            proxy_config = _toml_parser(_settings_label()).load(settings_file).get("proxy", {})
         if isinstance(proxy_config, dict):
             configured_url = proxy_config.get("url")
             if isinstance(configured_url, str) and configured_url.strip():
@@ -6840,7 +7024,7 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
                     credentials += "@"
                 configured_url = f"{protocol}://{credentials}{host.strip()}:{int(port)}"
                 return configured_url, _proxy_bypass_value(proxy_config)
-    except (OSError, ValueError, TypeError, ImportError):
+    except (OSError, ValueError, TypeError):
         pass
 
     maven_settings = Path.home() / ".m2" / "settings.xml"
@@ -6892,15 +7076,13 @@ def _download_proxy(url: str) -> tuple[str | None, str | None]:
 
 
 def _read_pyronaut_user_settings() -> dict[str, object]:
-    settings_path = Path.home() / ".pyronaut" / "settings.toml"
+    settings_path = _settings_path()
     if not settings_path.is_file():
         return {}
     try:
-        import tomllib
-
         with settings_path.open("rb") as settings_file:
-            settings = tomllib.load(settings_file)
-    except (OSError, ValueError, TypeError, ImportError) as exc:
+            settings = _toml_parser(_settings_label()).load(settings_file)
+    except (OSError, ValueError, TypeError) as exc:
         raise RuntimeError(f"Failed reading {settings_path}: {exc}") from exc
     if not isinstance(settings, dict):
         raise RuntimeError(f"Invalid Pyronaut settings in {settings_path}")
@@ -7073,9 +7255,26 @@ def _github_release_asset(
     )
     if not isinstance(asset, dict) or not isinstance(asset.get("url"), str):
         raise RuntimeError(f"GitHub release '{tag}' has no asset named '{archive_name}'")
+    public_url = _github_public_asset_url(asset, release)
+    if public_url is not None:
+        return public_url, {}
     download_headers = dict(headers)
     download_headers["Accept"] = "application/octet-stream"
     return asset["url"], download_headers
+
+
+def _github_public_asset_url(asset: dict, release: dict) -> str | None:
+    """Return the public download URL of a published asset when no token is configured.
+
+    The REST asset endpoint is only needed to authenticate private or draft
+    downloads. Anonymous requests to it are rate limited and GitHub answers
+    some of them with a persistent HTTP 500, while the public
+    ``releases/download`` URL serves the same bytes from its CDN.
+    """
+    url = asset.get("browser_download_url")
+    if _github_token() is not None or release.get("draft") or not isinstance(url, str) or not url:
+        return None
+    return url
 
 
 def _github_token() -> str | None:
@@ -7135,7 +7334,7 @@ def _native_image_cache_path(
     os_segment: str,
     arch: str,
 ) -> Path:
-    return Path.home() / ".pyronaut" / "bin" / version / f"{os_segment}-{arch}" / image_name
+    return _data_home() / "bin" / version / f"{os_segment}-{arch}" / image_name
 
 
 @contextlib.contextmanager
@@ -7812,6 +8011,17 @@ def _remove_no_validate(args: Sequence[str]) -> list[str]:
     return [token for token in option_args if token != "--no-validate"] + application_args
 
 
+def _remove_no_python_deps(args: Sequence[str]) -> list[str]:
+    """Drop ``--no-python-deps``, which the Java installer does not understand."""
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != NO_PYTHON_DEPS_FLAG] + application_args
+
+
+def _remove_no_install(args: Sequence[str]) -> list[str]:
+    option_args, application_args = _split_application_args(args)
+    return [token for token in option_args if token != NO_INSTALL_FLAG] + application_args
+
+
 def _extract_continuous(args: Sequence[str]) -> bool:
     return any(token in {"-t", "--continuous"} for token in _orchestrator_args(args))
 
@@ -7844,6 +8054,140 @@ def _required_install_manifests(project_dir: Path) -> tuple[Path, ...]:
 
 def _install_required(project_dir: Path) -> bool:
     return not all(path.exists() for path in _required_install_manifests(project_dir))
+
+
+# -- Automatic install ---------------------------------------------------------
+#
+# `dev`, `run` and `test` reinstall a managed project when its declared
+# dependencies no longer match what the last `pyronaut install` recorded, so a
+# pyproject.toml edit does not require a manual install first.
+
+_INSTALL_STATE_FILE = "install-state.json"
+NO_INSTALL_FLAG = "--no-install"
+AUTO_INSTALL_ENV = "PYRONAUT_AUTO_INSTALL"
+_AUTO_INSTALL_SETTINGS_TABLE = "install"
+
+
+def _auto_install_disabled_by() -> str | None:
+    """Name the setting that turns automatic install off, if any.
+
+    ``PYRONAUT_AUTO_INSTALL`` overrides ``[install] auto`` in the user's
+    ``settings.toml``; both default to enabled.
+    """
+    value = _read_env(AUTO_INSTALL_ENV)
+    if value is not None:
+        normalized = value.lower()
+        if normalized in {"0", "false", "no", "off"}:
+            return f"{AUTO_INSTALL_ENV}={value}"
+        if normalized in {"1", "true", "yes", "on"}:
+            return None
+        raise RuntimeError(f"{AUTO_INSTALL_ENV} must be true or false, got {value!r}")
+    table = _read_pyronaut_user_settings().get(_AUTO_INSTALL_SETTINGS_TABLE)
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise RuntimeError(f"[install] in {_settings_label()} must be a table")
+    auto = table.get("auto", True)
+    if not isinstance(auto, bool):
+        raise RuntimeError(f"[install].auto in {_settings_label()} must be true or false")
+    return None if auto else f"[install] auto = false in {_settings_label()}"
+
+
+def _install_inputs_state(project_dir: Path) -> dict[str, object]:
+    """Fingerprint the declared inputs the Java resolver reads for a managed project."""
+    data = _read_pyproject_data(project_dir) or {}
+    tool = data.get("tool")
+    pyronaut_table = tool.get("pyronaut") if isinstance(tool, dict) else None
+    canonical = json.dumps(pyronaut_table or {}, sort_keys=True, default=str)
+    return {
+        "pyronaut": _installed_pyronaut_version(),
+        "toolPyronautSha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
+
+
+def _record_install_state(project_dir: Path) -> None:
+    if _install_required(project_dir):
+        # Nothing was installed (or the install wrote elsewhere); keep it stale.
+        return
+    state_file = _pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE
+    try:
+        state_file.write_text(
+            json.dumps(_install_inputs_state(project_dir), indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        # The record only saves a later install; never fail the command for it.
+        pass
+
+
+def _java_install_stale_reason(project_dir: Path) -> str | None:
+    manifests = _required_install_manifests(project_dir)
+    if not all(path.exists() for path in manifests):
+        return "dependencies are not installed"
+    try:
+        recorded = json.loads((_pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = None
+    if not isinstance(recorded, dict):
+        # Installed before the state was recorded. Timestamps cannot tell:
+        # install itself rewrites pyproject.toml (the schema directive).
+        return None
+    current = _install_inputs_state(project_dir)
+    if recorded.get("pyronaut") != current["pyronaut"]:
+        return "Pyronaut changed since the last install"
+    if recorded.get("toolPyronautSha256") != current["toolPyronautSha256"]:
+        return "[tool.pyronaut] settings changed since the last install"
+    return None
+
+
+def _stale_install_reason(project_dir: Path) -> tuple[str, bool] | None:
+    """Return why a managed project needs installing and whether Java must resolve.
+
+    External Gradle/Maven projects are excluded: their commands either install
+    on every run or let the build tool own dependency resolution.
+    """
+    if _is_external_build_project(project_dir) or not (project_dir / "pyproject.toml").is_file():
+        return None
+    java_reason = _java_install_stale_reason(project_dir)
+    if java_reason is not None:
+        return java_reason, True
+    if _python_requirements_stale(project_dir):
+        return "Python dependencies changed since the last install", False
+    return None
+
+
+def _ensure_install_current(
+    project_dir: Path,
+    command: str,
+    *,
+    no_install: bool,
+    no_cache: bool,
+    local_repository: str | None,
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    """Run the install step first when the recorded install state is stale."""
+    stale = _stale_install_reason(project_dir)
+    if stale is None:
+        return SUCCESS
+    reason, java_install = stale
+    reason = reason[:1].upper() + reason[1:]
+    progress = _progress_console()
+    disabled_by = NO_INSTALL_FLAG if no_install else _auto_install_disabled_by()
+    if disabled_by is not None:
+        progress.warn(f"{reason}; skipped install ({disabled_by}), run pyronaut install")
+        return SUCCESS
+    progress.note(f"{reason}; running pyronaut install before {command}")
+    venv_code = _ensure_project_virtualenv(project_dir, runner)
+    if venv_code != SUCCESS or not java_install:
+        return venv_code
+    install_args = ["--project-dir", str(project_dir), *_local_repository_install_args(local_repository)]
+    if no_cache:
+        install_args.append("--no-cache")
+    install_code = _delegate("install", install_args, runner, resolver, java_home_provider=java_home_provider)
+    if install_code == SUCCESS:
+        _record_install_state(project_dir)
+    return install_code
 
 
 def _process_required(project_dir: Path, command: str) -> bool:
@@ -8079,7 +8423,7 @@ def _ensure_micronaut_launch(version: str, *, platform_name: str) -> Path:
             candidates.append(current / "bin" / executable_name)
     except OSError:
         pass
-    cache_root = Path.home() / ".pyronaut" / "sdks" / "micronaut"
+    cache_root = _data_home() / "sdks" / "micronaut"
     candidates.append(cache_root / version / "bin" / executable_name)
     for candidate in candidates:
         if _valid_micronaut_launch(candidate, version):
@@ -8448,7 +8792,7 @@ def _resolved_tool_cache_root() -> Path | None:
     if version is None:
         return None
     safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version)
-    cache_root = Path.home() / ".pyronaut" / "tools" / safe_version / "current"
+    cache_root = _data_home() / "tools" / safe_version / "current"
     return cache_root if cache_root.is_dir() else None
 
 
@@ -8578,17 +8922,19 @@ def _resolve_native_preferred_executable(
         return str(bundled)
 
     if command_name in {"pyronaut-run", "pyronaut-run-python"} and resolver is _resolve_executable:
-        try:
-            return str(_cached_native_image(command_name))
-        except RuntimeError:
-            return None
+        executable = _provision_native_image(command_name)
+        return str(executable) if executable is not None else None
 
     if fallback_to_resolver:
         return resolver(command_name)
     return None
 
 
-def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None]) -> str | None:
+def _resolve_pyronaut_dev_native_executable(
+    resolver: Callable[[str], str | None],
+    *,
+    provision: bool = True,
+) -> str | None:
     env_key = DEV_NATIVE_EXECUTABLE.upper().replace("-", "_") + "_NATIVE_EXECUTABLE"
     override = _read_env(env_key)
     if override:
@@ -8599,10 +8945,36 @@ def _resolve_pyronaut_dev_native_executable(resolver: Callable[[str], str | None
         return str(bundled)
     if resolver is not _resolve_executable:
         return resolver(DEV_NATIVE_EXECUTABLE)
+    if not provision:
+        try:
+            return str(_cached_native_image(DEV_NATIVE_EXECUTABLE))
+        except RuntimeError:
+            return None
+    executable = _provision_native_image(DEV_NATIVE_EXECUTABLE)
+    return str(executable) if executable is not None else None
+
+
+def _provision_native_image(image_name: str) -> Path | None:
+    """Return the cached native launcher, downloading it on first use.
+
+    Setup does not download the native launchers, so that projects using only
+    the JVM toolchain never fetch them. Callers reach this only once a command
+    has selected a native launcher. A source checkout has no release to
+    download from and keeps reporting the launcher as missing.
+    """
     try:
-        return str(_cached_native_image(DEV_NATIVE_EXECUTABLE))
+        return _cached_native_image(image_name)
     except RuntimeError:
-        return None
+        if not _setup_is_required():
+            return None
+    try:
+        return _ensure_native_image(image_name)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{exc}\nThe {image_name} native launcher is downloaded on first use. "
+            "Run pyronaut setup --native-launchers while online to download it in advance, "
+            "or set tool.pyronaut.toolchain.type = 'jvm'."
+        ) from exc
 
 
 def _pyronaut_dev_native_command_line(
@@ -8688,7 +9060,12 @@ def _pyronaut_dev_native_command_line(
         classpath_command = "run" if effective_classpath_command == "validate-config" else effective_classpath_command
         classpath = _build_native_application_classpath(classpath_command, project_dir, executable_path)
         if effective_classpath_command == "dev" and _control_panel_requested(project_dir, args):
-            control_panel = _direct_control_panel_classpath_entries(executable_path)
+            # Optional panels (object storage, Kafka, ...) fail to load their
+            # bean definitions when the library they inspect is absent.
+            control_panel = _select_control_panel_entries(
+                _direct_control_panel_classpath_entries(executable_path),
+                _control_panel_application_entries(project_dir),
+            )
             if control_panel:
                 classpath = os.pathsep.join(dict.fromkeys([classpath, *control_panel]))
                 jvm_args.extend((
@@ -9099,7 +9476,7 @@ def _is_supported_project_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|lock|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
 
 
 def _print_create_usage(stream=None) -> None:
@@ -9121,10 +9498,21 @@ def _print_setup_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
     stream.write(
-        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
-        "[--progress <auto|on|off>] [--allow-draft-release]\n"
+        "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--locked] [--xdg] "
+        "[--native-launchers] [--progress <auto|on|off>] [--allow-draft-release]\n"
     )
     stream.write("Provision the global Pyronaut SDK toolchain, GraalPy interpreter, launchers, and native compiler classpaths.\n")
+    stream.write("\nOptions:\n")
+    stream.write("      --locked   Resolve the SDK Maven artifacts again and require each one to be listed, with a\n")
+    stream.write("                 matching checksum, in the pyronaut.lock of the current directory.\n")
+    stream.write("      --xdg      Switch an existing ~/.pyronaut installation to the XDG base directory layout:\n")
+    stream.write("                 configuration in $XDG_CONFIG_HOME/pyronaut, caches in $XDG_CACHE_HOME/pyronaut and\n")
+    stream.write("                 data in $XDG_DATA_HOME/pyronaut. New installations use it by default on Linux or\n")
+    stream.write("                 when XDG_*_HOME is set. Set PYRONAUT_XDG=false to keep ~/.pyronaut.\n")
+    stream.write("      --native-launchers\n")
+    stream.write("                 Download the native pyronaut-dev, pyronaut-run and pyronaut-run-python launchers\n")
+    stream.write("                 during setup. Otherwise a command downloads a launcher when it first needs one.\n")
+    stream.write(f"\nState: {_describe_pyronaut_dirs()}\n")
 
 
 def _setup_local_repository(args: Sequence[str]) -> Path:
@@ -9154,7 +9542,7 @@ def _setup_repositories() -> list[str]:
     settings = _read_pyronaut_user_settings()
     maven = settings.get("maven")
     if maven is not None and not isinstance(maven, dict):
-        raise RuntimeError("[maven] in ~/.pyronaut/settings.toml must be a table")
+        raise RuntimeError(f"[maven] in {_settings_label()} must be a table")
     configured = maven.get("repositories") if isinstance(maven, dict) else None
     if configured is not None:
         if not isinstance(configured, list) or not configured:
@@ -9179,7 +9567,7 @@ def _setup_platform() -> str:
 
 def _setup_manifest_path() -> Path:
     version = re.sub(r"[^A-Za-z0-9._-]", "_", _installed_pyronaut_version())
-    return Path.home() / ".pyronaut" / "setup" / version / _setup_platform() / "setup.json"
+    return _data_home() / "setup" / version / _setup_platform() / "setup.json"
 
 
 def _packaged_tool_descriptor_hash() -> str:
@@ -9228,22 +9616,42 @@ def _resolved_tool_executables(tool_root: Path) -> dict[str, str]:
 
 def _native_compile_descriptor_entries(executable: str | Path) -> list[str]:
     entries = _native_launcher_manifest_entries(str(executable), "native-compile-classpath.txt")
+    return _validated_native_compile_descriptor(Path(executable).name, entries)
+
+
+def _packaged_native_compile_descriptor_entries(image_name: str) -> list[str]:
+    """Read the compiler classpath descriptor that the wheel ships for a native launcher.
+
+    The wheel embeds the JVM distribution of every native launcher, and that
+    distribution carries the same descriptor as the native bundle. Setup reads
+    it from the wheel so that it never has to download the launchers.
+    """
+    descriptor = _packaged_tool_dir(image_name) / "bin" / "native-compile-classpath.txt"
+    try:
+        lines = descriptor.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    entries = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    return _validated_native_compile_descriptor(image_name, entries)
+
+
+def _validated_native_compile_descriptor(image_name: str, entries: list[str]) -> list[str]:
     if not entries:
-        raise RuntimeError(f"Missing native compiler classpath descriptor for {Path(executable).name}")
+        raise RuntimeError(f"Missing native compiler classpath descriptor for {image_name}")
     for entry in entries:
         fields = entry.split("\t")
         if len(fields) != 7 or fields[0] != "maven":
-            raise RuntimeError(f"Invalid native compiler classpath descriptor for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler classpath descriptor for {image_name}")
         if any(not field or "/" in field or "\\" in field for field in fields[1:5]):
-            raise RuntimeError(f"Invalid native compiler Maven coordinate for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler Maven coordinate for {image_name}")
         if "/" in fields[5] or "\\" in fields[5]:
-            raise RuntimeError(f"Invalid native compiler Maven classifier for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler Maven classifier for {image_name}")
         expected_filename = (
             f"{fields[2]}-{fields[3]}"
             f"{'-' + fields[5] if fields[5] else ''}.{fields[4]}"
         )
         if not fields[6] or Path(fields[6]).name != fields[6] or fields[6] != expected_filename:
-            raise RuntimeError(f"Invalid native compiler artifact filename for {Path(executable).name}")
+            raise RuntimeError(f"Invalid native compiler artifact filename for {image_name}")
     return entries
 
 
@@ -9325,21 +9733,21 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
     images = manifest.get("images")
     if not isinstance(images, dict):
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+    # Setup records the compiler classpath of every native launcher, but not
+    # the launchers themselves: they are downloaded on first use, so projects
+    # that only use the JVM toolchain never fetch them.
     for image_name in _SETUP_IMAGE_COMMANDS:
         image = images.get(image_name)
         if not isinstance(image, dict):
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
-        executable = image.get("executable")
         classpath = image.get("classpath")
         descriptor_hash = image.get("descriptorSha256")
-        if not isinstance(executable, str) or not _is_executable_file(Path(executable)):
-            raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
         if not isinstance(classpath, list) or not classpath:
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
         if not all(isinstance(path, str) and Path(path).is_file() for path in classpath):
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
         try:
-            current_hash = _native_descriptor_hash(_native_compile_descriptor_entries(executable))
+            current_hash = _native_descriptor_hash(_packaged_native_compile_descriptor_entries(image_name))
         except RuntimeError as exc:
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
         if descriptor_hash != current_hash:
@@ -9393,7 +9801,7 @@ def _cached_native_image(
 
 def _validate_setup_arguments(args: Sequence[str]) -> None:
     value_options = {"--local-repository", "--local-repo", "--progress"}
-    flag_options = {"--offline", "--refresh"}
+    flag_options = {"--offline", "--refresh", "--locked", "--xdg", "--native-launchers"}
     index = 0
     while index < len(args):
         token = args[index]
@@ -9414,6 +9822,46 @@ def _validate_setup_arguments(args: Sequence[str]) -> None:
         raise ValueError("Invalid value for --progress. Use auto, on, or off")
 
 
+def _describe_pyronaut_dirs() -> str:
+    dirs = _home.pyronaut_dirs()
+    if dirs.layout == _home.LAYOUT_XDG:
+        return (
+            f"XDG layout (config {_home_display(dirs.config)}, cache {_home_display(dirs.cache)}, "
+            f"data {_home_display(dirs.data)})"
+        )
+    if dirs.layout == _home.LAYOUT_CUSTOM:
+        return f"{_home_display(dirs.data)} (PYRONAUT_HOME)"
+    return _home_display(dirs.data)
+
+
+def _enable_xdg_layout() -> None:
+    """Opt into the XDG layout by creating ``$XDG_CONFIG_HOME/pyronaut``.
+
+    Re-exports the directories, which ``main()`` exported before the
+    arguments were parsed, so that the tools setup starts use the new layout.
+    """
+    if (os.environ.get(_home.PYRONAUT_HOME_ENV) or "").strip():
+        raise RuntimeError(
+            "PYRONAUT_HOME keeps all Pyronaut state in one directory and overrides --xdg; unset it to use the XDG layout"
+        )
+    if _home.xdg_flag() is False:
+        raise RuntimeError(f"{_home.PYRONAUT_XDG_ENV} disables the XDG layout; unset it to use --xdg")
+    legacy = _home.pyronaut_home()
+    _home.xdg_config_dir().mkdir(parents=True, exist_ok=True)
+    dirs = _export_pyronaut_home()
+    legacy_settings = legacy / "settings.toml"
+    settings = dirs.config / "settings.toml"
+    if legacy_settings.is_file() and not settings.exists():
+        shutil.copy2(legacy_settings, settings)
+        print(f"Copied {_home_display(legacy_settings)} to {_home_display(settings)}")
+    print(f"Using the XDG layout: {_describe_pyronaut_dirs()}")
+    if legacy.is_dir():
+        print(
+            f"{_home_display(legacy)} is no longer used and can be removed once setup has finished. "
+            f"To switch back, set {_home.PYRONAUT_XDG_ENV}=false."
+        )
+
+
 def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     progress = _progress_console()
     try:
@@ -9421,11 +9869,21 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
         refresh = _extract_flag(args, "--refresh")
         offline = _extract_offline(args)
         progress.configure(_extract_option_value(args, "--progress"))
+        if _extract_flag(args, "--xdg"):
+            # Before anything is resolved: setup then provisions into the
+            # XDG data directory rather than ~/.pyronaut.
+            _enable_xdg_layout()
+        elif _home.xdg_enabled():
+            # Pin a default XDG layout, so that a ~/.pyronaut created later
+            # (for example for settings.toml) does not switch layouts.
+            _home.xdg_config_dir().mkdir(parents=True, exist_ok=True)
         manifest_path = _setup_manifest_path()
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = manifest_path.with_suffix(".lock")
         with _native_image_cache_lock(lock_path):
-            if not refresh:
+            # A locked setup resolves again so every SDK artifact is checked
+            # against pyronaut.lock, also when the SDK is already set up.
+            if not refresh and not _extract_flag(args, "--locked"):
                 try:
                     _read_valid_setup_manifest(args)
                 except RuntimeError:
@@ -9455,14 +9913,17 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                             f"Install it with: pyenv install {graalpy_spec.name}"
                         )
                     graalpy_step.done_label = f"GraalPy ready: {graalpy.executable}"
-            with progress.step("Provisioning native launchers", done="Native launchers ready"):
-                images: dict[str, Path] = {}
-                for image_name in _SETUP_IMAGE_COMMANDS:
-                    images[image_name] = (
-                        _cached_native_image(image_name)
-                        if offline
-                        else _ensure_native_image(image_name)
-                    )
+            # The compiler classpaths come from descriptors in the wheel, so
+            # setup does not need the native launchers (about 1.6 GB). Commands
+            # that run a native launcher download it on first use; the flag
+            # prefetches them, for example while building a CI image.
+            if _extract_flag(args, "--native-launchers"):
+                with progress.step("Provisioning native launchers", done="Native launchers ready"):
+                    for image_name in _SETUP_IMAGE_COMMANDS:
+                        if offline:
+                            _cached_native_image(image_name)
+                        else:
+                            _ensure_native_image(image_name)
 
             installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
             if installer is None or not _is_executable_file(installer):
@@ -9477,38 +9938,24 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 request_dir = Path(temp_dir) / "native-classpaths"
                 request_dir.mkdir()
                 descriptor_entries: dict[str, list[str]] = {}
-                for image_name, executable in images.items():
-                    entries = _native_compile_descriptor_entries(executable)
+                for image_name in _SETUP_IMAGE_COMMANDS:
+                    entries = _packaged_native_compile_descriptor_entries(image_name)
                     descriptor_entries[image_name] = entries
                     (request_dir / f"{image_name}.tsv").write_text(
                         "\n".join(entries) + "\n", encoding="utf-8"
                     )
 
-                command_line = [
-                    str(installer),
-                    "--resolve-tools-only",
-                    "--native-classpaths-dir",
-                    str(request_dir),
-                    "--local-repository",
-                    str(local_repository),
-                ]
-                for repository in expectation["repositories"]:
-                    command_line.extend(["--repository", str(repository)])
-                if offline:
-                    command_line.append("--offline")
-                if refresh:
-                    command_line.append("--refresh")
-                # The nested installer renders its own per-artifact progress
-                # directly on the terminal, so the setup spinner is suspended
-                # while it runs.
-                command_line.extend(["--progress", _extract_option_value(args, "--progress") or "auto"])
-                env = _terminal_environment(dict(os.environ))
-                env["JAVA_HOME"] = java_home
-                java_bin = str(Path(java_home) / "bin")
-                env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
-                packaged_tools = Path(__file__).resolve().parent / "tools"
-                env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
-                env["PYRONAUT_TOOLS_CACHE_DIR"] = str(Path.home() / ".pyronaut" / "tools")
+                command_line, env = _sdk_tool_resolution_invocation(
+                    installer,
+                    request_dir,
+                    local_repository,
+                    expectation["repositories"],
+                    java_home,
+                    offline=offline,
+                    refresh=refresh,
+                    progress_mode=_extract_option_value(args, "--progress") or "auto",
+                    locked=_extract_flag(args, "--locked"),
+                )
                 with progress.step("Resolving SDK dependencies", done="SDK dependencies resolved"):
                     with progress.suspend():
                         install_code = runner(command_line, env)
@@ -9525,7 +9972,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     raise RuntimeError("pyronaut-install produced an incomplete SDK tool runtime")
                 executables = _resolved_tool_executables(tool_root)
                 image_state: dict[str, object] = {}
-                for image_name, executable in images.items():
+                for image_name in _SETUP_IMAGE_COMMANDS:
                     resolved_file = request_dir / "resolved" / f"{image_name}.txt"
                     resolved = [
                         line.strip()
@@ -9537,7 +9984,6 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                     if not all(Path(path).is_file() for path in resolved):
                         raise RuntimeError(f"Resolved compiler classpath for {image_name} contains missing files")
                     image_state[image_name] = {
-                        "executable": str(executable.resolve()),
                         "descriptorSha256": _native_descriptor_hash(descriptor_entries[image_name]),
                         "classpath": resolved,
                     }
@@ -9569,6 +10015,206 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
     except (OSError, RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
+
+
+def _sdk_tool_resolution_invocation(
+    installer: str | Path,
+    request_dir: Path,
+    local_repository: str | Path,
+    repositories: Sequence[object],
+    java_home: str,
+    *,
+    offline: bool,
+    refresh: bool,
+    progress_mode: str,
+    locked: bool = False,
+    lock_args: Sequence[str] = (),
+) -> tuple[list[str], dict[str, str]]:
+    """The pyronaut-install invocation resolving the SDK launcher classpaths."""
+    command_line = [
+        str(installer),
+        "--resolve-tools-only",
+        "--native-classpaths-dir",
+        str(request_dir),
+        "--local-repository",
+        str(local_repository),
+    ]
+    for repository in repositories:
+        command_line.extend(["--repository", str(repository)])
+    if offline:
+        command_line.append("--offline")
+    if refresh:
+        command_line.append("--refresh")
+    if locked:
+        command_line.append("--locked")
+    command_line.extend(lock_args)
+    # The nested installer renders its own per-artifact progress
+    # directly on the terminal, so the setup spinner is suspended
+    # while it runs.
+    command_line.extend(["--progress", progress_mode])
+    env = _terminal_environment(dict(os.environ))
+    env["JAVA_HOME"] = java_home
+    java_bin = str(Path(java_home) / "bin")
+    env["PATH"] = java_bin + (os.pathsep + env.get("PATH", "") if env.get("PATH") else "")
+    packaged_tools = Path(__file__).resolve().parent / "tools"
+    env["PYRONAUT_PACKAGED_TOOLS_DIR"] = str(packaged_tools)
+    env["PYRONAUT_TOOLS_CACHE_DIR"] = str(_data_home() / "tools")
+    return command_line, env
+
+
+# -- pyronaut lock -----------------------------------------------------------
+#
+# `pyronaut lock` records every Maven artifact that `pyronaut setup`,
+# `pyronaut install` and `pyronaut build` resolve for a project into
+# pyronaut.lock, with the repository it came from and its SHA-256 checksum.
+# pyronaut-install does the recording: the SDK launcher classpaths are
+# resolved first (when this wheel needs `pyronaut setup`), then the project
+# scopes, both into one temporary lock that replaces pyronaut.lock only once
+# everything resolved.
+
+LOCK_FILE_NAME = "pyronaut.lock"
+
+
+def _print_lock_usage(stream=None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
+        "Usage: pyronaut lock [--project-dir <dir>] [--local-repository <dir>] [--offline] [--check] "
+        "[--progress <auto|on|off>]\n"
+    )
+    stream.write(
+        "Write pyronaut.lock: every Maven artifact needed by setup, install and build, "
+        "with its repository URL and SHA-256 checksum.\n"
+    )
+    stream.write("  --check   Fail when pyronaut.lock is missing or out of date instead of writing it.\n")
+
+
+def _validate_lock_arguments(args: Sequence[str]) -> None:
+    value_options = {"--project-dir", "--local-repository", "--local-repo", "--progress", "--color"}
+    flag_options = {"--offline", "--check"}
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in value_options:
+            if index + 1 >= len(args):
+                raise ValueError(f"Missing value for {token}")
+            index += 2
+            continue
+        if any(token.startswith(option + "=") for option in value_options):
+            index += 1
+            continue
+        if token in flag_options:
+            index += 1
+            continue
+        raise ValueError(f"Unknown pyronaut lock option: {token}")
+    progress = _extract_option_value(args, "--progress")
+    if progress is not None and progress not in {"auto", "on", "off"}:
+        raise ValueError("Invalid value for --progress. Use auto, on, or off")
+
+
+def _record_sdk_lock(
+    lock_args: Sequence[str],
+    runner: RunnerWithEnv,
+    *,
+    offline: bool,
+    progress_mode: str,
+) -> int:
+    """Records the SDK launcher classpaths `pyronaut setup` resolves."""
+    manifest = _read_valid_setup_manifest([])
+    installer = _bundled_executable(COMMAND_TO_EXECUTABLE["install"])
+    if installer is None or not _is_executable_file(installer):
+        raise RuntimeError("Installed Pyronaut wheel is missing executable pyronaut-install")
+    with tempfile.TemporaryDirectory(prefix=".lock-") as temp_dir:
+        request_dir = Path(temp_dir) / "native-classpaths"
+        request_dir.mkdir()
+        # The same wheel descriptors `pyronaut setup` resolves; the native
+        # launchers themselves are not needed.
+        for image_name in _SETUP_IMAGE_COMMANDS:
+            entries = _packaged_native_compile_descriptor_entries(image_name)
+            (request_dir / f"{image_name}.tsv").write_text("\n".join(entries) + "\n", encoding="utf-8")
+        command_line, env = _sdk_tool_resolution_invocation(
+            installer,
+            request_dir,
+            _setup_local_repository([]),
+            list(manifest.get("repositories") or []),
+            str(manifest["javaHome"]),
+            offline=offline,
+            refresh=False,
+            progress_mode=progress_mode,
+            lock_args=lock_args,
+        )
+        return runner(command_line, env) or SUCCESS
+
+
+def _run_lock(
+    args: Sequence[str],
+    runner: RunnerWithEnv,
+    resolver: Callable[[str], str | None],
+    *,
+    java_home_provider: JavaHomeProvider | None,
+) -> int:
+    try:
+        _validate_lock_arguments(args)
+    except ValueError as exc:
+        return _usage_error(str(exc))
+    project_dir = Path(_extract_project_dir(args)).resolve()
+    if not (project_dir / "pyproject.toml").is_file():
+        if _is_external_build_project(project_dir):
+            print(
+                "pyronaut lock does not support Maven or Gradle projects; use the build tool's own "
+                "dependency locking and checksum verification.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"pyronaut lock requires a pyproject.toml in {project_dir}", file=sys.stderr)
+        return PRECONDITION_FAILED
+    offline = _extract_offline(args)
+    check = _extract_flag(args, "--check")
+    progress_mode = _extract_option_value(args, "--progress") or "auto"
+    lock_path = project_dir / LOCK_FILE_NAME
+    with tempfile.TemporaryDirectory(prefix=".pyronaut-lock-", dir=project_dir) as temp_dir:
+        recorded = Path(temp_dir) / LOCK_FILE_NAME
+        lock_args = ["--write-lock", "--lock-file", str(recorded)]
+        if _setup_is_required():
+            try:
+                code = _record_sdk_lock(lock_args, runner, offline=offline, progress_mode=progress_mode)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
+            if code != SUCCESS:
+                return code
+        install_args = [
+            "--project-dir",
+            str(project_dir),
+            *_local_repository_install_args(_extract_local_repository(args)),
+            *lock_args,
+            "--progress",
+            progress_mode,
+        ]
+        color = _extract_option_value(args, "--color")
+        if color is not None:
+            install_args.extend(["--color", color])
+        if offline:
+            install_args.append("--offline")
+        code = _delegate("install", install_args, runner, resolver, java_home_provider=java_home_provider)
+        if code != SUCCESS:
+            return code
+        if not recorded.is_file():
+            print("pyronaut-install did not record a dependency lock", file=sys.stderr)
+            return PRECONDITION_FAILED
+        contents = recorded.read_text(encoding="utf-8")
+        count = sum(1 for line in contents.splitlines() if line == "[[artifact]]")
+        if check:
+            existing = lock_path.read_text(encoding="utf-8") if lock_path.is_file() else None
+            if existing != contents:
+                state = "missing" if existing is None else "out of date"
+                print(f"{lock_path} is {state}. Run `pyronaut lock` to update it.", file=sys.stderr)
+                return PRECONDITION_FAILED
+            print(f"{lock_path} is up to date ({count} artifacts)")
+            return SUCCESS
+        os.replace(recorded, lock_path)
+    print(f"Wrote {lock_path} ({count} artifacts)")
+    return SUCCESS
 
 
 # -- pyronaut update ---------------------------------------------------------
@@ -9732,7 +10378,7 @@ def _sdk_releases(*, allow_draft: bool = False) -> list[_SdkRelease]:
                 version=version,
                 prerelease=bool(item.get("prerelease")) or version.prerelease,
                 wheel_name=wheel["name"] if wheel else None,
-                wheel_url=wheel["url"] if wheel else None,
+                wheel_url=(_github_public_asset_url(wheel, item) or wheel["url"]) if wheel else None,
             ))
         if len(data) < 100:
             break
@@ -9815,13 +10461,15 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
         # wheel changes: the new version has no state of its own yet, and
         # would otherwise fall back to ~/.m2/repository.
         local_repository = _setup_local_repository(options)
-        update_root = Path.home() / ".pyronaut" / "update"
+        update_root = _cache_home() / "update"
         update_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".update-", dir=update_root) as temp_dir:
             assert release.wheel_name is not None and release.wheel_url is not None
             wheel = Path(temp_dir) / release.wheel_name
-            download_headers = _github_api_headers()
-            download_headers["Accept"] = "application/octet-stream"
+            download_headers: dict[str, str] | None = None
+            if release.wheel_url.startswith("https://api.github.com/"):
+                download_headers = _github_api_headers()
+                download_headers["Accept"] = "application/octet-stream"
             _download_url_with_progress(
                 release.wheel_url, wheel, f"Downloading pyronaut {target} wheel", headers=download_headers
             )
@@ -9904,9 +10552,9 @@ def _remove_older_sdk_versions(keep: _SdkVersion, local_repository: Path) -> tup
         if isinstance(configured, dict) and isinstance(configured.get("version"), str)
         else frozenset()
     )
-    pyronaut_home = Path.home() / ".pyronaut"
-    candidates = _older_sdk_version_dirs(pyronaut_home / "bin", keep, pinned_images)
-    for parent in (pyronaut_home / "tools", pyronaut_home / "setup"):
+    data_home = _data_home()
+    candidates = _older_sdk_version_dirs(data_home / "bin", keep, pinned_images)
+    for parent in (data_home / "tools", data_home / "setup"):
         candidates.extend(_older_sdk_version_dirs(parent, keep))
     maven_group = local_repository / "io" / "micronaut" / "pyronaut"
     if maven_group.is_dir():
@@ -10221,14 +10869,73 @@ def _graalpy_for_project_environment() -> Path | None:
 # -- Project Python environment -----------------------------------------------
 #
 # `pyronaut install` creates the project `.venv` with the configured GraalPy and
-# installs the Python dependencies declared in pyproject.toml and
-# requirements.txt, so the embedded runtime and pytest can import them.
+# installs the Python dependencies declared in pyproject.toml,
+# requirements.txt and requirements-test.txt, so the embedded runtime and
+# pytest can import them. A uv project is synced with `uv sync` instead, because
+# pip can neither run in a uv venv nor see uv workspace members and indexes (and
+# uv ignores both requirements files); a project that manages `.venv` itself
+# opts out with `[tool.pyronaut.python] manage-dependencies = false`.
 
 _PROJECT_VENV_STATE = ".pyronaut-requirements.json"
+# pip requirements files `pyronaut install` reads, in install order. The test
+# file keeps test-only packages (for example pypdf) out of requirements.txt.
+_REQUIREMENT_FILE_NAMES = ("requirements.txt", "requirements-test.txt")
+NO_PYTHON_DEPS_FLAG = "--no-python-deps"
+
+
+def _python_dependencies_managed(project_dir: Path) -> bool:
+    """``[tool.pyronaut.python] manage-dependencies``, true by default."""
+    data = _read_pyproject_data(project_dir)
+    section: object = data.get("tool") if isinstance(data, dict) else None
+    for key in ("pyronaut", "python"):
+        section = section.get(key) if isinstance(section, dict) else None
+    if not isinstance(section, dict):
+        return True
+    value = section.get("manage-dependencies", section.get("manageDependencies", True))
+    if not isinstance(value, bool):
+        raise ValueError("Invalid tool.pyronaut.python.manage-dependencies in pyproject.toml: expected true or false")
+    return value
+
+
+def _find_uv() -> str | None:
+    return shutil.which("uv")
+
+
+def _uv_lock_file(project_dir: Path) -> Path | None:
+    """The ``uv.lock`` of the project, or of the uv workspace it belongs to."""
+    if (project_dir / "uv.lock").is_file():
+        return project_dir / "uv.lock"
+    for parent in project_dir.parents:
+        try:
+            data = _read_pyproject_data(parent)
+        except RuntimeError:
+            # An unreadable pyproject.toml above the project is not this project's configuration.
+            continue
+        tool = data.get("tool") if isinstance(data, dict) else None
+        uv = tool.get("uv") if isinstance(tool, dict) else None
+        if isinstance(uv, dict) and isinstance(uv.get("workspace"), dict):
+            lock = parent / "uv.lock"
+            return lock if lock.is_file() else None
+    return None
+
+
+def _is_uv_project(project_dir: Path) -> bool:
+    """Whether uv manages the project: it has a ``uv.lock`` or a ``[tool.uv]`` table."""
+    if _uv_lock_file(project_dir) is not None:
+        return True
+    data = _read_pyproject_data(project_dir)
+    tool = data.get("tool") if isinstance(data, dict) else None
+    return isinstance(tool, dict) and isinstance(tool.get("uv"), dict)
 
 
 def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Path]]:
     """Return declared requirement specifiers and requirements files."""
+    requirements, requirement_files, _ = _project_python_requirements_and_implicit_pytest(project_dir)
+    return requirements, requirement_files
+
+
+def _project_python_requirements_and_implicit_pytest(project_dir: Path) -> tuple[list[str], list[Path], bool]:
+    """Like ``_project_python_requirements``, plus whether Pyronaut added ``pytest`` itself."""
     requirements: list[str] = []
     data = _read_pyproject_data(project_dir)
     project = data.get("project") if isinstance(data, dict) else None
@@ -10238,7 +10945,9 @@ def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Pat
     groups = data.get("dependency-groups") if isinstance(data, dict) else None
     if isinstance(groups, dict):
         requirements.extend(_expand_dependency_groups(groups))
-    requirement_files = [project_dir / "requirements.txt"] if (project_dir / "requirements.txt").is_file() else []
+    requirement_files = [
+        project_dir / name for name in _REQUIREMENT_FILE_NAMES if (project_dir / name).is_file()
+    ]
     declared_names = {
         _canonical_package_name(match.group(1))
         for value in requirements
@@ -10248,14 +10957,15 @@ def _project_python_requirements(project_dir: Path) -> tuple[list[str], list[Pat
         re.search(r"(?im)^\s*pytest\b", path.read_text(encoding="utf-8")) for path in requirement_files
     )
     has_tests = (project_dir / _read_pyproject_sources(project_dir).python_test_dir).is_dir()
-    if has_tests and not declares_pytest:
+    implicit_pytest = has_tests and not declares_pytest
+    if implicit_pytest:
         # `pyronaut test` imports pytest from the project environment.
         requirements.append("pytest")
     unique: list[str] = []
     for requirement in requirements:
         if requirement not in unique:
             unique.append(requirement)
-    return unique, requirement_files
+    return unique, requirement_files, implicit_pytest
 
 
 def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
@@ -10279,15 +10989,90 @@ def _expand_dependency_groups(groups: dict[str, object]) -> list[str]:
     return requirements
 
 
-def _project_venv_state(graalpy: Path, requirements: Sequence[str], requirement_files: Sequence[Path]) -> dict[str, object]:
+def _project_venv_state(
+    graalpy: Path,
+    requirements: Sequence[str],
+    requirement_files: Sequence[Path],
+    installer: str = "pip",
+) -> dict[str, object]:
     digest = hashlib.sha256()
     for path in requirement_files:
         digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
     return {
         "graalpy": str(graalpy),
+        "installer": installer,
         "requirements": list(requirements),
         "requirementFilesSha256": digest.hexdigest(),
     }
+
+
+class _PythonDependencyPlan(NamedTuple):
+    """How ``pyronaut install`` keeps ``.venv`` current, and what it records."""
+
+    requirements: list[str]
+    requirement_files: list[Path]
+    implicit_pytest: bool
+    uv: str | None
+    # Files whose content decides whether `.venv` is stale: uv.lock (or
+    # pyproject.toml without one) for uv, requirements.txt and
+    # requirements-test.txt for pip.
+    state_files: list[Path]
+
+    @property
+    def installer(self) -> str:
+        return "uv" if self.uv is not None else "pip"
+
+    def state(self, graalpy: Path) -> dict[str, object]:
+        return _project_venv_state(graalpy, self.requirements, self.state_files, self.installer)
+
+
+def _python_dependency_plan(project_dir: Path, *, manage_dependencies: bool = True) -> _PythonDependencyPlan | None:
+    """The Python dependency work ``pyronaut install`` owns, or ``None`` when it owns none.
+
+    ``None`` means the project declares no Python dependencies, or
+    ``[tool.pyronaut.python] manage-dependencies = false`` / ``--no-python-deps``
+    left ``.venv`` to another tool. Raises ``ValueError`` for an invalid setting.
+    """
+    requirements, requirement_files, implicit_pytest = _project_python_requirements_and_implicit_pytest(project_dir)
+    if not requirements and not requirement_files:
+        return None
+    if not manage_dependencies or not _python_dependencies_managed(project_dir):
+        return None
+    uv = _find_uv() if _is_uv_project(project_dir) else None
+    if uv is not None:
+        state_files = [_uv_lock_file(project_dir) or project_dir / "pyproject.toml"]
+    else:
+        state_files = list(requirement_files)
+    return _PythonDependencyPlan(requirements, requirement_files, implicit_pytest, uv, state_files)
+
+
+def _venv_state_is_current(venv_dir: Path, expected: dict[str, object]) -> bool:
+    """Whether ``.venv`` recorded the installer and declarations of ``expected``."""
+    try:
+        recorded = json.loads((venv_dir / _PROJECT_VENV_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(recorded, dict)
+        and recorded.get("installer", "pip") == expected["installer"]
+        and recorded.get("requirements") == expected["requirements"]
+        and recorded.get("requirementFilesSha256") == expected["requirementFilesSha256"]
+    )
+
+
+def _python_requirements_stale(project_dir: Path) -> bool:
+    """Whether ``pyronaut install`` would change ``.venv`` now.
+
+    A project that leaves ``.venv`` to another tool is never stale; an invalid
+    setting is, so that install reports it.
+    """
+    try:
+        plan = _python_dependency_plan(project_dir)
+    except ValueError:
+        return True
+    if plan is None:
+        return False
+    return not _venv_state_is_current(project_dir / ".venv", plan.state(Path()))
 
 
 def _ensure_project_virtualenv(
@@ -10296,15 +11081,35 @@ def _ensure_project_virtualenv(
     *,
     refresh: bool = False,
     offline: bool = False,
+    manage_dependencies: bool = True,
 ) -> int:
-    """Create ``.venv`` with GraalPy and install declared Python dependencies."""
+    """Create ``.venv`` with GraalPy and install declared Python dependencies.
+
+    ``manage_dependencies=False`` (``--no-python-deps``) and
+    ``[tool.pyronaut.python] manage-dependencies = false`` trust an existing
+    ``.venv`` as is, after checking that GraalPy created it.
+    """
     requirements, requirement_files = _project_python_requirements(project_dir)
     if not requirements and not requirement_files:
         return SUCCESS
+    try:
+        plan = _python_dependency_plan(project_dir, manage_dependencies=manage_dependencies)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return USAGE_ERROR
+    manage_dependencies = plan is not None
     progress = _progress_console()
     venv_dir = project_dir / ".venv"
     venv_bin = _virtualenv_bin(venv_dir)
     venv_python = _resolve_virtualenv_python(venv_bin) if venv_dir.is_dir() else None
+    if not manage_dependencies and not venv_dir.is_dir():
+        print(
+            f"Python dependency management is disabled, but {venv_dir} does not exist. "
+            f"Create it with GraalPy and install the project's dependencies (for example: uv sync --python graalpy), "
+            f"or enable [tool.pyronaut.python] manage-dependencies.",
+            file=sys.stderr,
+        )
+        return PRECONDITION_FAILED
     if venv_dir.is_dir():
         if venv_python is None or not _virtualenv_is_graalpy(venv_python):
             print(
@@ -10322,6 +11127,8 @@ def _ensure_project_virtualenv(
             )
             return PRECONDITION_FAILED
         graalpy = venv_python
+        if not manage_dependencies:
+            return SUCCESS
     else:
         graalpy = _graalpy_for_project_environment()
         if graalpy is None:
@@ -10344,37 +11151,51 @@ def _ensure_project_virtualenv(
             print(f"GraalPy did not create an interpreter in {venv_dir}", file=sys.stderr)
             return PRECONDITION_FAILED
 
-    state_file = venv_dir / _PROJECT_VENV_STATE
-    state = _project_venv_state(graalpy, requirements, requirement_files)
-    if not refresh:
-        try:
-            recorded = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            recorded = None
-        if isinstance(recorded, dict) and recorded.get("requirements") == state["requirements"] and recorded.get(
-            "requirementFilesSha256"
-        ) == state["requirementFilesSha256"]:
-            return SUCCESS
+    assert plan is not None
+    uv = plan.uv
+    state = plan.state(graalpy)
+    if not refresh and _venv_state_is_current(venv_dir, state):
+        return SUCCESS
     if offline:
-        progress.warn("Python dependencies are not installed in .venv; skipped pip install (--offline)")
+        progress.warn(f"Python dependencies are not installed in .venv; skipped {'uv sync' if uv else 'pip install'} (--offline)")
         return SUCCESS
 
-    command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
-    for path in requirement_files:
-        command_line.extend(["-r", str(path)])
-    command_line.extend(requirements)
-    if _delegation_trace_enabled():
-        print(shlex.join(command_line), file=sys.stderr)
     env = dict(os.environ)
     env.pop("VIRTUAL_ENV", None)
     env.pop("PYTHONHOME", None)
     env["PATH"] = _prepend_path_entry(env.get("PATH", ""), str(venv_bin))
-    with progress.step("Installing Python dependencies into .venv", done="Python dependencies installed into .venv") as step:
+    if uv is not None:
+        # Sync into the project's .venv even when the project is a workspace
+        # member, whose environment uv would otherwise put at the workspace root.
+        env["UV_PROJECT_ENVIRONMENT"] = str(venv_dir)
+        command_line = [uv, "sync", "--project", str(project_dir), "--python", str(venv_python)]
+        label, done = "Syncing Python dependencies into .venv with uv", "Python dependencies synced into .venv with uv"
+    else:
+        command_line = [str(venv_python), "-m", "pip", "install", "--disable-pip-version-check"]
+        for path in requirement_files:
+            command_line.extend(["-r", str(path)])
+        command_line.extend(requirements)
+        label, done = "Installing Python dependencies into .venv", "Python dependencies installed into .venv"
+    if _delegation_trace_enabled():
+        print(shlex.join(command_line), file=sys.stderr)
+    with progress.step(label, done=done) as step:
         exit_code = _run_showing_output_on_failure(runner, command_line, env)
         step.failed = exit_code != SUCCESS
     if exit_code != SUCCESS:
         return exit_code
-    state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    if uv is not None:
+        synced_python = _resolve_virtualenv_python(_virtualenv_bin(venv_dir))
+        if synced_python is None or not _virtualenv_is_graalpy(synced_python):
+            print(
+                f"uv sync replaced {venv_dir} with an interpreter other than GraalPy. "
+                f"Check the requires-python and python-preference settings of the uv project.",
+                file=sys.stderr,
+            )
+            return PRECONDITION_FAILED
+        if plan.implicit_pytest:
+            # uv installs only what the project declares.
+            progress.warn("The project has Python tests but does not declare pytest; add it to a uv dependency group")
+    (venv_dir / _PROJECT_VENV_STATE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     return SUCCESS
 
 
@@ -10579,7 +11400,9 @@ def _doctor_platform() -> str:
 def _doctor_checks(args: Sequence[str], project_dir: Path | None, *, offline: bool = False) -> list[tuple[str, str, _doctor.Check]]:
     checks: list[tuple[str, str, _doctor.Check]] = [
         ("python", "Python", _doctor_check_python),
+        ("toml", "TOML parser", _doctor_check_toml_parser),
         ("pyronaut", "Pyronaut SDK", lambda: _doctor_check_setup_state(args)),
+        ("home", "Pyronaut state", _doctor_check_pyronaut_dirs),
         ("graalvm", "GraalVM JDK", lambda: _doctor_check_graalvm(project_dir)),
         ("graalpy", "GraalPy", lambda: _doctor_check_graalpy(project_dir)),
         ("interpreter", "Interpreter", lambda: _doctor_check_interpreter(project_dir)),
@@ -10655,6 +11478,24 @@ def _doctor_check_python() -> _doctor.CheckResult:
     return _doctor.CheckResult("python", "Python", _doctor.PASS, f"{version} ({implementation}) at {sys.executable}", data=data)
 
 
+def _doctor_check_toml_parser() -> _doctor.CheckResult:
+    try:
+        parser = _toml_parser("pyproject.toml")
+    except RuntimeError:
+        info = sys.version_info
+        return _doctor.CheckResult(
+            "toml",
+            "TOML parser",
+            _doctor.FAIL,
+            f"Python {info.major}.{info.minor}.{info.micro} has no tomllib and tomli is not installed, so pyproject.toml cannot be read",
+            _TOML_PARSER_FIX,
+            {"module": None},
+        )
+    return _doctor.CheckResult(
+        "toml", "TOML parser", _doctor.PASS, f"{parser.__name__} is available", data={"module": parser.__name__}
+    )
+
+
 def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
     version = _installed_pyronaut_version()
     data: dict[str, object] = {"version": version}
@@ -10670,7 +11511,7 @@ def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
         if str(exc) != _SETUP_REQUIRED_MESSAGE:
             return _doctor.CheckResult(
                 "pyronaut", "Pyronaut SDK", _doctor.FAIL, f"{version}: {exc}",
-                "Fix the reported setting in ~/.pyronaut/settings.toml and run pyronaut setup", data,
+                f"Fix the reported setting in {_settings_label()} and run pyronaut setup", data,
             )
         if manifest_path.is_file():
             recorded = None
@@ -10696,6 +11537,29 @@ def _doctor_check_setup_state(args: Sequence[str]) -> _doctor.CheckResult:
     )
 
 
+def _doctor_check_pyronaut_dirs() -> _doctor.CheckResult:
+    dirs = _home.pyronaut_dirs()
+    data: dict[str, object] = {
+        "layout": dirs.layout,
+        "config": str(dirs.config),
+        "cache": str(dirs.cache),
+        "data": str(dirs.data),
+    }
+    detail = _describe_pyronaut_dirs()
+    if dirs.layout == _home.LAYOUT_HOME and _home.xdg_flag() is None and _home.xdg_by_default():
+        detail += "; run pyronaut setup --xdg to switch to the XDG layout"
+    if dirs.layout == _home.LAYOUT_XDG:
+        legacy = _home.pyronaut_home()
+        if legacy.is_dir():
+            return _doctor.CheckResult(
+                "home", "Pyronaut state", _doctor.WARN,
+                f"{detail}; {_home_display(legacy)} is no longer used",
+                f"Remove {_home_display(legacy)}, or set {_home.PYRONAUT_XDG_ENV}=false to switch back to it",
+                data,
+            )
+    return _doctor.CheckResult("home", "Pyronaut state", _doctor.PASS, detail, data=data)
+
+
 def _describe_graalvm_home_source(java_home: Path) -> str:
     sdkman_dir = _read_env("SDKMAN_DIR") or str(Path.home() / ".sdkman")
     candidates: list[tuple[str, Path]] = []
@@ -10704,8 +11568,8 @@ def _describe_graalvm_home_source(java_home: Path) -> str:
         candidates.append(("JAVA_HOME", Path(env_java_home)))
     candidates.extend(
         [
-            ("~/.pyronaut/sdks", _graalvm_jdks_root()),
-            ("~/.pyronaut/jdks", _legacy_graalvm_jdks_root()),
+            (_home_display(_graalvm_jdks_root()), _graalvm_jdks_root()),
+            (_home_display(_legacy_graalvm_jdks_root()), _legacy_graalvm_jdks_root()),
             ("SDKMAN", Path(sdkman_dir) / "candidates" / "java"),
             ("jenv", Path.home() / ".jenv" / "versions"),
             ("Gradle JDKs", Path.home() / ".gradle" / "jdks"),
@@ -10735,7 +11599,7 @@ def _doctor_check_graalvm(project_dir: Path | None) -> _doctor.CheckResult:
 
     java_home = _ensure_graalvm_java_home(project_dir, offline=True)
     if java_home is None:
-        detail = f"no GraalVM JDK {required}+ found (checked JAVA_HOME, ~/.pyronaut/sdks, SDKMAN, jenv, Gradle JDKs)"
+        detail = f"no GraalVM JDK {required}+ found (checked JAVA_HOME, {_home_display(_graalvm_jdks_root())}, SDKMAN, jenv, Gradle JDKs)"
         if ignored_java_home:
             detail += f"; JAVA_HOME={env_java_home} is not a compatible GraalVM"
         return _doctor.CheckResult(
@@ -10942,7 +11806,7 @@ def _doctor_check_native_launchers() -> _doctor.CheckResult:
         fix = (
             "Use macOS or Linux on x86_64 or arm64"
             if "not available for" in message
-            else "Fix [native-images] in ~/.pyronaut/settings.toml"
+            else f"Fix [native-images] in {_settings_label()}"
         )
         return _doctor.CheckResult("launchers", "Native launchers", _doctor.FAIL, message, fix)
     cache_dir = _native_image_cache_path("x", version=version, os_segment=os_segment, arch=arch).parent
@@ -10968,13 +11832,26 @@ def _doctor_check_native_launchers() -> _doctor.CheckResult:
             f"{', '.join(_SETUP_IMAGE_COMMANDS)} cached in {cache_dir}", data=data,
         )
     stale = any("not cached" not in reason for reason in missing.values())
-    status = _doctor.FAIL if _setup_is_required() else _doctor.WARN
-    return _doctor.CheckResult(
-        "launchers", "Native launchers", status,
+    summary = (
         f"{len(missing)} of {len(_SETUP_IMAGE_COMMANDS)} launchers {'stale' if stale else 'missing'} in {cache_dir}: "
-        + ", ".join(sorted(missing)),
-        "Run pyronaut setup --refresh" if stale else "Run pyronaut setup",
-        data,
+        + ", ".join(sorted(missing))
+    )
+    if not _setup_is_required():
+        return _doctor.CheckResult(
+            "launchers", "Native launchers", _doctor.WARN, summary,
+            "Run pyronaut setup --refresh" if stale else "Run pyronaut setup", data,
+        )
+    # An installed SDK downloads a launcher when a native command first needs
+    # it, so JVM-only projects never have the launchers in their cache.
+    if not stale:
+        return _doctor.CheckResult(
+            "launchers", "Native launchers", _doctor.PASS,
+            f"{summary} (downloaded when a native command first needs them)", data=data,
+        )
+    return _doctor.CheckResult(
+        "launchers", "Native launchers", _doctor.WARN,
+        f"{summary} (replaced when a native command next needs them)",
+        "Run pyronaut setup --native-launchers", data,
     )
 
 
@@ -11087,12 +11964,12 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
         settings = _read_pyronaut_user_settings()
     except RuntimeError as exc:
         return _doctor.CheckResult(
-            "proxy", "Proxy", _doctor.FAIL, str(exc), "Fix the TOML syntax in ~/.pyronaut/settings.toml", data
+            "proxy", "Proxy", _doctor.FAIL, str(exc), f"Fix the TOML syntax in {_settings_label()}", data
         )
     configured = settings.get("proxy")
     if configured is not None and not isinstance(configured, dict):
         return _doctor.CheckResult(
-            "proxy", "Proxy", _doctor.FAIL, "[proxy] in ~/.pyronaut/settings.toml must be a table",
+            "proxy", "Proxy", _doctor.FAIL, f"[proxy] in {_settings_label()} must be a table",
             "Declare the proxy as [proxy] with url, or host and port", data,
         )
     settings_proxy = False
@@ -11104,7 +11981,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
             isinstance(host, str) and bool(host.strip()) and configured.get("port") is not None
         )
         if not settings_proxy:
-            warnings.append("[proxy] in ~/.pyronaut/settings.toml is ignored because it sets neither url nor host and port")
+            warnings.append(f"[proxy] in {_settings_label()} is ignored because it sets neither url nor host and port")
     for upper, lower in (("HTTPS_PROXY", "https_proxy"), ("HTTP_PROXY", "http_proxy"), ("NO_PROXY", "no_proxy")):
         if env_proxy.get(upper) and env_proxy.get(lower) and env_proxy[upper] != env_proxy[lower]:
             warnings.append(f"{upper} and {lower} differ ({upper} wins)")
@@ -11117,7 +11994,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
         if warnings:
             return _doctor.CheckResult(
                 "proxy", "Proxy", _doctor.WARN, "no proxy in effect; " + "; ".join(warnings),
-                "Set [proxy].url (or host and port) in ~/.pyronaut/settings.toml, or remove the table", data,
+                f"Set [proxy].url (or host and port) in {_settings_label()}, or remove the table", data,
             )
         return _doctor.CheckResult("proxy", "Proxy", _doctor.PASS, "no proxy configured", data=data)
 
@@ -11125,7 +12002,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
         winner = next(name for name in _DOCTOR_PROXY_ENV if env_proxy.get(name))
         source = f"environment ({winner})"
     elif settings_proxy:
-        source = "~/.pyronaut/settings.toml"
+        source = _settings_label()
     else:
         source = "~/.m2/settings.xml"
     redacted = _redact_proxy_url(proxy)
@@ -11148,7 +12025,7 @@ def _doctor_check_proxy() -> _doctor.CheckResult:
     if bypass:
         detail += f", bypass {bypass}"
     if source.startswith("environment") and settings_proxy:
-        detail += "; overrides [proxy] in ~/.pyronaut/settings.toml"
+        detail += f"; overrides [proxy] in {_settings_label()}"
     if warnings:
         return _doctor.CheckResult(
             "proxy", "Proxy", _doctor.WARN, detail + "; " + "; ".join(warnings),
@@ -11374,12 +12251,8 @@ def _read_application_config(project_dir: Path) -> tuple[dict[str, object], Path
     unparsed: list[str] = []
     toml_file = resources_dir / "application.toml"
     if toml_file.is_file():
-        try:
-            import tomllib
-        except ImportError:  # pragma: no cover - Python 3.10 without tomli
-            import tomli as tomllib  # type: ignore[no-redef]
         with toml_file.open("rb") as handle:
-            data = tomllib.load(handle)
+            data = _toml_parser(toml_file.name).load(handle)
         return (data if isinstance(data, dict) else {}), toml_file, unparsed
     properties_file = resources_dir / "application.properties"
     if properties_file.is_file():
@@ -11731,7 +12604,7 @@ def _graalpy_release_tag(version_line: str | None, expected: str | None) -> str 
 
 
 def _graalpy_compatibility_cache(release: str) -> Path:
-    return Path.home() / ".pyronaut" / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
+    return _cache_home() / "graalpy-compatibility" / f"python-module-testing-{release}.csv"
 
 
 def _load_graalpy_compatibility(release: str, *, offline: bool) -> tuple[dict[str, tuple[str, int, float]] | None, str]:
@@ -11862,7 +12735,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-validate]"
+            f"Usage: pyronaut {command} [-hV] [--debug-vm] [--no-cache] [--no-install] [--no-validate]"
             + (" [--control-panel]" if command == "dev" else ""),
             "                    [--classes-dir=<classesDir>]",
             "                    [--config-dir=<configDir>]",
@@ -11905,6 +12778,7 @@ def _print_run_usage(stream=None, command: str = "run") -> None:
             ("-h, --help", "Show this help message and exit."),
             ("--main-class=<mainClass>", "Main class to invoke"),
             ("--no-cache", "Bypass run preflight cache reads where applicable"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install (also: PYRONAUT_AUTO_INSTALL=false, or [install] auto = false in ~/.pyronaut/settings.toml)"),
             ("--no-validate", "Skip run scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),
@@ -11921,7 +12795,8 @@ def _print_test_usage(stream=None) -> None:
     _write_command_help(
         stream,
         usage_lines=[
-            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-validate] [-t|--continuous]",
+            "Usage: pyronaut test [-hV] [--debug-vm] [--no-cache] [--no-install] [--no-validate]",
+            "                     [-t|--continuous]",
             "                     [--classes-dir=<classesDir>]",
             "                     [--config-dir=<configDir>]",
             "                     [--project-dir=<projectDir>]",
@@ -11950,6 +12825,7 @@ def _print_test_usage(stream=None) -> None:
             ("-h, --help", "Show this help message and exit."),
             ("-t, --continuous", "Keep the test command running for interactive reruns"),
             ("--no-cache", "Bypass test preflight cache reads where applicable"),
+            ("--no-install", "Do not run pyronaut install when declared dependencies changed since the last install (also: PYRONAUT_AUTO_INSTALL=false, or [install] auto = false in ~/.pyronaut/settings.toml)"),
             ("--no-validate", "Skip test scenario configuration validation"),
             ("--port=<port>", "Set micronaut.server.port for direct source execution"),
             ("--project-dir=<projectDir>", "Project directory containing pyproject.toml"),

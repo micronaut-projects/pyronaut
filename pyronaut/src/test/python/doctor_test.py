@@ -246,12 +246,12 @@ class DoctorCommandTest(unittest.TestCase):
 
     def test_check_order_includes_project_checks_only_inside_project(self):
         self.assertEqual(
-            ["python", "pyronaut", "graalvm", "graalpy", "interpreter", "launchers", "proxy", "docker"],
+            ["python", "toml", "pyronaut", "home", "graalvm", "graalpy", "interpreter", "launchers", "proxy", "docker"],
             [check_id for check_id, _, _ in cli._doctor_checks([], None)],
         )
         self.assertEqual(
             [
-                "python", "pyronaut", "graalvm", "graalpy", "interpreter", "launchers",
+                "python", "toml", "pyronaut", "home", "graalvm", "graalpy", "interpreter", "launchers",
                 "pyproject", "install", "state", "threading", "packages", "compat", "pytest",
                 "proxy", "docker",
             ],
@@ -280,7 +280,8 @@ class DoctorChecksTest(unittest.TestCase):
         self._home_patch = patch("pathlib.Path.home", return_value=self.home)
         self._home_patch.start()
         self.addCleanup(self._home_patch.stop)
-        self._env_patch = patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        # These checks cover the ~/.pyronaut layout, also on Linux.
+        self._env_patch = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
         for name in ("JAVA_HOME", "PYENV_VERSION", "PYENV_ROOT", "SDKMAN_DIR", "DOCKER_HOST", *_PROXY_ENV):
@@ -300,6 +301,28 @@ class DoctorChecksTest(unittest.TestCase):
             result = cli._doctor_check_python()
         self.assertEqual(doctor.PASS, result.status)
         self.assertEqual("3.10.0", result.data["version"])
+
+    # -- toml parser ---------------------------------------------------------
+
+    def test_toml_parser_check_passes_with_tomllib_or_tomli_and_fails_with_the_fix(self):
+        with patch.dict(sys.modules, {"tomllib": types.ModuleType("tomllib")}):
+            builtin = cli._doctor_check_toml_parser()
+        self.assertEqual(doctor.PASS, builtin.status)
+        self.assertEqual("tomllib", builtin.data["module"])
+
+        with patch.dict(sys.modules, {"tomllib": None, "tomli": types.ModuleType("tomli")}):
+            backport = cli._doctor_check_toml_parser()
+        self.assertEqual(doctor.PASS, backport.status)
+        self.assertEqual("tomli", backport.data["module"])
+
+        with patch.dict(sys.modules, {"tomllib": None, "tomli": None}):
+            missing = cli._doctor_check_toml_parser()
+        self.assertEqual(doctor.FAIL, missing.status)
+        self.assertEqual("TOML parser", missing.title)
+        self.assertIn("no tomllib and tomli is not installed", missing.detail)
+        self.assertEqual(
+            "Python 3.10 needs the tomli package (pip install tomli) or use Python 3.11+", missing.fix
+        )
 
     # -- setup state ---------------------------------------------------------
 
@@ -578,15 +601,17 @@ class DoctorChecksTest(unittest.TestCase):
         self.assertIn("pyronaut-dev, pyronaut-run, pyronaut-run-python cached in", ready.detail)
         self.assertEqual("linux-amd64", ready.data["platform"])
 
-        self.assertEqual(doctor.FAIL, missing.status)
+        # Launchers are downloaded on first native use, so a missing one is
+        # expected (for example for JVM-only projects).
+        self.assertEqual(doctor.PASS, missing.status)
         self.assertIn("1 of 3 launchers missing", missing.detail)
         self.assertIn("pyronaut-run", missing.detail)
-        self.assertEqual("Run pyronaut setup", missing.fix)
+        self.assertIn("downloaded when a native command first needs them", missing.detail)
         self.assertIsNone(missing.data["images"]["pyronaut-run"])
 
-        self.assertEqual(doctor.FAIL, stale.status)
+        self.assertEqual(doctor.WARN, stale.status)
         self.assertIn("1 of 3 launchers stale", stale.detail)
-        self.assertEqual("Run pyronaut setup --refresh", stale.fix)
+        self.assertEqual("Run pyronaut setup --native-launchers", stale.fix)
 
     def test_native_launcher_check_only_warns_for_source_checkouts_and_reports_bad_settings(self):
         configuration = patch.object(
@@ -843,7 +868,7 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         patcher = patch("pathlib.Path.home", return_value=self.home)
         patcher.start()
         self.addCleanup(patcher.stop)
-        env = patch.dict(os.environ, {"HOME": str(self.home)}, clear=False)
+        env = patch.dict(os.environ, {"HOME": str(self.home), "PYRONAUT_XDG": "false"}, clear=False)
         env.start()
         self.addCleanup(env.stop)
         for name in ("PYRONAUT_PYTHON_EXECUTABLE", "VIRTUAL_ENV", "PYENV_VERSION", "PYENV_ROOT"):

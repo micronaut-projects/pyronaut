@@ -1,5 +1,6 @@
 // Copyright 2017-2026 original authors
 
+import io.micronaut.pyronaut.gradle.PyenvVersions
 import io.micronaut.pyronaut.gradle.PyronautPgo
 
 // PGO training workload for the pyronaut-dev, pyronaut-run and pyronaut-run-python native images.
@@ -25,7 +26,7 @@ val jvmTools = listOf(
 val fixtureRepository = project(":micronaut-functional-test").layout.buildDirectory.dir("fixture-repo")
 val graalPy = providers.gradleProperty("pyronaut.pgo.graalpy")
     .orElse(providers.gradleProperty("pyronautPyenvVersion").map {
-        "${System.getProperty("user.home")}/.pyenv/versions/$it/bin/graalpy"
+        File(PyenvVersions.root(), "versions/$it/bin/graalpy").absolutePath
     })
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 val nativeExecutableSuffix = if (isWindows) ".exe" else ""

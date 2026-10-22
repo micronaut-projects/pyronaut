@@ -38,6 +38,14 @@ final class ResolutionCache {
     }
 
     static String installHash(Path pyprojectFile, Path localRepositoryPath) throws IOException {
+        return installHash(pyprojectFile, localRepositoryPath, "off");
+    }
+
+    /**
+     * The install cache key. A dependency lock other than {@code off} is part
+     * of the key, so changing the lock file or the lock mode resolves again.
+     */
+    static String installHash(Path pyprojectFile, Path localRepositoryPath, String lockFingerprint) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update("installCacheVersion=".getBytes(StandardCharsets.UTF_8));
@@ -56,6 +64,11 @@ final class ResolutionCache {
             digest.update((byte) 0);
             digest.update("micronautControlPanelVersion=".getBytes(StandardCharsets.UTF_8));
             digest.update(PyronautManagedVersions.micronautControlPanelVersion().getBytes(StandardCharsets.UTF_8));
+            if (!"off".equals(lockFingerprint)) {
+                digest.update((byte) 0);
+                digest.update("dependencyLock=".getBytes(StandardCharsets.UTF_8));
+                digest.update(lockFingerprint.getBytes(StandardCharsets.UTF_8));
+            }
             byte[] hashed = digest.digest();
             return HexFormat.of().formatHex(hashed);
         } catch (NoSuchAlgorithmException e) {

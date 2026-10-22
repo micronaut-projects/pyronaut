@@ -6,6 +6,11 @@ import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyprojectModelReader;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import io.micronaut.pyronaut.config.model.PyprojectJsonSchemaGenerator;
+import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.resolution.ArtifactDescriptorRequest;
+import org.eclipse.aether.supplier.RepositorySystemSupplier;
+import org.eclipse.aether.spi.connector.transport.TransporterFactory;
+import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +20,8 @@ import java.io.IOException;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.io.StringWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -1876,6 +1883,122 @@ class PyronautInstallMainTest {
     }
 
     @Test
+    void resolvesUnusedVersionlessBomEntryAlongsideGenuineImport() throws Exception {
+        Path repository = tempDir.resolve("repo-unused-versionless-bom");
+        writeBom(repository, "com.example", "imported-bom", "1.0.0",
+            List.of(new ManagedDependency("com.example", "root", "2.3.4")));
+        Path customBom = repository.resolve("com/example/custom-bom/1.0.0/custom-bom-1.0.0.pom");
+        Files.createDirectories(customBom.getParent());
+        Files.writeString(customBom, """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>com.example</groupId>
+              <artifactId>custom-bom</artifactId>
+              <version>1.0.0</version>
+              <packaging>pom</packaging>
+              <dependencyManagement>
+                <dependencies>
+                  <dependency>
+                    <groupId>com.example</groupId>
+                    <artifactId>imported-bom</artifactId>
+                    <version>1.0.0</version>
+                    <type>pom</type>
+                    <scope>import</scope>
+                  </dependency>
+                  <dependency>
+                    <groupId>io.grpc</groupId>
+                    <artifactId>grpc-bom</artifactId>
+                    <exclusions>
+                      <exclusion>
+                        <groupId>io.grpc</groupId>
+                        <artifactId>grpc-netty-shaded</artifactId>
+                      </exclusion>
+                    </exclusions>
+                  </dependency>
+                  <dependency>
+                    <groupId>com.example</groupId>
+                    <artifactId>metadata-pom</artifactId>
+                    <type>pom</type>
+                    <scope>runtime</scope>
+                  </dependency>
+                </dependencies>
+              </dependencyManagement>
+            </project>
+            """, StandardCharsets.UTF_8);
+        writeArtifact(repository, "com.example", "root", "2.3.4");
+        Path localRepository = tempDir.resolve("m2-unused-versionless-bom");
+        RepositorySystem delegate = new RepositorySystemSupplier() {
+            @Override
+            protected Map<String, TransporterFactory> createTransporterFactories() {
+                return Map.of(FileTransporterFactory.NAME, new FileTransporterFactory());
+            }
+        }.get();
+        RepositorySystem recordingSystem = (RepositorySystem) Proxy.newProxyInstance(
+            RepositorySystem.class.getClassLoader(), new Class<?>[]{RepositorySystem.class}, (proxy, method, args) -> {
+                if ("readArtifactDescriptor".equals(method.getName())) {
+                    var requested = ((ArtifactDescriptorRequest) args[1]).getArtifact();
+                    assertFalse(List.of("io.grpc:grpc-bom", "com.example:metadata-pom")
+                            .contains(requested.getGroupId() + ":" + requested.getArtifactId()),
+                        "Versionless managed entries must not trigger a descriptor lookup");
+                }
+                try {
+                    return method.invoke(delegate, args);
+                } catch (InvocationTargetException e) {
+                    throw e.getCause();
+                }
+            });
+        MavenClasspathResolver resolver = new MavenClasspathResolver(recordingSystem, new ProxyConfigurationLoader());
+        MavenClasspathResolver.ResolvedScopeDetails result = resolver.resolveScopeDetails(
+            bomManagementModel(repository, "com.example:root", "custom-bom"),
+            InstallScope.RUNTIME, localRepository, false);
+        assertTrue(hasJar(result, "root-2.3.4.jar"));
+        assertFalse(Files.exists(localRepository.resolve("io/grpc/grpc-bom")));
+        assertFalse(Files.exists(localRepository.resolve("com/example/metadata-pom")));
+    }
+
+    @Test
+    void reportsInvalidConfiguredBomCoordinates() throws Exception {
+        Path repository = tempDir.resolve("repo-invalid-bom-coordinates");
+        Files.createDirectories(repository);
+        PyprojectModel model = new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of("com.example:root:2.3.4"), List.of(), List.of(), List.of(),
+                List.of("com.example:invalid-bom:.."), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+        PyprojectModelException failure = assertThrows(PyprojectModelException.class, () ->
+            new MavenClasspathResolver().resolveScopeDetails(model, InstallScope.RUNTIME,
+                tempDir.resolve("m2-invalid-bom-coordinates"), false));
+        assertTrue(failure.getMessage().contains("com.example:invalid-bom:pom:.."), failure.getMessage());
+        assertTrue(failure.getCause() instanceof IllegalArgumentException, failure.toString());
+    }
+
+    @Test
+    void keepsFailedInferredBomLookupsOptional() throws Exception {
+        Path repository = tempDir.resolve("repo-invalid-optional-bom-coordinates");
+        writeBom(repository, "com.example", "custom-bom", "1.0.0", List.of(
+            new ManagedDependency("com.example", "root", "2.3.4"),
+            new ManagedDependency("com.example", "invalid-bom", ".."),
+            new ManagedDependency("com.example", "unavailable-bom", "1.0.0")));
+        writeArtifact(repository, "com.example", "root", "2.3.4");
+        MavenClasspathResolver.ResolvedScopeDetails result = new MavenClasspathResolver().resolveScopeDetails(
+            bomManagementModel(repository, "com.example:root", "custom-bom"), InstallScope.RUNTIME,
+            tempDir.resolve("m2-invalid-optional-bom-coordinates"), false);
+        assertTrue(hasJar(result, "root-2.3.4.jar"));
+    }
+
+    private static PyprojectModel bomManagementModel(Path repository, String dependency, String... bomNames) {
+        return new PyprojectModel(null, null, new PyprojectModel.Pyronaut(
+            null, null, List.of(repository.toUri().toString()),
+            new PyprojectModel.Dependencies(List.of(dependency), List.of(dependency), List.of(dependency), List.of(dependency),
+                Stream.of(bomNames).map(name -> "com.example:" + name + ":1.0.0").toList(), List.of(), Map.of()),
+            null, null, null, null, null, null, null, null, null, null, false));
+    }
+
+    private static boolean hasJar(MavenClasspathResolver.ResolvedScopeDetails result, String filename) {
+        return result.classpath().stream().anyMatch(path -> path.getFileName().toString().equals(filename));
+    }
+
+    @Test
     void fetchesTheMissingPomOfABinaryOnlyLocalArtifact(@TempDir Path tempDir) throws Exception {
         Path repository = tempDir.resolve("repo");
         writeArtifactWithDependencies(repository, "com.example", "root", "1.0.0",
@@ -3427,6 +3550,101 @@ class PyronautInstallMainTest {
         assertTrue(httpClientStub.contains("@overload\n    def send(self, requestTemplate: HttpRequest) -> str: ..."));
         assertTrue(httpClientStub.contains("@overload\n    def send(self, routeName: str) -> str: ..."));
         assertTrue(httpClientStub.contains("def send(self, *args: Any, **kwargs: Any) -> str:\n        \"\"\""));
+    }
+
+    @Test
+    void sourceParameterNamesBelongToTheOverloadWithMatchingTypes() throws Exception {
+        // Regression for #344: nested, generic and varargs parameter types never matched the source
+        // signature, so names were borrowed from whichever same-arity overload a hash map yielded first.
+        Path repository = tempDir.resolve("repo-python-ide-overload-names");
+        writeCompiledArtifactWithoutParameterMetadata(repository, "com.example", "runtime-dep", "1.0.0", Map.of(
+            "io.micronaut.context.env.PropertySource", """
+                package io.micronaut.context.env;
+
+                import java.util.Map;
+
+                public class PropertySource {
+                    public enum Origin { FILE, ENV }
+
+                    public enum Convention { JAVA, ENVIRONMENT }
+
+                    public static PropertySource of(String name, Map<String, Object> map, Convention convention, Origin origin) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource of(String name, Map<String, Object> map, Origin origin, int priority) {
+                        return new PropertySource();
+                    }
+
+                    public static <T extends CharSequence> PropertySource named(T label, Origin origin) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource named(String name, int priority) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource merge(Origin origin, String... names) {
+                        return new PropertySource();
+                    }
+
+                    public static PropertySource merge(Convention convention, Origin... origins) {
+                        return new PropertySource();
+                    }
+                }
+                """
+        ));
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+
+        Path project = tempDir.resolve("project-python-ide-overload-names");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+        command.projectDir = project;
+
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+
+        String stub = Files.readString(
+            project.resolve("__pyronaut__/ide-stubs").resolve("micronaut/context/env/__init__.pyi"),
+            StandardCharsets.UTF_8
+        );
+        assertTrue(stub.contains(
+            "def of(name: str, map: dict[str, Object], convention: PropertySource.Convention, origin: PropertySource.Origin) -> PropertySource: ..."),
+            stub);
+        assertTrue(stub.contains(
+            "def of(name: str, map: dict[str, Object], origin: PropertySource.Origin, priority: int) -> PropertySource: ..."),
+            stub);
+        assertTrue(stub.contains("def named(label: "), stub);
+        assertTrue(stub.contains("def named(name: str, priority: int) -> PropertySource: ..."), stub);
+        assertTrue(stub.contains("def merge(origin: PropertySource.Origin, names: "), stub);
+        assertTrue(stub.contains("def merge(convention: PropertySource.Convention, origins: "), stub);
+        assertFalse(stub.contains("arg0"), stub);
+    }
+
+    @Test
+    void ideStubGenerationCanBeDisabledWithoutEditingPyproject() throws Exception {
+        Path repository = tempDir.resolve("repo-python-ide-disabled");
+        writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "build-dep", "1.0.0");
+        writeArtifact(repository, "com.example", "test-dep", "1.0.0");
+        Path project = tempDir.resolve("project-python-ide-disabled");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+
+        String previous = System.getProperty(PythonEditorSupport.IDE_STUBS_ENABLED_PROPERTY);
+        System.setProperty(PythonEditorSupport.IDE_STUBS_ENABLED_PROPERTY, "false");
+        try {
+            PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), new MavenClasspathResolver());
+            command.projectDir = project;
+
+            assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        } finally {
+            restoreSystemProperty(PythonEditorSupport.IDE_STUBS_ENABLED_PROPERTY, previous);
+        }
+
+        assertFalse(Files.exists(project.resolve("__pyronaut__/ide-stubs")));
     }
 
     @Test

@@ -29,6 +29,9 @@ import java.util.List;
  * Writes editor support files for Python code completion.
  */
 final class PythonEditorSupport {
+    static final String IDE_STUBS_ENABLED_PROPERTY = "pyronaut.ide-stubs.enabled";
+    static final String IDE_STUBS_ENABLED_ENV = "PYRONAUT_IDE_STUBS_ENABLED";
+
     private final PythonIdeStubGenerator stubGenerator;
     private final EditorSettingsWriter vsCodeSettingsWriter;
     private final EditorSettingsWriter pyCharmSettingsWriter;
@@ -57,12 +60,27 @@ final class PythonEditorSupport {
         this.nativeProvidedJarResolver = nativeProvidedJarResolver;
     }
 
+    /**
+     * Whether stubs are generated. The environment can turn generation off for non-interactive builds (CI or
+     * sandboxed packaging) without editing {@code pyproject.toml}.
+     */
+    static boolean stubsEnabled(PyprojectModel.IdeStubs ideStubs) {
+        String override = System.getProperty(IDE_STUBS_ENABLED_PROPERTY);
+        if (override == null || override.isBlank()) {
+            override = System.getenv(IDE_STUBS_ENABLED_ENV);
+        }
+        if (override != null && !override.isBlank()) {
+            return Boolean.parseBoolean(override.trim());
+        }
+        return Boolean.TRUE.equals(ideStubs.enabled());
+    }
+
     EditorSupportResult ensureWritten(Path projectDir,
                                       Path cacheDir,
                                       PyprojectModel.IdeStubs ideStubs,
                                       List<String> runtimeClasspath,
                                       List<String> testClasspath) throws IOException {
-        if (!Boolean.TRUE.equals(ideStubs.enabled())) {
+        if (!stubsEnabled(ideStubs)) {
             return new EditorSupportResult(PythonIdeStubGenerator.Status.NONE, 0, 0, 0, null, EditorSettingsWriter.SettingsStatus.UNCHANGED);
         }
         List<EditorArtifactManifest.Entry> artifacts = new ArrayList<>();
@@ -79,7 +97,7 @@ final class PythonEditorSupport {
                                                            PyprojectModel.IdeStubs ideStubs,
                                                            List<MavenClasspathResolver.ResolvedEditorArtifact> runtimeArtifacts,
                                                            List<MavenClasspathResolver.ResolvedEditorArtifact> testArtifacts) throws IOException {
-        if (!Boolean.TRUE.equals(ideStubs.enabled())) {
+        if (!stubsEnabled(ideStubs)) {
             return new EditorSupportResult(PythonIdeStubGenerator.Status.NONE, 0, 0, 0, null, EditorSettingsWriter.SettingsStatus.UNCHANGED);
         }
         List<EditorArtifactManifest.Entry> artifacts = new ArrayList<>();
@@ -94,7 +112,7 @@ final class PythonEditorSupport {
     EditorSupportResult ensureWrittenFromManifests(Path projectDir,
                                                    Path cacheDir,
                                                    PyprojectModel.IdeStubs ideStubs) throws IOException {
-        if (!Boolean.TRUE.equals(ideStubs.enabled())) {
+        if (!stubsEnabled(ideStubs)) {
             return new EditorSupportResult(PythonIdeStubGenerator.Status.NONE, 0, 0, 0, null, EditorSettingsWriter.SettingsStatus.UNCHANGED);
         }
         List<EditorArtifactManifest.Entry> artifacts = editorArtifactManifest.read(cacheDir);

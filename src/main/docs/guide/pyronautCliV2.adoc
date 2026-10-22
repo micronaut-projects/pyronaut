@@ -84,7 +84,7 @@ Provisions the complete SDK before any project command runs:
 
 [source,bash]
 ----
-pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--progress <auto|on|off>]
+pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--locked] [--native-launchers] [--progress <auto|on|off>]
 ----
 
 Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAVA_HOME` or a preinstalled Java runtime.
@@ -92,7 +92,10 @@ It then locates the exact GraalPy interpreter the SDK was built with (shown by `
 Setup reuses a matching GraalPy when the CLI itself runs on one, when `~/.pyronaut/sdks/<version>` already contains one, or when pyenv already has that version installed.
 Otherwise it runs `pyenv install <version>` when pyenv is available, and falls back to downloading the checksum-verified GraalPy release from GitHub into `~/.pyronaut/sdks/<version>`.
 Delegated commands receive that interpreter through `PYRONAUT_PYTHON_EXECUTABLE` and `PATH`; a project `.venv` takes precedence.
-It then caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python`, seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors.
+It then seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors, including the compiler classpaths of the native launchers.
+Setup does not download the native `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` launchers.
+A command downloads a launcher into `~/.pyronaut/bin` (`bin` in the Pyronaut data directory with the XDG layout) the first time it needs one, so projects that set `tool.pyronaut.toolchain.type = "jvm"` never download them.
+Pass `--native-launchers` to download all three during setup, for example when you build a CI image or before you work offline.
 Pyronaut writes validated state atomically below `~/.pyronaut/setup`.
 
 The default remote repository is Maven Central. Snapshot SDK versions also use `https://central.sonatype.com/repository/maven-snapshots/`.
@@ -105,7 +108,8 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]
 ----
 
 `--refresh` re-resolves and rewrites setup state while reusing healthy downloaded JDK, GraalPy, and native images.
-`--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
+`--offline` performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached; with `--native-launchers`, that includes the native launchers.
+`--locked` resolves the SDK launcher classpaths again and requires every Maven artifact to be listed, with a matching checksum, in the `pyronaut.lock` of the current directory; see <<dependencyLocking,Locking Maven Dependencies>>.
 When setup is missing, corrupt, or stale, execution commands exit with code `8` and print `Pyronaut setup is missing or stale. Run pyronaut setup.`
 
 === `pyronaut update`
@@ -124,7 +128,7 @@ Pass a version such as `1.0.0` or `v1.0.0` to install that release instead, incl
 Update then:
 
 . downloads the release's wheel and installs it with `pip` into the Python environment that runs `pyronaut`;
-. runs the new version's `pyronaut setup`, which downloads the matching `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` launchers and prepares the Maven repository recorded by the previous setup;
+. runs the new version's `pyronaut setup`, which prepares the Maven repository recorded by the previous setup (commands download the matching native launchers when they first need them);
 . removes the launchers, tool runtimes, setup state, and Pyronaut Maven artifacts of every version older than the installed one.
 
 Update never removes versions newer than the one it installs, nor a launcher version pinned by `[native-images].version`.
@@ -148,17 +152,18 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 The checks, in order:
 
 - Python: the interpreter running the CLI is 3.10 or newer.
+- TOML parser: `tomllib` (Python 3.11 and newer) or the `tomli` package (Python 3.10) can be imported, so `pyproject.toml` can be read.
 - Pyronaut SDK: the installed wheel version and whether the cached setup state below `~/.pyronaut/setup` is valid for it (suggests `pyronaut setup`, or `pyronaut setup --refresh` when stale state exists).
 - GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. The check reports a warning when it silently ignores `JAVA_HOME` because it does not point to a compatible GraalVM.
 - GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks the GraalPy recorded by `pyronaut setup`, or a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
 - Interpreter: the check verifies that the pieces agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must use the currently selected GraalPy (the check reports a `.venv` that remained after `pyenv global` moved to another version, or whose base interpreter someone removed).
-- Native launchers: Pyronaut caches `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` below `~/.pyronaut/bin` for the configured version and platform.
+- Native launchers: whether `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` are cached below `~/.pyronaut/bin` for the configured version and platform. Launchers that are not downloaded yet pass, because a command downloads them when it first needs one; stale launchers are a warning.
 
 Inside a project, Pyronaut adds the following checks:
 
 - pyproject.toml: the file parses and its `[tool.pyronaut]` settings are valid.
 - Classpath manifests: the manifests written by `pyronaut install` exist.
-- Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a `pyproject.toml` edited after the last `pyronaut install` is a warning, because the preflight of `dev`, `run` and `test` only checks that the manifests exist. The check reports sources newer than the processed classes for information because `dev`, `run`, and `test` process changed sources automatically.
+- Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a `pyproject.toml` edited after the last `pyronaut install` is a warning (`dev`, `run` and `test` reinstall changed dependencies automatically, unless you pass `--no-install`). The check reports sources newer than the processed classes for information because `dev`, `run`, and `test` process changed sources automatically.
 - Threading: the application configuration in `config/application.toml` (or `application.properties`) is read the way the runtime reads it. An executor with `virtual = true` fails the check because GraalPy cannot run Python code on virtual threads, and invalid `micronaut.python.pool` values fail it. The row reports the effective context pool size, executor overrides, and the deployment mode from `[tool.pyronaut.packaging]` and `[tool.pyronaut.toolchain]`. Configuration kept in `application.yml` is not inspected and produces a warning.
 - Python packages: a smoke test of every package declared in `[project].dependencies`. A probe runs inside the project `.venv` (that is, on the GraalPy that the application uses), resolves each distribution, derives its importable modules, and imports them concurrently from as many threads as the configured context pool would use (`micronaut.python.pool.size`, or twice the CPU count by default, one thread when the pool is disabled). Missing packages fail the check with the exact `pip install` command; import errors fail it with the first error; the check warns about packages that ship native extensions, using wording for the configured deployment mode (native extensions are experimental on GraalPy and in native images).
 - GraalPy compatibility: each declared package is looked up in the package test results that GraalPy publishes per release at https://graalpy.org/python-developers/compatibility/. Packages that fail to install on the project's GraalPy release, or pass fewer than 90% of their tests there, produce a warning; the check lists unknown packages as untested. The check reads the release from the `.venv` interpreter, falling back to the GraalPy bundled with the SDK. Pyronaut caches the CSV below `~/.pyronaut/graalpy-compatibility` for a week; `--offline` uses only the cache and never downloads.
@@ -240,13 +245,44 @@ before using it.
 
 Resolves dependencies into the configured local Maven repository and writes scoped manifests under `__pyronaut__/`.
 
-Before resolving Java dependencies, `pyronaut install` prepares the project Python environment when the project declares Python dependencies in `[project].dependencies`, PEP 735 `[dependency-groups]`, or a `requirements.txt` file, or has a Python test directory:
+Before resolving Java dependencies, `pyronaut install` prepares the project Python environment when the project declares Python dependencies in `[project].dependencies`, PEP 735 `[dependency-groups]`, a `requirements.txt` file, or a `requirements-test.txt` file, or has a Python test directory:
 
 - It creates `.venv` in the project directory with the GraalPy interpreter recorded by `pyronaut setup`, unless `.venv` already exists.
-- It runs `pip install` inside `.venv` for every declared requirement and `requirements.txt`. When the project has Python tests but does not declare `pytest`, Pyronaut adds `pytest` because `pyronaut test` imports it from `.venv`.
+- It runs `pip install` inside `.venv` for every declared requirement, `requirements.txt` and `requirements-test.txt`. When the project has Python tests but does not declare `pytest`, Pyronaut adds `pytest` because `pyronaut test` imports it from `.venv`.
 - It records the installed declarations in `.venv/.pyronaut-requirements.json` and skips `pip` until they change. `--refresh` reinstalls; `--offline` skips `pip`.
 
 An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again.
+
+[[python-uv-projects]]
+==== uv projects
+
+When the project has a `uv.lock` file, is a member of a uv workspace (an ancestor `pyproject.toml` declares `[tool.uv.workspace]` and has a `uv.lock`), or declares a `[tool.uv]` table, and `uv` is on the `PATH`, `pyronaut install` runs `uv sync` instead of `pip`:
+
+[source,bash]
+----
+uv sync --project <project-dir> --python <project-dir>/.venv/bin/python
+----
+
+`UV_PROJECT_ENVIRONMENT` points uv at the project's `.venv`, so a workspace member is synced into its own `.venv` rather than the workspace root's.
+uv resolves `[tool.uv.sources]` (including `{ workspace = true }` members), `[[tool.uv.index]]` indexes and the lock file itself, none of which `pip` can see, and works in a venv without `pip`.
+`.venv` is still created with GraalPy first, and the command fails if `uv sync` replaces it with another interpreter.
+Pyronaut records the lock file's hash and syncs again when it changes; `--refresh` always syncs and `--offline` skips the sync.
+uv installs only what the project declares (including its default dependency groups) and ignores `requirements.txt` and `requirements-test.txt`, so declare `pytest` and other test-only packages in a dependency group if the project has Python tests.
+Without `uv` on the `PATH`, Pyronaut falls back to `pip`.
+
+[[python-self-managed-venv]]
+==== Managing `.venv` yourself
+
+To keep Pyronaut from installing anything into `.venv`, for example because another tool creates it, disable dependency management in `pyproject.toml`:
+
+[source,toml]
+----
+[tool.pyronaut.python]
+manage-dependencies = false
+----
+
+or pass `--no-python-deps` for a single run.
+`pyronaut install` then uses the existing `.venv` as is. It still fails when `.venv` does not exist or was not created by GraalPy, because the embedded runtime cannot use packages installed for another interpreter, so create it with GraalPy, for example `uv sync --python graalpy`.
 
 By default, Pyronaut installs dependency artifacts into Maven local (`~/.m2/repository`, or the path configured by the `maven.repo.local` system property).
 
@@ -259,8 +295,14 @@ Common options:
 - `--progress <auto|on|off>`: progress display mode
 - `--color <auto|always|never>`: dependency output color mode
 - `--refresh`: force re-resolution and manifest rewrite without clearing the selected local repository
+- `--no-python-deps`: use the existing GraalPy `.venv` without installing Python dependencies (see <<python-self-managed-venv,Managing `.venv` yourself>>)
 - `--no-cache`: bypass Pyronaut manifest cache reads before rewriting manifests
 - `--offline`: resolve using offline repository mode
+- `--locked`: require every resolved Maven artifact to be listed in `pyronaut.lock` with a matching checksum (also `PYRONAUT_LOCKED=true`)
+- `--lock-repository <dir>`: resolve only from this directory of locked artifacts in Maven repository layout; implies `--locked` (also `PYRONAUT_LOCK_REPOSITORY`)
+- `--lock-file <file>`: the lock file to verify against (default `pyronaut.lock` in the project directory, or `PYRONAUT_LOCK_FILE`)
+
+When `pyronaut.lock` exists, every resolved artifact it lists must match its recorded checksum; see <<dependencyLocking,Locking Maven Dependencies>>.
 
 When several scopes are selected, their Maven resolutions run in parallel. On an interactive terminal,
 `pyronaut install` renders one live row per scope (`Collecting …` while the dependency graph is read,
@@ -379,6 +421,19 @@ Annotation processor options:
 - Existing user-managed `#:schema ...` directives at the top of `application.toml` in the configured resources directory are left untouched.
 - Pyronaut removes older generated `.taplo.toml` files from previous installs to avoid conflicting schema associations. It leaves user-managed `.taplo.toml` files untouched.
 
+=== `pyronaut lock`
+
+Records every Maven artifact that `pyronaut setup`, `pyronaut install`, and `pyronaut build` resolve for the project into `pyronaut.lock`, with its repository URL and SHA-256 checksum:
+
+[source,bash]
+----
+pyronaut lock [--project-dir <dir>] [--local-repository <dir>] [--offline] [--check] [--progress <auto|on|off>]
+----
+
+`pyronaut.lock` is replaced only when every artifact resolved. `--check` writes nothing and exits with code `8` when `pyronaut.lock` is missing or out of date.
+`--offline` records from the local repository without downloading.
+See <<dependencyLocking,Locking Maven Dependencies>> for the file format, checksum verification, and locked resolution.
+
 === `pyronaut process`
 
 Processes source trees and generates metadata/classes via `pyronaut-processor`.
@@ -421,6 +476,37 @@ Run `pyronaut install` again afterwards to recreate them.
 For Maven and Gradle projects the command cleans `target/pyronaut` or `build/pyronaut` instead of `__pyronaut__`.
 The command refuses to run in a directory without a `pyproject.toml`, `pom.xml`, or Gradle build file.
 
+[[autoInstall]]
+=== Automatic install
+
+`pyronaut dev`, `pyronaut run` and `pyronaut test` run the install step first when the project dependencies changed since the last `pyronaut install`, so editing `pyproject.toml` does not require a manual install:
+
+- Java dependencies: the CLI records the `[tool.pyronaut]` table and the Pyronaut version in `__pyronaut__/install-state.json` after each install. A difference, or missing classpath manifests, runs `pyronaut install`.
+- Python dependencies: the declarations `pyronaut install` last applied to `.venv` (recorded in `.venv/.pyronaut-requirements.json`) are compared with the current ones: `[project].dependencies`, `[dependency-groups]`, `requirements.txt` and `requirements-test.txt` for pip, or `uv.lock` for uv projects. A difference installs only the Python dependencies into `.venv`. A project that sets `[tool.pyronaut.python] manage-dependencies = false` manages `.venv` itself and is never reinstalled.
+
+The CLI prints one line naming the reason before the install renders its own progress, for example:
+
+[source,text]
+----
+• [tool.pyronaut] settings changed since the last install; running pyronaut install before dev
+----
+
+`pyronaut dev` watches `pyproject.toml` too: a dependency change stops the application, installs, processes and restarts it. Gradle and Maven projects are not affected, because their build tool resolves dependencies.
+
+To turn automatic install off, use one of the following (listed from highest to lowest precedence):
+
+- `--no-install` on a single `dev`, `run` or `test` invocation.
+- The `PYRONAUT_AUTO_INSTALL=false` environment variable (`true` re-enables it, overriding the settings file).
+- The user setting in `~/.pyronaut/settings.toml`:
++
+[source,toml]
+----
+[install]
+auto = false
+----
+
+With automatic install off, the commands still warn that the installed dependencies are stale and name the setting that skipped the install.
+
 === `pyronaut dev`
 
 Runs the processed application via `pyronaut-dev` in development mode.
@@ -429,6 +515,7 @@ Common options:
 
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
+- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>> for the persistent settings)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 - `--control-panel`: enables the development Control Panel, overriding project configuration
 - `--disable-test-resources`: disables configured project orchestration and conditional direct-source Test Resources inference
@@ -438,6 +525,7 @@ Behavior:
 - When you supply no source, Pyronaut detects `main.py` in the current directory for direct-source development. A `pyproject.toml`, Maven build, or Gradle build keeps project mode.
 - Runs `pyronaut-validate-config --scenario dev` before preflight by default.
 - Automatically performs install/process preflight before launching.
+- Reinstalls before restarting when `pyproject.toml` dependencies change while the application runs.
 - Starts an owned test-resources server when configuration enables test resources and no reusable external server settings are present.
 - Attaches to an already running external test-resources server when `.micronaut/test-resources/test-resources.properties` exists and no owned session is active.
 - Propagates active test-resources client settings to the delegated JVM via `JAVA_TOOL_OPTIONS`.
@@ -455,6 +543,7 @@ Common options:
 
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
+- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>> for the persistent settings)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 
 Behavior:
@@ -479,6 +568,7 @@ Common options:
 - `--project-dir <dir>`
 - `--debug-vm`: enables JDWP JVM debug flags (port 5005)
 - `--tests <selector>`: repeatable Gradle-like test selector filter
+- `--no-install`: does not install changed dependencies first; prints a warning instead (see <<autoInstall,Automatic install>> for the persistent settings)
 - `--no-validate`: explicitly bypasses lifecycle config validation
 - `--disable-test-resources`: disables configured project orchestration and conditional direct-source Test Resources inference
 
@@ -1102,6 +1192,9 @@ ASCII set for the Java tools.
 == Environment variables
 
 - `PYRONAUT_TRACE_DELEGATION=true`: prints delegated command lines.
+- `PYRONAUT_LOCKED=true`: requires every resolved Maven artifact to be listed in `pyronaut.lock`, for every command that installs dependencies; see <<dependencyLocking,Locking Maven Dependencies>>.
+- `PYRONAUT_LOCK_REPOSITORY=<dir>`: resolves Maven artifacts only from this directory of locked artifacts; implies `PYRONAUT_LOCKED`.
+- `PYRONAUT_LOCK_FILE=<file>`: uses this lock file instead of `pyronaut.lock` in the project directory.
 - `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `dev` and `test`.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides the GraalPy interpreter that `pyronaut setup` recorded for delegated commands, and the Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.

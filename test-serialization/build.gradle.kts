@@ -1,3 +1,5 @@
+import io.micronaut.pyronaut.gradle.PyenvVersions
+
 plugins {
     id("io.micronaut.build.internal.pyronaut-module")
     id("io.micronaut.build.internal.python")
@@ -25,7 +27,7 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
-    val pyEnv = providers.environmentVariable("PYENV_VERSION")
+    val pyEnv = PyenvVersions.provider(project)
     val vEnv = providers.environmentVariable("VIRTUAL_ENV")
     if (pyEnv.isPresent() && vEnv.isPresent()) {
         environment("PYENV_VERSION", pyEnv.get())

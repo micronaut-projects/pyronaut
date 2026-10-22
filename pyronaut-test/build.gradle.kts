@@ -1,4 +1,4 @@
-
+import io.micronaut.pyronaut.gradle.PyenvVersions
 import java.io.File
 
 plugins {
@@ -63,7 +63,7 @@ tasks {
 
     withType<Test>().configureEach {
         useJUnitPlatform()
-        val pyEnv = providers.environmentVariable("PYENV_VERSION")
+        val pyEnv = PyenvVersions.provider(project)
         val vEnv = providers.environmentVariable("VIRTUAL_ENV")
         val virtualEnv = vEnv.orNull?.let(::File)
         val hasPythonExecutable = virtualEnv != null && (
@@ -76,7 +76,7 @@ tasks {
         } else {
             println("==================================================================")
             println("= WARNING: Disabling Pyronaut test smoke tests without GraalPy =")
-            println("= virtual environment (set PYENV_VERSION and VIRTUAL_ENV).    =")
+            println("= virtual environment (select GraalPy via pyenv; set VIRTUAL_ENV)=")
             println("==================================================================")
             enabled = false
         }

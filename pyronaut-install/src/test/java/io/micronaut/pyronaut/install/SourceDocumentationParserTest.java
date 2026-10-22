@@ -2,6 +2,8 @@ package io.micronaut.pyronaut.install;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -255,5 +257,68 @@ class SourceDocumentationParserTest {
 
         assertEquals(":return: The URI of the GET route", annotation.methodDocumentation("value", 0, java.util.List.of()));
         assertEquals("The GET method.", enumeration.fieldDocumentation("GET"));
+    }
+
+    @Test
+    void keysOverloadsByErasedParameterTypes() {
+        SourceDocumentationParser.ParsedSourceDocumentation documentation = SourceDocumentationParser.parse("""
+            package io.micronaut.context.env;
+
+            import java.util.Map;
+
+            public class PropertySource<V extends CharSequence> {
+                public static PropertySource of(String name, Map<String, Object> map, PropertySource.Origin origin, int priority) {
+                    return null;
+                }
+
+                public static <T> PropertySource of(T value, Map<String, Object> map, Origin origin, int[] priorities) {
+                    return null;
+                }
+
+                public PropertySource with(V value, String... names) {
+                    return this;
+                }
+
+                public <C extends Comparable<C>> PropertySource with(C[] values, Origin origin) {
+                    return this;
+                }
+
+                public enum Origin { FILE }
+            }
+            """, "PropertySource");
+
+        assertEquals(List.of("name", "map", "origin", "priority"),
+            documentation.methodParameterNames("of", 4, List.of("String", "Map", "Origin", "int")));
+        assertEquals(List.of("value", "map", "origin", "priorities"),
+            documentation.methodParameterNames("of", 4, List.of("Object", "Map", "Origin", "int[]")));
+        assertEquals(List.of("value", "names"),
+            documentation.methodParameterNames("with", 2, List.of("CharSequence", "String[]")));
+        assertEquals(List.of("values", "origin"),
+            documentation.methodParameterNames("with", 2, List.of("Comparable[]", "Origin")));
+    }
+
+    @Test
+    void ambiguousOverloadsDoNotLendParameterNames() {
+        SourceDocumentationParser.ParsedSourceDocumentation documentation = SourceDocumentationParser.parse("""
+            package io.micronaut.context.env;
+
+            public class PropertySource {
+                public static PropertySource of(String name, int priority) {
+                    return null;
+                }
+
+                public static PropertySource of(String label, long order) {
+                    return null;
+                }
+
+                public static PropertySource single(String name, int priority) {
+                    return null;
+                }
+            }
+            """, "PropertySource");
+
+        assertEquals(List.of(), documentation.methodParameterNames("of", 2, List.of("String", "short")));
+        assertEquals(List.of("name", "priority"),
+            documentation.methodParameterNames("single", 2, List.of("CharSequence", "int")));
     }
 }

@@ -55,6 +55,14 @@ class PyprojectJsonSchemaGeneratorTest {
     }
 
     @Test
+    void includesPythonEnvironmentSection() {
+        String schema = generator.generate();
+
+        assertTrue(schema.contains("\"python\""));
+        assertTrue(schema.contains("\"manage-dependencies\""));
+    }
+
+    @Test
     void includesHiddenDeprecatedAliasPropertiesForCompatibility() {
         String schema = generator.generate();
 

@@ -160,3 +160,12 @@ if (!System.getenv("SONAR_TOKEN")?.trim()) {
         }
     }
 }
+// The scripts under .github only run in GitHub workflows, have no test coverage report, and some are
+// copied unchanged from micronaut-core, so they stay out of the Sonar quality gate.
+pluginManager.withPlugin("org.sonarqube") {
+    sonar {
+        properties {
+            property "sonar.exclusions", ".github/**"
+        }
+    }
+}

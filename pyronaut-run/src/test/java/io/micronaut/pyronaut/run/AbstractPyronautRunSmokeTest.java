@@ -174,11 +174,14 @@ abstract class AbstractPyronautRunSmokeTest {
         HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(2))
             .build();
+        // On the interpreted GraalPy runtime of a CI runner, startup alone can take
+        // 20s and the first Python-backed request several more, so a short request
+        // timeout would abandon a response that is about to arrive.
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/"))
-            .timeout(Duration.ofSeconds(2))
+            .timeout(Duration.ofSeconds(15))
             .GET()
             .build();
-        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
         Exception lastFailure = null;
         while (System.nanoTime() < deadline) {
             if (!process.isAlive()) {

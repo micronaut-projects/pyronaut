@@ -7,6 +7,7 @@ events back to Java code via the PytestTestListener interface.
 
 import pytest
 from typing import Optional, Any
+import os
 import sys
 import traceback
 import java
@@ -132,6 +133,53 @@ def _format_call_failure(result) -> str:
     return _compact_assertion_failure(result)
 
 
+def _rootless_module_name(path) -> Optional[str]:
+    """Return the name pytest's prepend import mode gives a test module."""
+    if path.suffix != ".py" or path.name == "__init__.py":
+        return None
+    names = [path.stem]
+    directory = path.parent
+    while (directory / "__init__.py").is_file() and directory.name.isidentifier():
+        names.insert(0, directory.name)
+        directory = directory.parent
+    return ".".join(names)
+
+
+def _read_bytes(path) -> Optional[bytes]:
+    try:
+        with open(path, "rb") as source:
+            return source.read()
+    except OSError:
+        return None
+
+
+def _is_preloaded_copy(path) -> bool:
+    """
+    Whether the test module at ``path`` is already imported, under the name
+    pytest will give it, from an identical copy somewhere else.
+
+    Processed test modules are served from the application VFS and mirrored to
+    ``__pyronaut__/test-sources`` for collection. Starting the application
+    context imports a module that declares beans from the VFS first, so pytest
+    finds a top-level test module in ``sys.modules`` with a VFS ``__file__``
+    and would reject the on-disk copy as an import file mismatch.
+    """
+    module_name = _rootless_module_name(path)
+    module = sys.modules.get(module_name) if module_name else None
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        return False
+    if module_file.endswith((".pyc", ".pyo")):
+        module_file = module_file[:-1]
+    try:
+        if os.path.samefile(module_file, path):
+            return False
+    except OSError:
+        pass
+    disk_source = _read_bytes(path)
+    return disk_source is not None and disk_source == _read_bytes(module_file)
+
+
 class _ExpectedFailure:
     def __init__(self, reason: str):
         self.reason = reason or "Expected failure"
@@ -194,6 +242,25 @@ class MicronautPytestPlugin:
         if hasattr(collector, 'fspath') and collector.fspath:
             self.current_file = collector.fspath
             self.listener.beforeFile(f"{collector.fspath}")
+
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_make_collect_report(self, collector):
+        """Collect a test module that is already imported from an identical copy."""
+        path = getattr(collector, "path", None)
+        if not isinstance(collector, pytest.Module) or path is None or not _is_preloaded_copy(path):
+            yield
+            return
+        # Reuse the imported module so bean classes and tests share one module
+        # object, scoping pytest's mismatch escape hatch to this module only.
+        previous = os.environ.get("PY_IGNORE_IMPORTMISMATCH")
+        os.environ["PY_IGNORE_IMPORTMISMATCH"] = "1"
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop("PY_IGNORE_IMPORTMISMATCH", None)
+            else:
+                os.environ["PY_IGNORE_IMPORTMISMATCH"] = previous
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_pyfunc_call(self, pyfuncitem):

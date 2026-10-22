@@ -9,7 +9,7 @@ development, and run an automated test.
 First <<installation,install Pyronaut>> and run `pyronaut setup`. This direct-source workflow uses the embedded GraalPy
 runtime and JUnit 5 integration, so it does not require a project virtual environment or `pytest`.
 
-== Create the application
+== Step 1: Create the application
 
 Create an empty project directory, change into it, and create `main.py`:
 
@@ -21,7 +21,7 @@ include::src/main/docs/examples/gettingStarted/fastapi/initial/main.py[]
 The `@Get` decorators declare two HTTP `GET` operations. The `item_id: int` type hint tells Pyronaut to convert and
 validate the path value as an integer. Because `q` defaults to `None`, it is optional.
 
-== Start the development server
+== Step 2: Start the development server
 
 Run the development server from the directory containing `main.py`:
 
@@ -34,7 +34,7 @@ When you omit the source argument, `pyronaut dev` detects `main.py` in the curre
 the source and reloads the application after changes.
 The server listens on `http://localhost:8080` by default.
 
-== Verify the routes
+== Step 3: Verify the routes
 
 Verify the root route:
 
@@ -85,14 +85,14 @@ A representative response begins:
 HTTP/1.1 400 Bad Request
 ----
 
-== Explore the API documentation
+== Step 4: Explore the API documentation
 
 * Open http://localhost:8080/swagger-ui/index.html[Swagger UI] to explore and call the API interactively.
 * Open http://localhost:8080/redoc/index.html[ReDoc] for an alternative view of the same API documentation.
 
 Pyronaut generates the OpenAPI description from the routes and Python types while processing `main.py`.
 
-== Add a request body
+== Step 5: Add a request body
 
 Replace `main.py` with the following version to accept an `Item` request body:
 
@@ -139,7 +139,7 @@ The response begins:
 HTTP/1.1 400 Bad Request
 ----
 
-== Test the application
+== Step 6: Test the application
 
 Create `test_main.py` next to `main.py`:
 
@@ -163,7 +163,7 @@ Functions whose names start with `test` become JUnit 5 test methods automaticall
 class, an `@Test` decorator, a `self` parameter, or a return annotation. Injected values are available through
 module-level attributes. The development server does not need to run separately.
 
-== Run the application
+== Step 7: Run the application
 
 Run the same source file with `pyronaut run`:
 

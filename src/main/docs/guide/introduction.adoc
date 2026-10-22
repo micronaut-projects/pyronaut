@@ -8,7 +8,7 @@ Micronaut application model.
 == Recommended path
 
 . Start with <<installation,Installing Pyronaut>>.
-. Follow <<project,Create a Pyronaut Project>> to build a project in project mode; complete Step 1 before running pytest. Alternatively, follow <<fastApiTutorial,The FastAPI Tutorial>> to try direct-source mode without a project virtual environment.
+. Follow <<project,Create a Pyronaut Project>> to build a project in project mode; complete <<project-installation,Step 3: Install project dependencies>> before running pytest. Alternatively, follow <<fastApiTutorial,The FastAPI Tutorial>> to try direct-source mode without a project virtual environment.
 . After the tutorial, read <<concepts,Micronaut Concepts for Python Developers>>. The remaining chapters assume you
 understand these concepts. Then use <<configuration,Configure a Pyronaut Project>> as you add dependencies and
 application settings.
