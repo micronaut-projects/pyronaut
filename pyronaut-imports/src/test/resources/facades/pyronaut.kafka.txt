@@ -1,0 +1,34 @@
+# pyronaut.kafka
+
+## members
+ConsumerAware	INTERFACE	io.micronaut.configuration.kafka.ConsumerAware
+ConsumerCreationStrategy	ENUM	io.micronaut.configuration.kafka.annotation.ConsumerCreationStrategy
+ConsumerRecordInterceptor	INTERFACE	io.micronaut.configuration.kafka.ConsumerRecordInterceptor
+ConsumerRegistry	INTERFACE	io.micronaut.configuration.kafka.ConsumerRegistry
+ConsumerSeekAware	INTERFACE	io.micronaut.configuration.kafka.ConsumerSeekAware
+EARLIEST	CONSTANT	io.micronaut.configuration.kafka.annotation.OffsetReset#EARLIEST
+ErrorStrategy	ANNOTATION	io.micronaut.configuration.kafka.annotation.ErrorStrategy
+ErrorStrategyValue	ENUM	io.micronaut.configuration.kafka.annotation.ErrorStrategyValue
+KafkaAcknowledgement	INTERFACE	io.micronaut.configuration.kafka.KafkaAcknowledgement
+KafkaClient	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaClient
+KafkaKey	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaKey
+KafkaListener	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaListener
+KafkaPartition	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaPartition
+KafkaPartitionKey	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaPartitionKey
+KafkaScope	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaScope
+KafkaTimestamp	ANNOTATION	io.micronaut.configuration.kafka.annotation.KafkaTimestamp
+LATEST	CONSTANT	io.micronaut.configuration.kafka.annotation.OffsetReset#LATEST
+MessageBody	ANNOTATION	io.micronaut.messaging.annotation.MessageBody
+MessageHeader	ANNOTATION	io.micronaut.messaging.annotation.MessageHeader
+MessageHeaders	ANNOTATION	io.micronaut.messaging.annotation.MessageHeaders
+MessageListener	ANNOTATION	io.micronaut.messaging.annotation.MessageListener
+MessageMapping	ANNOTATION	io.micronaut.messaging.annotation.MessageMapping
+MessageProducer	ANNOTATION	io.micronaut.messaging.annotation.MessageProducer
+OffsetReset	ENUM	io.micronaut.configuration.kafka.annotation.OffsetReset
+OffsetStrategy	ENUM	io.micronaut.configuration.kafka.annotation.OffsetStrategy
+ProducerFactory	INTERFACE	io.micronaut.configuration.kafka.ProducerFactory
+ProducerRegistry	INTERFACE	io.micronaut.configuration.kafka.ProducerRegistry
+SendTo	ANNOTATION	io.micronaut.messaging.annotation.SendTo
+Topic	ANNOTATION	io.micronaut.configuration.kafka.annotation.Topic
+Topics	ANNOTATION	io.micronaut.configuration.kafka.annotation.Topics
+TransactionalProducerRegistry	INTERFACE	io.micronaut.configuration.kafka.TransactionalProducerRegistry

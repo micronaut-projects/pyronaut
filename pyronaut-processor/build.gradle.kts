@@ -16,6 +16,8 @@ dependencies {
     implementation(mnPicocli.picocli)
     implementation(mn.micronaut.context.python)
     implementation(mn.micronaut.inject.python)
+    // the curated modules (from pyronaut import http, ...) the compiled Python sources may import
+    implementation(project(":micronaut-pyronaut-imports"))
 
     implementation(project(":micronaut-pyronaut-logback"))
 

@@ -1,0 +1,35 @@
+# pyronaut.tx
+
+## clashes
+Transactional: io.micronaut.transaction.annotation.Transactional (preferPackage io.micronaut.transaction.annotation) over jakarta.transaction.Transactional
+
+## members
+AFTER_COMMIT	CONSTANT	io.micronaut.transaction.annotation.TransactionalEventListener$TransactionPhase#AFTER_COMMIT
+AFTER_COMPLETION	CONSTANT	io.micronaut.transaction.annotation.TransactionalEventListener$TransactionPhase#AFTER_COMPLETION
+AFTER_ROLLBACK	CONSTANT	io.micronaut.transaction.annotation.TransactionalEventListener$TransactionPhase#AFTER_ROLLBACK
+BEFORE_COMMIT	CONSTANT	io.micronaut.transaction.annotation.TransactionalEventListener$TransactionPhase#BEFORE_COMMIT
+DEFAULT	CONSTANT	io.micronaut.transaction.TransactionDefinition$Isolation#DEFAULT
+MANDATORY	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#MANDATORY
+NESTED	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#NESTED
+NEVER	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#NEVER
+NOT_SUPPORTED	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#NOT_SUPPORTED
+OracleTransactional	ANNOTATION	io.micronaut.transaction.annotation.OracleTransactional
+READ_COMMITTED	CONSTANT	io.micronaut.transaction.TransactionDefinition$Isolation#READ_COMMITTED
+READ_UNCOMMITTED	CONSTANT	io.micronaut.transaction.TransactionDefinition$Isolation#READ_UNCOMMITTED
+REPEATABLE_READ	CONSTANT	io.micronaut.transaction.TransactionDefinition$Isolation#REPEATABLE_READ
+REQUIRED	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#REQUIRED
+REQUIRES_NEW	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#REQUIRES_NEW
+ReadOnly	ANNOTATION	io.micronaut.transaction.annotation.ReadOnly
+SERIALIZABLE	CONSTANT	io.micronaut.transaction.TransactionDefinition$Isolation#SERIALIZABLE
+SUPPORTS	CONSTANT	io.micronaut.transaction.TransactionDefinition$Propagation#SUPPORTS
+SavepointManager	INTERFACE	io.micronaut.transaction.SavepointManager
+SynchronousTransactionManager	INTERFACE	io.micronaut.transaction.SynchronousTransactionManager
+TransactionCallback	INTERFACE	io.micronaut.transaction.TransactionCallback
+TransactionDefinition	INTERFACE	io.micronaut.transaction.TransactionDefinition
+TransactionExecution	INTERFACE	io.micronaut.transaction.TransactionExecution
+TransactionManager	INTERFACE	io.micronaut.transaction.TransactionManager
+TransactionOperations	INTERFACE	io.micronaut.transaction.TransactionOperations
+TransactionScoped	ANNOTATION	jakarta.transaction.TransactionScoped
+TransactionStatus	INTERFACE	io.micronaut.transaction.TransactionStatus
+Transactional	ANNOTATION	io.micronaut.transaction.annotation.Transactional
+TransactionalEventListener	ANNOTATION	io.micronaut.transaction.annotation.TransactionalEventListener

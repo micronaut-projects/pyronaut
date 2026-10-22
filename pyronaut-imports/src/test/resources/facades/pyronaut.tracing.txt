@@ -1,0 +1,9 @@
+# pyronaut.tracing
+
+## members
+AddingSpanAttributes	ANNOTATION	io.opentelemetry.instrumentation.annotations.AddingSpanAttributes
+ContinueSpan	ANNOTATION	io.micronaut.tracing.annotation.ContinueSpan
+NewSpan	ANNOTATION	io.micronaut.tracing.annotation.NewSpan
+SpanAttribute	ANNOTATION	io.opentelemetry.instrumentation.annotations.SpanAttribute
+SpanTag	ANNOTATION	io.micronaut.tracing.annotation.SpanTag
+WithSpan	ANNOTATION	io.opentelemetry.instrumentation.annotations.WithSpan

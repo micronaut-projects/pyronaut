@@ -1,0 +1,18 @@
+# pyronaut.management
+
+## members
+AbstractHealthIndicator	CLASS	io.micronaut.management.health.indicator.AbstractHealthIndicator
+Delete	ANNOTATION	io.micronaut.management.endpoint.annotation.Delete
+Endpoint	ANNOTATION	io.micronaut.management.endpoint.annotation.Endpoint
+EndpointConfiguration	CLASS	io.micronaut.management.endpoint.EndpointConfiguration
+EndpointDefaultConfiguration	CLASS	io.micronaut.management.endpoint.EndpointDefaultConfiguration
+EndpointEnabledCondition	CLASS	io.micronaut.management.endpoint.EndpointEnabledCondition
+EndpointSensitivityHandler	INTERFACE	io.micronaut.management.endpoint.EndpointSensitivityHandler
+EndpointSensitivityProcessor	CLASS	io.micronaut.management.endpoint.EndpointSensitivityProcessor
+HealthCheckType	ENUM	io.micronaut.management.health.indicator.HealthCheckType
+HealthIndicator	INTERFACE	io.micronaut.management.health.indicator.HealthIndicator
+HealthResult	INTERFACE	io.micronaut.management.health.indicator.HealthResult
+Read	ANNOTATION	io.micronaut.management.endpoint.annotation.Read
+Selector	ANNOTATION	io.micronaut.management.endpoint.annotation.Selector
+Sensitive	ANNOTATION	io.micronaut.management.endpoint.annotation.Sensitive
+Write	ANNOTATION	io.micronaut.management.endpoint.annotation.Write

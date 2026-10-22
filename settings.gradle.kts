@@ -37,6 +37,7 @@ rootProject.name = "pyronaut-parent"
 include("pyronaut")
 include("pyronaut-config-model")
 include("pyronaut-build-annotations")
+include("pyronaut-imports")
 include("pyronaut-direct-source")
 include("pyronaut-install")
 include("pyronaut-processor")
@@ -89,5 +90,30 @@ dependencyResolutionManagement {
     }
     repositories {
         mavenCentral()
+    }
+}
+
+if (micronautVersion.endsWith("-SNAPSHOT")) {
+    // A core snapshot comes from Maven local, where a core checkout publishes it
+    // with publishToMavenLocal, or from the Central snapshots repository. Projects
+    // declare their own repositories, which replace the settings ones, so add
+    // them and Maven Central to each of them.
+    gradle.beforeProject {
+        repositories {
+            mavenLocal {
+                content {
+                    includeVersionByRegex("io\\.micronaut", ".*", ".*-SNAPSHOT")
+                }
+            }
+            maven("https://central.sonatype.com/repository/maven-snapshots/") {
+                mavenContent {
+                    snapshotsOnly()
+                }
+                content {
+                    includeGroupByRegex("io\\.micronaut(\\..*)?")
+                }
+            }
+            mavenCentral()
+        }
     }
 }
