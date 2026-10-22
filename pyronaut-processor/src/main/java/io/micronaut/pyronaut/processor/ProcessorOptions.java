@@ -34,10 +34,10 @@ import java.util.TreeMap;
 
 /** Resolves annotation processor arguments from discovered visitors and application.toml. */
 final class ProcessorOptions {
-    private static final String CACHE_FILE = "annotation-processor-options.properties";
-    private static final String OPENAPI_ENABLED = "micronaut.openapi.enabled";
     /** The compiler option naming the Python classes to generate no Java type for. */
     static final String PYTHON_EXCLUDE = "micronaut.python.exclude";
+    private static final String CACHE_FILE = "annotation-processor-options.properties";
+    private static final String OPENAPI_ENABLED = "micronaut.openapi.enabled";
     private static final Map<String, String> DEFAULTS = Map.of(
         "micronaut.openapi.views.spec", "swagger-ui.enabled=true,redoc.enabled=true"
     );
@@ -55,22 +55,10 @@ final class ProcessorOptions {
             }
         });
         loadApplicationOptions(root, model, supported, values);
-        List<String> exclude = model == null || model.pyronaut() == null || model.pyronaut().processor() == null
-            ? List.of() : model.pyronaut().processor().exclude();
-        if (!exclude.isEmpty()) {
-            values.put(PYTHON_EXCLUDE, String.join(",", exclude));
-        }
+        putExclude(model, values);
         Map<String, String> manual = new LinkedHashMap<>();
         List<String> raw = new ArrayList<>();
-        for (String option : explicit == null ? List.<String>of() : explicit) {
-            String normalized = option.startsWith("-A") ? option.substring(2) : option;
-            int equals = normalized.indexOf('=');
-            if (equals > 0) {
-                manual.put(normalized.substring(0, equals), normalized.substring(equals + 1));
-            } else {
-                raw.add(option);
-            }
-        }
+        splitExplicit(explicit, manual, raw);
         manual.forEach((key, value) -> {
             if (supported.contains(key) || !key.startsWith("micronaut.openapi.")) {
                 values.put(key, value);
@@ -82,6 +70,25 @@ final class ProcessorOptions {
         List<String> result = new ArrayList<>(raw);
         values.forEach((key, value) -> result.add("-A" + key + "=" + value));
         return List.copyOf(result);
+    }
+
+    private static void splitExplicit(List<String> explicit, Map<String, String> manual, List<String> raw) {
+        for (String option : explicit == null ? List.<String>of() : explicit) {
+            String normalized = option.startsWith("-A") ? option.substring(2) : option;
+            int equals = normalized.indexOf('=');
+            if (equals > 0) {
+                manual.put(normalized.substring(0, equals), normalized.substring(equals + 1));
+            } else {
+                raw.add(option);
+            }
+        }
+    }
+
+    private static void putExclude(PyprojectModel model, Map<String, String> values) {
+        PyprojectModel.Processor processor = model == null || model.pyronaut() == null ? null : model.pyronaut().processor();
+        if (processor != null && !processor.exclude().isEmpty()) {
+            values.put(PYTHON_EXCLUDE, String.join(",", processor.exclude()));
+        }
     }
 
     private static Set<String> readSupported(Path cacheFile) {
