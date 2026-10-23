@@ -10,6 +10,14 @@ permissions:
   contents: read
 
 jobs:
+  release-artifacts:
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+
   build-wheel:
     runs-on: ubuntu-latest
     permissions:
@@ -170,3 +178,22 @@ jobs:
     with:
       release_tag: ${{ github.event.release.tag_name }}
       pypi: true
+
+  advance-release-version:
+    needs: [release-artifacts, release-notes-pypi]
+    if: ${{ !github.event.release.draft && !contains(github.event.release.tag_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          fetch-depth: 0
+      - name: Advance the release branch to the next snapshot
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
+        run: python3 .github/scripts/bump_release_version.py "${RELEASE_TAG}" "${RELEASE_COMMIT}"
