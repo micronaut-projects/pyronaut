@@ -8,26 +8,11 @@ on:
   release:
     types: [published]
 jobs:
-  advance-release-version:
-    if: ${{ !github.event.release.draft && !contains(github.event.release.tag_name, '-') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout release
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-        with:
-          token: ${{ secrets.GH_TOKEN }}
-          fetch-depth: 0
-      - name: Advance the release branch to the next snapshot
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_COMMIT: ${{ github.sha }}
-          MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
-        run: python3 .github/scripts/bump_release_version.py "${RELEASE_TAG}" "${RELEASE_COMMIT}"
-
   release:
     if: github.event_name == 'release'
+    permissions:
+      contents: write
+      issues: write
     outputs:
       artifacts-sha256: ${{ steps.hash.outputs.artifacts-sha256 }} # Computed hashes for build artifacts.
     runs-on: ubuntu-latest
@@ -59,7 +44,8 @@ jobs:
             exit 1
           fi
           echo "release_version=${version}" >> "${GITHUB_OUTPUT}"
-          # Build from the tagged OraHub source without moving its release tag.
+          echo "release_branch=${version%.*}.x" >> "${GITHUB_OUTPUT}"
+          # Build from the tagged source without moving its release tag.
           sed -i "s/^projectVersion=.*/projectVersion=${version}/" gradle.properties
       - name: Publish to local build repository
         id: publish
@@ -76,8 +62,8 @@ jobs:
           echo $GPG_FILE | base64 -d > secring.gpg
           # Maven Central publishing is not enabled for Pyronaut yet, so only
           # publish to the local build repository used for the SLSA provenance.
-          # This must not build native images: they are published by OraHub
-          # and do not fit in the memory of GitHub-hosted runners.
+          # Native images are published by the build pipeline and do not fit
+          # in the memory of GitHub-hosted runners.
           ./gradlew publishAllPublicationsToBuildRepository
           # Read the current version from gradle.properties.
           VERSION=$(./gradlew properties | grep '^version:' | awk '{print $2}')
@@ -134,6 +120,19 @@ jobs:
           DEVELOCITY_ACCESS_KEY: ${{ secrets.GRADLE_ENTERPRISE_ACCESS_KEY }}
           DEVELOCITY_CACHE_USERNAME: ${{ secrets.GRADLE_ENTERPRISE_CACHE_USERNAME }}
           DEVELOCITY_CACHE_PASSWORD: ${{ secrets.GRADLE_ENTERPRISE_CACHE_PASSWORD }}
+
+      - name: Restore tagged version before post-release
+        run: git restore -- gradle.properties
+      - name: Run post-release
+        if: ${{ success() && !github.event.release.draft && !contains(github.event.release.tag_name, '-') }}
+        uses: micronaut-projects/github-actions/post-release@5f587657fc12601ab92d64d077f99a54c3cbdf78 # master
+        env:
+          MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
+          RELEASE_VERSION: ${{ steps.release_version.outputs.release_version }}
+          # Drafts target the built commit SHA, so select X.Y.x explicitly.
+          TARGET_BRANCH: ${{ steps.release_version.outputs.release_branch }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   provenance-subject:
     needs: [release]
