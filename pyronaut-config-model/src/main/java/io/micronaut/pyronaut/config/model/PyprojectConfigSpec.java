@@ -208,6 +208,10 @@ public final class PyprojectConfigSpec {
         "Whether processor invocations should use a persistent compiler daemon.",
         false
     );
+    public static final FieldSpec PYRONAUT_PROCESSOR_EXCLUDE = stringArray(
+        "tool.pyronaut.processor.exclude",
+        "Qualified Python class names to generate no Java type for, where * matches any sequence of characters (for example my_app.internal.*). The classes still run as Python but are not visible to Java or Micronaut."
+    );
     public static final FieldSpec PYRONAUT_TEST_MODE = enumString(
         "tool.pyronaut.test.mode",
         "Test execution mode.",
@@ -845,6 +849,7 @@ public final class PyprojectConfigSpec {
         PYRONAUT_PROCESSOR_INCREMENTAL,
         PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE,
         PYRONAUT_PROCESSOR_DAEMON,
+        PYRONAUT_PROCESSOR_EXCLUDE,
         PYRONAUT_TEST_MODE,
         PYRONAUT_TEST_ENGINE,
         PYRONAUT_TEST_VERBOSE,
