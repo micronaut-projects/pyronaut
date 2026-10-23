@@ -45,7 +45,7 @@ jobs:
           fi
           echo "release_version=${version}" >> "${GITHUB_OUTPUT}"
           echo "release_branch=${version%.*}.x" >> "${GITHUB_OUTPUT}"
-          # Build from the tagged OraHub source without moving its release tag.
+          # Build from the tagged source without moving its release tag.
           sed -i "s/^projectVersion=.*/projectVersion=${version}/" gradle.properties
       - name: Publish to local build repository
         id: publish
@@ -62,8 +62,8 @@ jobs:
           echo $GPG_FILE | base64 -d > secring.gpg
           # Maven Central publishing is not enabled for Pyronaut yet, so only
           # publish to the local build repository used for the SLSA provenance.
-          # This must not build native images: they are published by OraHub
-          # and do not fit in the memory of GitHub-hosted runners.
+          # Native images are published by the build pipeline and do not fit
+          # in the memory of GitHub-hosted runners.
           ./gradlew publishAllPublicationsToBuildRepository
           # Read the current version from gradle.properties.
           VERSION=$(./gradlew properties | grep '^version:' | awk '{print $2}')
@@ -129,7 +129,7 @@ jobs:
         env:
           MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
           RELEASE_VERSION: ${{ steps.release_version.outputs.release_version }}
-          # OraHub drafts target the built commit SHA, so select X.Y.x explicitly.
+          # Drafts target the built commit SHA, so select X.Y.x explicitly.
           TARGET_BRANCH: ${{ steps.release_version.outputs.release_branch }}
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

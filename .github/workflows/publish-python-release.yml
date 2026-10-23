@@ -1,7 +1,7 @@
 name: Publish Python release
 
-# OraHub populates the draft release with platform bundles. Publishing that
-# draft builds the wheel and packages those bundles without rebuilding Crema.
+# The build pipeline populates the draft release with platform bundles.
+# Publishing that draft builds the wheel and packages those bundles without rebuilding Crema.
 on:
   release:
     types: [published]
