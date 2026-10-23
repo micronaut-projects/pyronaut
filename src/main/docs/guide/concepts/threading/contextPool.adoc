@@ -20,11 +20,13 @@ Configure the pool under `micronaut.python.pool` in `application.toml`:
 enabled = true
 size = 8
 warn-wait = "2s"
+prestart = 1
 ----
 
 `enabled`:: Defaults to `true`.
 `size`:: The number of additional contexts. `0` selects the default of twice the number of available processors. The runtime creates contexts lazily, and each one costs memory and start-up work.
 `warn-wait`:: Log a warning when a request waits longer than this for a free context. Use it as the signal for tuning `size`.
+`prestart`:: The number of contexts to create on a background thread as soon as the application has started, at most `size`. Defaults to `1`, and to `0` when the `test` environment is active (for example under `pyronaut test`) unless you set it. `0` creates every context on demand.
 
 For CPU-bound Python code, start with a size close to the number of processors and increase it only when the wait warnings show that requests are queuing. For I/O-heavy code a larger pool can raise throughput, but keep it bounded by the concurrency the downstream systems can sustain.
 
@@ -35,6 +37,12 @@ Disable the pool for applications that deliberately keep everything in one conte
 [micronaut.python.pool]
 enabled = false
 ----
+
+== The first request
+
+Preparing a GraalPy context takes far longer than serving a request: the interpreter starts and imports the runtime module every Python call goes through, which loads `asyncio` among others. Without pre-starting, the first request that needs a pooled context pays for that, about two seconds on the JVM for a small application. With the default `prestart = 1`, Pyronaut creates and warms up that context in the background right after startup, so a request that arrives a moment later finds it ready. A request that arrives while the context is still being created waits for it instead of creating a second one, and stopping the application during pre-start closes the context once it is built.
+
+Raise `prestart` up to `size` to have the whole pool ready before load arrives, at the cost of the memory those contexts hold whether or not traffic needs them. Set it to `0` to create every context on demand.
 
 == Interaction with executors
 
