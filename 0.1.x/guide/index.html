@@ -165,9 +165,11 @@
         
         <div class="toc-item" style="margin-left:10px" id="toc-item-mavenRepositories"><a href="#mavenRepositories"><strong>9.9</strong><span>Configuring Maven Repositories</span></a></div>
         
-        <div class="toc-item" style="margin-left:10px" id="toc-item-proxyConfig"><a href="#proxyConfig"><strong>9.10</strong><span>Proxy Configuration</span></a></div>
+        <div class="toc-item" style="margin-left:10px" id="toc-item-dependencyLocking"><a href="#dependencyLocking"><strong>9.10</strong><span>Locking Maven Dependencies</span></a></div>
         
-        <div class="toc-item" style="margin-left:10px" id="toc-item-incrementalProcessing"><a href="#incrementalProcessing"><strong>9.11</strong><span>Incremental Processing</span></a></div>
+        <div class="toc-item" style="margin-left:10px" id="toc-item-proxyConfig"><a href="#proxyConfig"><strong>9.11</strong><span>Proxy Configuration</span></a></div>
+        
+        <div class="toc-item" style="margin-left:10px" id="toc-item-incrementalProcessing"><a href="#incrementalProcessing"><strong>9.12</strong><span>Incremental Processing</span></a></div>
         
         <div class="toc-item" style="margin-left:0px" id="toc-item-packaging"><a href="#packaging"><strong>10</strong><span>Packaging and Deployment</span></a></div>
         
@@ -197,7 +199,7 @@
         <h1>Pyronaut</h1>
         <p></p>
         <p>Tools for Python + Micronaut integration</p>
-        <p><strong>Version:</strong> 0.1.0 </p>
+        <p><strong>Version:</strong> 0.1.1 </p>
     </div>
     
 <h1 id="introduction"><a class="anchor" href="#introduction"></a>1 Introduction</h1>
@@ -227,7 +229,7 @@ Micronaut application model.</p>
 <p>Start with <a href="#installation">Installing Pyronaut</a>.</p>
 </li>
 <li>
-<p>Follow <a href="#project">Create a Pyronaut Project</a> to build a project in project mode; complete Step 1 before running pytest. Alternatively, follow <a href="#fastApiTutorial">The FastAPI Tutorial</a> to try direct-source mode without a project virtual environment.</p>
+<p>Follow <a href="#project">Create a Pyronaut Project</a> to build a project in project mode; complete <a href="#project-installation">Step 3: Install project dependencies</a> before running pytest. Alternatively, follow <a href="#fastApiTutorial">The FastAPI Tutorial</a> to try direct-source mode without a project virtual environment.</p>
 </li>
 <li>
 <p>After the tutorial, read <a href="#concepts">Micronaut Concepts for Python Developers</a>. The remaining chapters assume you
@@ -414,14 +416,14 @@ model on top of Micronaut.</p>
 <h2 id="_install_the_pyronaut_cli">Install the Pyronaut CLI</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The CLI requires Python 3.10 or later.</p>
+<p>The CLI requires Python 3.10 or later. On Python 3.10, which has no built-in TOML parser, the <code>tomli</code> package is installed automatically with the CLI.</p>
 </div>
 <div class="paragraph">
 <p>Install Pyronaut from PyPI:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install --upgrade 'pyronaut==0.1.0'
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install --upgrade 'pyronaut==0.1.1'
 pyronaut --version</code></pre>
 </div>
 </div>
@@ -432,8 +434,8 @@ directly from the release instead of PyPI, point <code>pip</code> at the release
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install --upgrade --no-index \
-  --find-links https://github.com/micronaut-projects/pyronaut/releases/expanded_assets/v0.1.0 \
-  'pyronaut==0.1.0'
+  --find-links https://github.com/micronaut-projects/pyronaut/releases/expanded_assets/v0.1.1 \
+  'pyronaut==0.1.1'
 pyronaut --version</code></pre>
 </div>
 </div>
@@ -441,8 +443,8 @@ pyronaut --version</code></pre>
 <p>The Python installation used by <code>pip</code> only installs the CLI. Pyronaut applications run with the embedded GraalPy
 runtime supplied by the Pyronaut SDK, and <code>pyronaut setup</code> provisions the matching GraalPy interpreter for project
 virtual environments. <code>pyronaut --version</code> shows the required version on the <code>GraalPy Interpreter</code> line.
-If your application or tests use Python packages, see <a href="#prerequisites">Getting Started Step 1</a> for the project
-environment setup.</p>
+If your application or tests use Python packages, see <a href="#project-installation">Getting Started Step 3: Install project dependencies</a>
+for the project environment setup.</p>
 </div>
 </div>
 </div>
@@ -458,9 +460,14 @@ environment setup.</p>
 </div>
 </div>
 <div class="paragraph">
-<p>Setup locates or provisions a compatible GraalVM JDK and the exact GraalPy interpreter the SDK was built with, downloads
-the native Pyronaut launchers, resolves the SDK dependencies, and stores validated machine-local state under
-<code>~/.pyronaut</code>. You do not need to install GraalVM or GraalPy manually for the default setup.</p>
+<p>Setup locates or provisions a compatible GraalVM JDK and the exact GraalPy interpreter the SDK was built with, resolves
+the SDK dependencies, and stores validated machine-local state under <code>~/.pyronaut</code>. You do not need to install GraalVM
+or GraalPy manually for the default setup.</p>
+</div>
+<div class="paragraph">
+<p>Setup does not download the native Pyronaut launchers. A command that runs a native launcher downloads it the first time
+it needs one, so projects that only use the JVM toolchain never download them. Run <code>pyronaut setup --native-launchers</code>
+to download them during setup.</p>
 </div>
 <div class="paragraph">
 <p>Setup reuses a matching GraalPy that is already installed with pyenv or under <code>~/.pyronaut/sdks</code>. When none is
@@ -479,7 +486,7 @@ installed, setup runs <code>pyenv install</code> if pyenv is available, and othe
 <p>The placeholders <code>&lt;sdk-version&gt;</code>, <code>&lt;os&gt;</code>, and <code>&lt;architecture&gt;</code> identify the SDK version and the platform where setup runs.</p>
 </div>
 <div class="paragraph">
-<p>The setup command is idempotent. Run <code>pyronaut setup --refresh</code> when you need to re-resolve setup dependencies or rewrite setup state. Use <code>pyronaut setup --offline</code> only when the required JDK, native launchers, and Maven artifacts are already cached.
+<p>The setup command is idempotent. Run <code>pyronaut setup --refresh</code> when you need to re-resolve setup dependencies or rewrite setup state. Use <code>pyronaut setup --offline</code> only when the required JDK and Maven artifacts are already cached. To use the native toolchain offline, run <code>pyronaut setup --native-launchers</code> while online first.
 If Pyronaut cannot find a recorded artifact, or if the SDK, platform, repository, or native bundle configuration changes, execution commands exit with code <code>8</code> and instruct you to run <code>pyronaut setup</code> again.
 Help and version commands remain available before setup.</p>
 </div>
@@ -521,7 +528,7 @@ repositories = [
 </div>
 </div>
 <div class="paragraph">
-<p>Setup installs native executables into <code>~/.pyronaut/bin</code>:</p>
+<p>Pyronaut downloads the native launchers into <code>~/.pyronaut/bin</code> (<code>bin</code> in the data directory with the <a href="#pyronautHome">XDG layout</a>) when a command first needs them, or during <code>pyronaut setup --native-launchers</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -540,6 +547,94 @@ See
 </td>
 </tr>
 </table>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="pyronautHome">Relocate Pyronaut state</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Global Pyronaut state (setup records, the SDK tool runtime, native launchers, JDKs, caches and <code>settings.toml</code>)
+follows the XDG base directory layout described below on Linux, and whenever an <code>XDG_*_HOME</code> variable is set.
+Otherwise it lives in <code>~/.pyronaut</code>, where <code>~</code> is <code>$HOME</code>. Set <code>PYRONAUT_HOME</code> to keep all of it in one directory
+of your choice instead:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">export PYRONAUT_HOME=/opt/pyronaut-state
+pyronaut setup</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The CLI passes the resolved directories to every Java tool and launcher it starts (as <code>PYRONAUT_CONFIG_DIR</code>,
+<code>PYRONAUT_CACHE_DIR</code> and <code>PYRONAUT_DATA_DIR</code>), so they use the same locations even when the JVM&#8217;s <code>user.home</code> (taken
+from the operating system&#8217;s user database) differs from <code>$HOME</code>, for example in a build sandbox. The local Maven
+repository defaults to <code>$HOME/.m2/repository</code> on both sides; use <code>--local-repository</code> to change it.</p>
+</div>
+<div class="sect2">
+<h3 id="_use_the_xdg_base_directory_layout">Use the XDG base directory layout</h3>
+<div class="paragraph">
+<p>Pyronaut follows the <a href="https://specifications.freedesktop.org/basedir-spec/latest/">XDG Base Directory Specification</a>
+for new installations on Linux, and on any platform when <code>XDG_CONFIG_HOME</code>, <code>XDG_CACHE_HOME</code> or <code>XDG_DATA_HOME</code> is set.
+State is then split by kind:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 16.6666%;">
+<col style="width: 33.3333%;">
+<col style="width: 50.0001%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Kind</th>
+<th class="tableblock halign-left valign-top">Directory</th>
+<th class="tableblock halign-left valign-top">Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Configuration</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>$XDG_CONFIG_HOME/pyronaut</code> (default <code>~/.config/pyronaut</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>settings.toml</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cache</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>$XDG_CACHE_HOME/pyronaut</code> (default <code>~/.cache/pyronaut</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">AOT caches (<code>caches/aot</code>), IDE stubs (<code>ide-stubs</code>), GraalPy compatibility data and <code>pyronaut update</code> downloads</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Data</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>$XDG_DATA_HOME/pyronaut</code> (default <code>~/.local/share/pyronaut</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">JDKs and SDKs (<code>sdks</code>), native launchers (<code>bin</code>), setup records (<code>setup</code>) and the SDK tool runtime (<code>tools</code>)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>An existing <code>~/.pyronaut</code> installation keeps working where it is. To move it to the XDG layout, run:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut setup --xdg</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Setup copies <code>~/.pyronaut/settings.toml</code> to the XDG configuration directory when that directory has none, provisions
+the SDK into the data directory, and prints a note that <code>~/.pyronaut</code> is no longer used and can be removed.</p>
+</div>
+<div class="paragraph">
+<p><code>pyronaut setup</code> creates <code>$XDG_CONFIG_HOME/pyronaut</code> whenever the XDG layout is in use. Its existence keeps the layout
+enabled, so later commands (and the Java tools they start) use it even if a <code>~/.pyronaut</code> directory appears.
+<code>pyronaut doctor</code> reports the active layout and its paths in the <strong>Pyronaut state</strong> row.</p>
+</div>
+<div class="paragraph">
+<p>Set <code>PYRONAUT_XDG=true</code> or <code>PYRONAUT_XDG=false</code> to choose the layout explicitly; <code>false</code> keeps <code>~/.pyronaut</code> even on
+Linux. <code>PYRONAUT_HOME</code> always takes precedence and keeps everything in one directory.</p>
+</div>
+<div class="paragraph">
+<p>To switch back to <code>~/.pyronaut</code>, export <code>PYRONAUT_XDG=false</code> (or, outside Linux and without <code>XDG_*_HOME</code> variables,
+remove <code>$XDG_CONFIG_HOME/pyronaut</code>), move <code>settings.toml</code> back into <code>~/.pyronaut</code> and run <code>pyronaut setup</code> again. The
+XDG cache and data directories can then be removed.</p>
+</div>
 </div>
 </div>
 </div>
@@ -674,20 +769,56 @@ pyronaut --version</code></pre>
 <p>If <a href="https://github.com/pyenv/pyenv#installation">pyenv</a> is installed, setup installs GraalPy with pyenv; otherwise it
 downloads GraalPy into <code>~/.pyronaut/sdks</code>.</p>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_step_2_create_the_project">Step 2: Create the project</h2>
+<div class="sectionbody">
 <div class="paragraph">
-<p>Change to your project directory and install the project:</p>
+<p>From the directory where you want the project created, run:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">cd &lt;project-dir&gt;
-pyronaut install</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut create hello-pyronaut
+cd hello-pyronaut</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>pyronaut install</code> creates a GraalPy virtual environment in <code>.venv</code> and uses <code>pip</code> to install the Python dependencies
-declared in <code>pyproject.toml</code> or <code>requirements.txt</code>, plus <code>pytest</code> when the project has Python tests. Pyronaut uses this
-environment for application and test launches. A CPython-created environment cannot provide packages to the embedded
-GraalPy runtime.</p>
+<p>Add <code>--features data-jdbc,mysql</code> to the <code>pyronaut create</code> command when you need those Micronaut features.
+The generated project includes <code>src/main.py</code> for logging setup, <code>tests/test_application.py</code> as a starter test, and
+<code>config/application.toml</code> for application settings. The following steps add an HTTP route, configure its port, and
+replace the starter test.</p>
+</div>
+<div class="paragraph">
+<p>The following optional subsection briefly explains the project configuration. Skip it to continue with the generated
+files.</p>
+</div>
+<div class="sect2">
+<h3 id="_review_the_project_configuration_optional">Review the project configuration (optional)</h3>
+<div class="paragraph">
+<p><code>pyproject.toml</code> is the standard Python project file. The generated file contains Python project metadata and Pyronaut
+settings, including Java dependencies by scope. Keep it as generated for this tutorial. To change project settings, see
+<a href="#pyproject">Configuring pyproject.toml</a> and <a href="#dependencies">Installing Python and Java Dependencies</a>.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="project-installation">Step 3: Install project dependencies</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Run <code>pyronaut install</code> after creating the project and whenever you change its dependencies:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut install</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This command creates a GraalPy virtual environment in <code>.venv</code> and installs the Python dependencies declared in
+<code>pyproject.toml</code> or <code>requirements.txt</code>, plus <code>pytest</code> when the project has Python tests. Pyronaut uses this environment
+for application and test launches. It also resolves the Java dependencies declared in <code>pyproject.toml</code>. A CPython-created
+environment cannot provide packages to the embedded GraalPy runtime.</p>
 </div>
 <div class="paragraph">
 <p>See <a href="#usingPackagesJavaLibraries">Using Python Packages and Java Libraries</a> for Python package compatibility and Java
@@ -696,85 +827,14 @@ library guidance.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_step_2_create_the_project">Step 2: Create the project</h2>
+<h2 id="_step_4_add_an_http_route">Step 4: Add an HTTP route</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Use <code>pyronaut create demo</code> to generate the project. Add
-<code>--features data-jdbc,mysql</code> when you need those Micronaut features.
-The generated project includes the configuration, source, and test layout
-used by the remaining steps.</p>
+<p>An HTTP route maps an HTTP method and path to a Python function. This example declares a module-level route function; it
+does not define a controller class annotated with <code>@Controller</code>.</p>
 </div>
 <div class="paragraph">
-<p>The following subsection shows the key generated files for readers who want
-to understand or customize the project manually.</p>
-</div>
-<div class="sect2">
-<h3 id="_manual_project_configuration">Manual project configuration</h3>
-<div class="paragraph">
-<p><code>pyproject.toml</code> is the standard Python project file. Pyronaut reads its own settings from the <code>[tool.pyronaut]</code> tables
-and uses the standard <code>[project]</code> and <code>[build-system]</code> tables for Python packaging.</p>
-</div>
-<div class="paragraph">
-<p>Create <code>pyproject.toml</code>:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[project] <i class="conum" data-value="1"></i><b>(1)</b>
-name = "hello-pyronaut"
-version = "0.1.0"
-dynamic = ["scripts"]
-
-[build-system]
-requires = ["setuptools", "wheel", "tomli"]
-build-backend = "setuptools.build_meta"
-
-[tool.pyronaut]
-repositories = ["mavenCentral"] <i class="conum" data-value="2"></i><b>(2)</b>
-
-[tool.pyronaut.dependencies] <i class="conum" data-value="3"></i><b>(3)</b>
-runtime = []
-build = []
-test = [
-  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
-]</code></pre>
-</div>
-</div>
-<div class="colist arabic">
-<table>
-<tr>
-<td><i class="conum" data-value="1"></i><b>1</b></td>
-<td>The project name and version are also used when packaging the application.</td>
-</tr>
-<tr>
-<td><i class="conum" data-value="2"></i><b>2</b></td>
-<td>The <code>repositories</code> setting tells Pyronaut where to resolve Java libraries. <code>mavenCentral</code> is the default Java-library repository, roughly equivalent to PyPI for Python packages.</td>
-</tr>
-<tr>
-<td><i class="conum" data-value="3"></i><b>3</b></td>
-<td>Declare Java dependencies by scope. Pyronaut makes <code>runtime</code> dependencies available to application code, uses <code>build</code>
-dependencies while it processes sources, and makes <code>test</code> dependencies available when tests run. This example leaves
-<code>runtime</code> empty because the Pyronaut launcher already includes Micronaut&#8217;s HTTP server, serialization, and validation
-support. See <a href="#how">How Pyronaut Works</a> for details.</td>
-</tr>
-</table>
-</div>
-<div class="paragraph">
-<p>For dependency syntax, Python packages, and additional Java dependency options, see
-<a href="#dependencies">Installing Python and Java Dependencies</a>.</p>
-</div>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_step_3_add_an_http_route">Step 3: Add an HTTP route</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>An HTTP route maps an HTTP method and path to a Python function. Although the example uses <code>controllers.py</code> as its filename, the
-example does not define a controller class annotated with <code>@Controller</code>; it defines a module-level route function.</p>
-</div>
-<div class="paragraph">
-<p>Create <code>src/controllers.py</code>:</p>
+<p><code>src/main.py</code> configures logging. Leave it in place and create <code>src/hello_pyronaut/controllers.py</code> with:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -793,10 +853,10 @@ prefix or need injected services. See <a href="#httpApis">Building HTTP APIs</a>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_step_4_add_application_configuration">Step 4: Add application configuration</h2>
+<h2 id="_step_5_add_application_configuration">Step 5: Add application configuration</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Create <code>config/application.toml</code>:</p>
+<p>Add the server port to the generated <code>config/application.toml</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -815,18 +875,10 @@ those settings from Python.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_step_5_run_the_application">Step 5: Run the application</h2>
+<h2 id="_step_6_run_the_application">Step 6: Run the application</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>If you installed or upgraded Pyronaut, provision the SDK before starting the application:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut setup</code></pre>
-</div>
-</div>
-<div class="paragraph">
-<p>Then start the development server:</p>
+<p>Start the development server:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -850,15 +902,8 @@ those settings from Python.</p>
 </ul>
 </div>
 <div class="paragraph">
-<p>Run
-<code>pyronaut install</code> and <code>pyronaut process</code> separately when you change dependencies or want to inspect processing errors
-without starting the server:</p>
-</div>
-<div class="listingblock">
-<div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut install
-pyronaut process</code></pre>
-</div>
+<p>After changing dependencies, rerun <code>pyronaut install</code>. To inspect processing errors without starting the server, run
+<code>pyronaut process</code>.</p>
 </div>
 <div class="paragraph">
 <p>Verify the route:</p>
@@ -874,10 +919,10 @@ pyronaut process</code></pre>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_step_6_add_and_run_a_test">Step 6: Add and run a test</h2>
+<h2 id="_step_7_add_and_run_a_test">Step 7: Add and run a test</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Create <code>tests/test_controller.py</code>:</p>
+<p>Replace the generated <code>tests/test_application.py</code> file with:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -980,7 +1025,7 @@ runtime and JUnit 5 integration, so it does not require a project virtual enviro
 </div>
 </div>
 <div class="sect1">
-<h2 id="_create_the_application">Create the application</h2>
+<h2 id="_step_1_create_the_application">Step 1: Create the application</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Create an empty project directory, change into it, and create <code>main.py</code>:</p>
@@ -1007,7 +1052,7 @@ validate the path value as an integer. Because <code>q</code> defaults to <code>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_start_the_development_server">Start the development server</h2>
+<h2 id="_step_2_start_the_development_server">Step 2: Start the development server</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Run the development server from the directory containing <code>main.py</code>:</p>
@@ -1025,7 +1070,7 @@ The server listens on <code><a href="http://localhost:8080" class="bare">http://
 </div>
 </div>
 <div class="sect1">
-<h2 id="_verify_the_routes">Verify the routes</h2>
+<h2 id="_step_3_verify_the_routes">Step 3: Verify the routes</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Verify the root route:</p>
@@ -1097,7 +1142,7 @@ The server listens on <code><a href="http://localhost:8080" class="bare">http://
 </div>
 </div>
 <div class="sect1">
-<h2 id="_explore_the_api_documentation">Explore the API documentation</h2>
+<h2 id="_step_4_explore_the_api_documentation">Step 4: Explore the API documentation</h2>
 <div class="sectionbody">
 <div class="ulist">
 <ul>
@@ -1115,7 +1160,7 @@ The server listens on <code><a href="http://localhost:8080" class="bare">http://
 </div>
 </div>
 <div class="sect1">
-<h2 id="_add_a_request_body">Add a request body</h2>
+<h2 id="_step_5_add_a_request_body">Step 5: Add a request body</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Replace <code>main.py</code> with the following version to accept an <code>Item</code> request body:</p>
@@ -1203,7 +1248,7 @@ invalid body:</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_test_the_application">Test the application</h2>
+<h2 id="_step_6_test_the_application">Step 6: Test the application</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Create <code>test_main.py</code> next to <code>main.py</code>:</p>
@@ -1283,7 +1328,7 @@ module-level attributes. The development server does not need to run separately.
 </div>
 </div>
 <div class="sect1">
-<h2 id="_run_the_application">Run the application</h2>
+<h2 id="_step_7_run_the_application">Step 7: Run the application</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Run the same source file with <code>pyronaut run</code>:</p>
@@ -4028,7 +4073,8 @@ Install Python packages into a GraalPy virtual environment and declare Java libr
 <h2 id="_create_a_graalpy_virtual_environment">Create a GraalPy virtual environment</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Declare Python packages in the standard <code>[project].dependencies</code> table in <code>pyproject.toml</code> or in a <code>requirements.txt</code> file, then run:</p>
+<p>Declare Python packages in the standard <code>[project].dependencies</code> table in <code>pyproject.toml</code> or in a <code>requirements.txt</code> file.
+Packages that only the tests import can go in a <code>requirements-test.txt</code> file next to it. Then run:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -4203,6 +4249,116 @@ Micronaut dependencies managed by the Micronaut platform, Micronaut core, or Pyr
 <div class="paragraph">
 <p>For dependency scopes and install options, see <a href="#dependencies">Installing Python and Java Dependencies</a>.
 See also <a href="#pyproject">Configuring pyproject.toml</a>, <a href="#mavenRepositories">Configuring Maven repositories</a>, and <a href="#directSourceDeclarations">Declaring direct source dependencies</a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_extend_java_classes_and_implement_java_interfaces">Extend Java classes and implement Java interfaces</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>A Python class defined at module level, or nested in another class, can extend a Java class or implement a Java interface from a library.
+The Pyronaut processor generates a Java class for it, so the class works the same way on the JVM, in the native <code>pyronaut</code> launchers, and in a native image.
+That includes classes in test sources and the application classes that pytest test modules import:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">from com.rabbitmq.client import Channel
+from jakarta.inject import Singleton
+from micronaut.rabbitmq.connect import ChannelInitializer
+
+
+@Singleton
+class ChannelPoolListener(ChannelInitializer):
+
+    def initialize(self, channel: Channel, name: str) -&gt; None:
+        channel.queueDeclare("inventory", True, False, False, None)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>A class defined inside a function, such as a pytest test function or a factory function, gets no generated Java class.
+GraalPy adapts it to the Java type at run time, which only works on the JVM: the native launchers and native images fail with <code>SystemError: Java Class can be extended only in JVM mode</code> when the class statement runs.
+Define the class at module level, or pass a function or lambda where Java expects a functional interface.</p>
+</div>
+<div class="paragraph">
+<p>See the <a href="https://docs.micronaut.io/latest/guide/#extendingJavaClasses">Extending Java Classes</a> section of the Micronaut guide for constructor rules and limitations.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="javaExceptions">Handle exceptions thrown by Java code</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>A Java exception thrown by a Java call, such as an <code>IOException</code> from an HTTP client or a <code>NumberFormatException</code> from <code>Integer.parseInt</code>, is raised into Python as the Java exception object itself.
+Pyronaut makes every <code>java.lang.Exception</code>, checked or unchecked, an instance of the Python <code>Exception</code> class, so idiomatic Python error handling catches it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">from java.lang import Integer
+
+
+def parse_port(value: str) -&gt; int:
+    try:
+        return Integer.parseInt(value)
+    except Exception as e:
+        # e is the java.lang.NumberFormatException: e.getMessage(), str(e) and e.__cause__ chaining all work
+        raise ValueError(f"invalid port: {value}") from e</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>To catch a specific Java exception, import its Java type and name it in the <code>except</code> clause. The exception keeps its Java members:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">from java.io import IOException
+from java.nio.file import Files, Path
+
+
+def read_settings(location: str) -&gt; str:
+    try:
+        return Files.readString(Path.of(location))
+    except IOException as e:
+        return f"unavailable: {e.getMessage()}"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Keep the following in mind:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A Java exception is not mapped to a specific Python exception class. A <code>NumberFormatException</code> is an <code>Exception</code>, but not a <code>ValueError</code>. Catch it as <code>Exception</code> or by its Java type.</p>
+</li>
+<li>
+<p>A <code>java.lang.Error</code>, such as <code>OutOfMemoryError</code>, <code>StackOverflowError</code>, or <code>AssertionError</code>, is not an <code>Exception</code>. Like <code>KeyboardInterrupt</code> and <code>SystemExit</code>, it is only a <code>BaseException</code>, so <code>except Exception</code> does not swallow it.</p>
+</li>
+<li>
+<p>A Java exception that Python code does not catch, or re-raises with <code>raise</code>, reaches the calling Java code as the original Java exception, so Micronaut error handling sees the Java exception type.</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Java exceptions are Python <code>Exception</code> instances with Micronaut Core 5.2.16 and later.
+With earlier versions, GraalPy makes a Java exception a <code>BaseException</code> only, and <code>except Exception</code> does not catch it.
+On those versions, an error boundary that must also catch Java exceptions has to catch <code>BaseException</code> and re-raise the exceptions that signal interpreter shutdown or generator cleanup:
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-python hljs" data-lang="python">try:
+    do_work()
+except BaseException as e:
+    if isinstance(e, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+        raise
+    report_failure(e)</code></pre>
+</div>
 </div>
 </div>
 </div>
@@ -4585,6 +4741,24 @@ Each cache takes up to a few hundred megabytes; delete <code>~/.pyronaut/caches/
 </div>
 </div>
 </div>
+<div class="sect1">
+<h2 id="_python_environment">Python environment</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>pyronaut install</code> creates <code>.venv</code> with GraalPy and installs the project&#8217;s Python dependencies into it, with <code>uv sync</code> for uv projects and <code>pip</code> otherwise (see <a href="#python-uv-projects">uv projects</a>).
+Set <code>manage-dependencies = false</code> when another tool manages <code>.venv</code>; Pyronaut then only checks that GraalPy created it:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[tool.pyronaut.python]
+manage-dependencies = false</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pyronaut install --no-python-deps</code> does the same for a single run.</p>
+</div>
+</div>
+</div>
 
 <h2 id="dependencies"><a class="anchor" href="#dependencies"></a>9.2 Installing Python and Micronaut Dependencies</h2>
 
@@ -4635,12 +4809,28 @@ It creates <code>.venv</code> with the GraalPy interpreter provisioned by <code>
 <p><code>requirements.txt</code> in the project directory</p>
 </li>
 <li>
+<p><code>requirements-test.txt</code> in the project directory, for packages only the tests import</p>
+</li>
+<li>
 <p><code>pytest</code>, when the project has Python tests and does not declare it</p>
 </li>
 </ul>
 </div>
 <div class="paragraph">
-<p>Pyronaut skips <code>pip</code> while these declarations are unchanged. Use <code>pyronaut install --refresh</code> to reinstall them.</p>
+<p>Pyronaut skips <code>pip</code> while these declarations are unchanged. Use <code>pyronaut install --refresh</code> to reinstall them.
+<code>pyronaut dev</code>, <code>pyronaut run</code> and <code>pyronaut test</code> run the install step first when any of these declarations, including <code>requirements-test.txt</code>, changed since the last install.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+A project managed by uv is synced with <code>uv sync</code> instead of <code>pip</code>, which reads neither <code>requirements.txt</code> nor <code>requirements-test.txt</code>. Pyronaut reads <code>requirements-test.txt</code> only for virtual environments it installs with <code>pip</code>; in a uv project declare test-only packages in a <code>[dependency-groups]</code> group such as <code>test</code>. See <a href="#python-uv-projects">uv projects</a>.
+</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
@@ -5157,6 +5347,10 @@ destination-dir = "__pyronaut__/ide-stubs"</code></pre>
 <p>The default IDE target is <code>vscode</code>.
 Stub generation is best effort; Pyronaut skips APIs that it cannot render cleanly and reports them in the stub generation report.</p>
 </div>
+<div class="paragraph">
+<p>Generated stubs are deterministic: the same classpath always produces byte-identical files.
+Non-interactive builds such as CI or sandboxed packaging that have no use for editor support can skip stub generation without editing <code>pyproject.toml</code> by setting the <code>PYRONAUT_IDE_STUBS_ENABLED=false</code> environment variable (or the <code>pyronaut.ide-stubs.enabled=false</code> system property), which takes precedence over <code>enabled</code>.</p>
+</div>
 </div>
 </div>
 <div class="sect1">
@@ -5640,7 +5834,189 @@ By default, the install destination is also Maven local, so many local developme
 <p>Use <code>mavenLocal</code> when you published the dependency locally and no other configured repository provides it.</p>
 </div>
 
-<h2 id="proxyConfig"><a class="anchor" href="#proxyConfig"></a>9.10 Proxy Configuration</h2>
+<h2 id="dependencyLocking"><a class="anchor" href="#dependencyLocking"></a>9.10 Locking Maven Dependencies</h2>
+
+<div class='contribute-btn'>
+    <button type='button' class='btn btn-default' onclick='window.location.href="https://github.com/micronaut-projects/pyronaut/edit/HEAD/src/main/docs/guide/configuration/dependencyLocking.adoc"'>
+        <i class='fa fa-pencil-square-o'></i> Improve this doc
+    </button>
+</div>
+
+
+<div class="paragraph">
+<p><code>pyronaut lock</code> writes <code>pyronaut.lock</code>, a list of every Maven artifact that <code>pyronaut setup</code>, <code>pyronaut install</code>, and <code>pyronaut build</code> resolve for the project, each with the repository it came from and its SHA-256 checksum.
+Commit the file next to <code>pyproject.toml</code> (and <code>uv.lock</code>, which covers the Python packages): dependency changes then show up as reviewable diffs, every later resolution is checked against the recorded checksums, and sandboxed builds (Nix, Bazel, Guix, air-gapped CI) can fetch each artifact individually by URL and checksum instead of letting Pyronaut download arbitrary artifacts.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut lock</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Run it again whenever you change <code>[tool.pyronaut.dependencies]</code>, the repositories, the Micronaut versions, or update the SDK.
+<code>pyronaut lock --check</code> fails with exit code <code>8</code> when <code>pyronaut.lock</code> is missing or differs from what the current configuration resolves, which suits a CI step.</p>
+</div>
+<div class="sect1">
+<h2 id="_what_the_lock_covers">What the lock covers</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>pyronaut lock</code> resolves exactly what the other commands resolve and records each artifact Maven Resolver hands to Pyronaut:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>the SDK launcher classpaths that <code>pyronaut setup</code> resolves (the <code>pyronaut-dev</code>, <code>pyronaut-run</code>, and <code>pyronaut-run-python</code> compiler classpaths and the JVM tool runtime), when the installed SDK needs <code>pyronaut setup</code>;</p>
+</li>
+<li>
+<p>every <code>pyronaut install</code> scope: <code>build</code>, <code>runtime</code>, <code>development-runtime</code>, <code>test</code>, and <code>test-resources-server</code> (when Test Resources is enabled);</p>
+</li>
+<li>
+<p>the POM of every artifact, and every parent POM and BOM, because Maven needs them to compute the dependency graph.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p><code>pyronaut build</code> resolves its Maven dependencies through <code>pyronaut install</code>, so the same entries cover it.
+Source and Javadoc JARs, which <code>pyronaut install</code> only fetches for editor support, are not locked.</p>
+</div>
+<div class="paragraph">
+<p>The lock does not cover what Pyronaut downloads outside Maven: the GraalVM JDK, the GraalPy interpreter, and the native launchers that <code>pyronaut setup</code> provisions are already verified against published checksums, and Python packages belong in <code>uv.lock</code>.
+Maven and Gradle projects resolve their dependencies with their own build tool; use its dependency locking and checksum verification instead.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_file_format">File format</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>pyronaut.lock</code> is TOML, sorted by path so that diffs stay small:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml"># This file is generated by `pyronaut lock`. Do not edit it by hand.
+version = 1
+
+[[artifact]]
+coordinates = "io.micronaut:micronaut-core:jar:4.10.7"
+path = "io/micronaut/micronaut-core/4.10.7/micronaut-core-4.10.7.jar"
+repository = "https://repo1.maven.org/maven2/"
+url = "https://repo1.maven.org/maven2/io/micronaut/micronaut-core/4.10.7/micronaut-core-4.10.7.jar"
+sha256 = "..."</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>coordinates</code>: <code>group:artifact:extension[:classifier]:version</code>.</p>
+</li>
+<li>
+<p><code>path</code>: the location in the standard Maven repository layout.</p>
+</li>
+<li>
+<p><code>repository</code>: the repository the artifact was resolved from, or one of two markers for an artifact that has no remote origin:</p>
+<div class="ulist">
+<ul>
+<li>
+<p><code>bundled</code>: an <code>io.micronaut.pyronaut</code> module that Pyronaut seeds into the local repository from the SDK wheel. These modules ship with the SDK and are not necessarily published to any Maven repository.</p>
+</li>
+<li>
+<p><code>local</code>: any other artifact found in the local repository without a record of where it came from, for example one copied there by hand.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><code>url</code>: <code>repository</code> followed by <code>path</code>. Entries marked <code>bundled</code> or <code>local</code> have no <code>url</code>.</p>
+</li>
+<li>
+<p><code>sha256</code>: the checksum of the artifact.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Artifacts resolved from <code>mavenLocal</code> or a file repository keep their <code>file:</code> URL; such a lock is only portable when those repositories are available to the build too.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_checksum_verification">Checksum verification</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>When <code>pyronaut.lock</code> exists, every Maven artifact that Pyronaut resolves and the lock lists must match its recorded checksum, whether the artifact was downloaded or already cached in the local repository.
+A mismatch fails the command and names the artifact, both checksums, and the file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>Dependency lock verification failed (/work/app/pyronaut.lock):
+  - com.example:lib:jar:1.2 does not match pyronaut.lock: expected sha256 3f1a... but /home/me/.m2/repository/com/example/lib/1.2/lib-1.2.jar has 9b02...</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Artifacts the lock does not list are accepted, so a lock that is out of date after a dependency change does not break <code>pyronaut install</code>; run <code>pyronaut lock</code> to update it.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_locked_resolution">Locked resolution</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>pyronaut install --locked</code> (or <code>PYRONAUT_LOCKED=true</code> for any command, including <code>pyronaut build</code>, <code>pyronaut dev</code>, and <code>pyronaut test</code>, which install dependencies on demand) also fails on every artifact the lock does not list.
+<code>pyronaut setup --locked</code>, run in the project directory, does the same for the SDK launcher classpaths and resolves them again even when setup is already complete.
+Locked resolution requires <code>pyronaut.lock</code>; without it the command fails and asks you to run <code>pyronaut lock</code>.</p>
+</div>
+<div class="paragraph">
+<p>To resolve only the locked artifacts, without any repository access, point Pyronaut at a directory that contains them in Maven repository layout, at each entry&#8217;s <code>path</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">PYRONAUT_LOCK_REPOSITORY=/path/to/locked-artifacts pyronaut install --offline</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>--lock-repository &lt;dir&gt;</code> is the equivalent <code>pyronaut install</code> option. A lock repository implies <code>--locked</code>: it replaces every configured repository (including <code>mavenCentral</code>, <code>mavenLocal</code>, and the Sonatype snapshot repository), works when the command runs <code>--offline</code>, and the checksum of every artifact taken from it is verified against the lock.
+An artifact missing from the lock repository fails resolution and names the missing coordinates.</p>
+</div>
+<div class="paragraph">
+<p>A sandboxed build fetches every <code>url</code> with its <code>sha256</code>, places each file at its <code>path</code>, and passes the resulting directory as the lock repository.
+Entries without a <code>url</code> are skipped: locked resolution takes them from the local repository instead (<code>pyronaut setup</code> and <code>pyronaut install</code> seed the <code>bundled</code> ones there from the installed SDK) and still verifies their checksums against the lock.
+Running <code>pyronaut lock</code> against a clean local repository records a download URL for every artifact that is not bundled.
+With Nix, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-nix hljs" data-lang="nix">let
+  lock = builtins.fromTOML (builtins.readFile ./pyronaut.lock);
+  lockRepository = pkgs.linkFarm "pyronaut-maven-repository" (map (artifact: {
+    name = artifact.path;
+    path = pkgs.fetchurl { inherit (artifact) url sha256; };
+  }) (builtins.filter (artifact: artifact ? url) lock.artifact));
+in
+# ... then, in the build: PYRONAUT_LOCK_REPOSITORY=${lockRepository} pyronaut install --offline</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The lock file location defaults to <code>pyronaut.lock</code> in the project directory; set <code>PYRONAUT_LOCK_FILE</code> (or <code>--lock-file &lt;file&gt;</code> on <code>pyronaut install</code>) to use another file.</p>
+</div>
+<div class="paragraph">
+<p>Locking has these limitations:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>SNAPSHOT dependencies are recorded with the timestamped version they resolved to, but a lock repository cannot serve them because it holds no <code>maven-metadata.xml</code>. Lock only released versions for reproducible builds.</p>
+</li>
+<li>
+<p>Version ranges need repository metadata as well, and fail in a lock repository.</p>
+</li>
+<li>
+<p>Direct-source projects (<code>pyronaut install App.java</code>) and Maven or Gradle projects cannot be locked.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+
+<h2 id="proxyConfig"><a class="anchor" href="#proxyConfig"></a>9.11 Proxy Configuration</h2>
 
 <div class='contribute-btn'>
     <button type='button' class='btn btn-default' onclick='window.location.href="https://github.com/micronaut-projects/pyronaut/edit/HEAD/src/main/docs/guide/configuration/proxyConfig.adoc"'>
@@ -5764,7 +6140,7 @@ independent of the <code>[proxy]</code> table.</p>
 </div>
 </div>
 
-<h2 id="incrementalProcessing"><a class="anchor" href="#incrementalProcessing"></a>9.11 Incremental Processing</h2>
+<h2 id="incrementalProcessing"><a class="anchor" href="#incrementalProcessing"></a>9.12 Incremental Processing</h2>
 
 <div class='contribute-btn'>
     <button type='button' class='btn btn-default' onclick='window.location.href="https://github.com/micronaut-projects/pyronaut/edit/HEAD/src/main/docs/guide/configuration/incrementalProcessing.adoc"'>
@@ -7895,7 +8271,7 @@ additional-test-resources = ["tests-fixtures"]</code></pre>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut setup [--local-repository &lt;dir&gt;] [--offline] [--refresh] [--progress &lt;auto|on|off&gt;]</code></pre>
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut setup [--local-repository &lt;dir&gt;] [--offline] [--refresh] [--locked] [--native-launchers] [--progress &lt;auto|on|off&gt;]</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -7904,7 +8280,10 @@ It then locates the exact GraalPy interpreter the SDK was built with (shown by <
 Setup reuses a matching GraalPy when the CLI itself runs on one, when <code>~/.pyronaut/sdks/&lt;version&gt;</code> already contains one, or when pyenv already has that version installed.
 Otherwise it runs <code>pyenv install &lt;version&gt;</code> when pyenv is available, and falls back to downloading the checksum-verified GraalPy release from GitHub into <code>~/.pyronaut/sdks/&lt;version&gt;</code>.
 Delegated commands receive that interpreter through <code>PYRONAUT_PYTHON_EXECUTABLE</code> and <code>PATH</code>; a project <code>.venv</code> takes precedence.
-It then caches <code>pyronaut-dev</code>, <code>pyronaut-run</code>, and <code>pyronaut-run-python</code>, seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel&#8217;s portable dependency descriptors.
+It then seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel&#8217;s portable dependency descriptors, including the compiler classpaths of the native launchers.
+Setup does not download the native <code>pyronaut-dev</code>, <code>pyronaut-run</code>, and <code>pyronaut-run-python</code> launchers.
+A command downloads a launcher into <code>~/.pyronaut/bin</code> (<code>bin</code> in the Pyronaut data directory with the XDG layout) the first time it needs one, so projects that set <code>tool.pyronaut.toolchain.type = "jvm"</code> never download them.
+Pass <code>--native-launchers</code> to download all three during setup, for example when you build a CI image or before you work offline.
 Pyronaut writes validated state atomically below <code>~/.pyronaut/setup</code>.</p>
 </div>
 <div class="paragraph">
@@ -7919,7 +8298,8 @@ repositories = ["mavenCentral", "https://repo.example.com/snapshots/"]</code></p
 </div>
 <div class="paragraph">
 <p><code>--refresh</code> re-resolves and rewrites setup state while reusing healthy downloaded JDK, GraalPy, and native images.
-<code>--offline</code> performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached.
+<code>--offline</code> performs no JDK, GraalPy, native-image, or Maven downloads and therefore succeeds only when every required component is already cached; with <code>--native-launchers</code>, that includes the native launchers.
+<code>--locked</code> resolves the SDK launcher classpaths again and requires every Maven artifact to be listed, with a matching checksum, in the <code>pyronaut.lock</code> of the current directory; see <a href="#dependencyLocking">Locking Maven Dependencies</a>.
 When setup is missing, corrupt, or stale, execution commands exit with code <code>8</code> and print <code>Pyronaut setup is missing or stale. Run pyronaut setup.</code></p>
 </div>
 </div>
@@ -7947,7 +8327,7 @@ Pass a version such as <code>1.0.0</code> or <code>v1.0.0</code> to install that
 <p>downloads the release&#8217;s wheel and installs it with <code>pip</code> into the Python environment that runs <code>pyronaut</code>;</p>
 </li>
 <li>
-<p>runs the new version&#8217;s <code>pyronaut setup</code>, which downloads the matching <code>pyronaut-dev</code>, <code>pyronaut-run</code>, and <code>pyronaut-run-python</code> launchers and prepares the Maven repository recorded by the previous setup;</p>
+<p>runs the new version&#8217;s <code>pyronaut setup</code>, which prepares the Maven repository recorded by the previous setup (commands download the matching native launchers when they first need them);</p>
 </li>
 <li>
 <p>removes the launchers, tool runtimes, setup state, and Pyronaut Maven artifacts of every version older than the installed one.</p>
@@ -7986,6 +8366,9 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 <p>Python: the interpreter running the CLI is 3.10 or newer.</p>
 </li>
 <li>
+<p>TOML parser: <code>tomllib</code> (Python 3.11 and newer) or the <code>tomli</code> package (Python 3.10) can be imported, so <code>pyproject.toml</code> can be read.</p>
+</li>
+<li>
 <p>Pyronaut SDK: the installed wheel version and whether the cached setup state below <code>~/.pyronaut/setup</code> is valid for it (suggests <code>pyronaut setup</code>, or <code>pyronaut setup --refresh</code> when stale state exists).</p>
 </li>
 <li>
@@ -7998,7 +8381,7 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 <p>Interpreter: the check verifies that the pieces agree. <code>PYRONAUT_PYTHON_EXECUTABLE</code> must point at an existing GraalPy, an activated <code>VIRTUAL_ENV</code> must be the project <code>.venv</code>, and the <code>.venv</code> must use the currently selected GraalPy (the check reports a <code>.venv</code> that remained after <code>pyenv global</code> moved to another version, or whose base interpreter someone removed).</p>
 </li>
 <li>
-<p>Native launchers: Pyronaut caches <code>pyronaut-dev</code>, <code>pyronaut-run</code>, and <code>pyronaut-run-python</code> below <code>~/.pyronaut/bin</code> for the configured version and platform.</p>
+<p>Native launchers: whether <code>pyronaut-dev</code>, <code>pyronaut-run</code>, and <code>pyronaut-run-python</code> are cached below <code>~/.pyronaut/bin</code> for the configured version and platform. Launchers that are not downloaded yet pass, because a command downloads them when it first needs one; stale launchers are a warning.</p>
 </li>
 </ul>
 </div>
@@ -8014,7 +8397,7 @@ Unlike the execution commands it never requires valid setup state, so it can dia
 <p>Classpath manifests: the manifests written by <code>pyronaut install</code> exist.</p>
 </li>
 <li>
-<p>Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a <code>pyproject.toml</code> edited after the last <code>pyronaut install</code> is a warning, because the preflight of <code>dev</code>, <code>run</code> and <code>test</code> only checks that the manifests exist. The check reports sources newer than the processed classes for information because <code>dev</code>, <code>run</code>, and <code>test</code> process changed sources automatically.</p>
+<p>Generated state: the check verifies that the manifests are current. Classpath entries that no longer exist (the Maven repository changed) fail the check; a <code>pyproject.toml</code> edited after the last <code>pyronaut install</code> is a warning (<code>dev</code>, <code>run</code> and <code>test</code> reinstall changed dependencies automatically, unless you pass <code>--no-install</code>). The check reports sources newer than the processed classes for information because <code>dev</code>, <code>run</code>, and <code>test</code> process changed sources automatically.</p>
 </li>
 <li>
 <p>Threading: the application configuration in <code>config/application.toml</code> (or <code>application.properties</code>) is read the way the runtime reads it. An executor with <code>virtual = true</code> fails the check because GraalPy cannot run Python code on virtual threads, and invalid <code>micronaut.python.pool</code> values fail it. The row reports the effective context pool size, executor overrides, and the deployment mode from <code>[tool.pyronaut.packaging]</code> and <code>[tool.pyronaut.toolchain]</code>. Configuration kept in <code>application.yml</code> is not inspected and produces a warning.</p>
@@ -8140,7 +8523,7 @@ before using it.</p>
 <p>Resolves dependencies into the configured local Maven repository and writes scoped manifests under <code><em>pyronaut</em>/</code>.</p>
 </div>
 <div class="paragraph">
-<p>Before resolving Java dependencies, <code>pyronaut install</code> prepares the project Python environment when the project declares Python dependencies in <code>[project].dependencies</code>, PEP 735 <code>[dependency-groups]</code>, or a <code>requirements.txt</code> file, or has a Python test directory:</p>
+<p>Before resolving Java dependencies, <code>pyronaut install</code> prepares the project Python environment when the project declares Python dependencies in <code>[project].dependencies</code>, PEP 735 <code>[dependency-groups]</code>, a <code>requirements.txt</code> file, or a <code>requirements-test.txt</code> file, or has a Python test directory:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -8148,7 +8531,7 @@ before using it.</p>
 <p>It creates <code>.venv</code> in the project directory with the GraalPy interpreter recorded by <code>pyronaut setup</code>, unless <code>.venv</code> already exists.</p>
 </li>
 <li>
-<p>It runs <code>pip install</code> inside <code>.venv</code> for every declared requirement and <code>requirements.txt</code>. When the project has Python tests but does not declare <code>pytest</code>, Pyronaut adds <code>pytest</code> because <code>pyronaut test</code> imports it from <code>.venv</code>.</p>
+<p>It runs <code>pip install</code> inside <code>.venv</code> for every declared requirement, <code>requirements.txt</code> and <code>requirements-test.txt</code>. When the project has Python tests but does not declare <code>pytest</code>, Pyronaut adds <code>pytest</code> because <code>pyronaut test</code> imports it from <code>.venv</code>.</p>
 </li>
 <li>
 <p>It records the installed declarations in <code>.venv/.pyronaut-requirements.json</code> and skips <code>pip</code> until they change. <code>--refresh</code> reinstalls; <code>--offline</code> skips <code>pip</code>.</p>
@@ -8157,6 +8540,40 @@ before using it.</p>
 </div>
 <div class="paragraph">
 <p>An existing <code>.venv</code> that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run <code>pyronaut install</code> again.</p>
+</div>
+<div class="sect3">
+<h4 id="python-uv-projects">uv projects</h4>
+<div class="paragraph">
+<p>When the project has a <code>uv.lock</code> file, is a member of a uv workspace (an ancestor <code>pyproject.toml</code> declares <code>[tool.uv.workspace]</code> and has a <code>uv.lock</code>), or declares a <code>[tool.uv]</code> table, and <code>uv</code> is on the <code>PATH</code>, <code>pyronaut install</code> runs <code>uv sync</code> instead of <code>pip</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">uv sync --project &lt;project-dir&gt; --python &lt;project-dir&gt;/.venv/bin/python</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>UV_PROJECT_ENVIRONMENT</code> points uv at the project&#8217;s <code>.venv</code>, so a workspace member is synced into its own <code>.venv</code> rather than the workspace root&#8217;s.
+uv resolves <code>[tool.uv.sources]</code> (including <code>{ workspace = true }</code> members), <code><a id="tool.uv.index"></a></code> indexes and the lock file itself, none of which <code>pip</code> can see, and works in a venv without <code>pip</code>.
+<code>.venv</code> is still created with GraalPy first, and the command fails if <code>uv sync</code> replaces it with another interpreter.
+Pyronaut records the lock file&#8217;s hash and syncs again when it changes; <code>--refresh</code> always syncs and <code>--offline</code> skips the sync.
+uv installs only what the project declares (including its default dependency groups) and ignores <code>requirements.txt</code> and <code>requirements-test.txt</code>, so declare <code>pytest</code> and other test-only packages in a dependency group if the project has Python tests.
+Without <code>uv</code> on the <code>PATH</code>, Pyronaut falls back to <code>pip</code>.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="python-self-managed-venv">Managing <code>.venv</code> yourself</h4>
+<div class="paragraph">
+<p>To keep Pyronaut from installing anything into <code>.venv</code>, for example because another tool creates it, disable dependency management in <code>pyproject.toml</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[tool.pyronaut.python]
+manage-dependencies = false</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>or pass <code>--no-python-deps</code> for a single run.
+<code>pyronaut install</code> then uses the existing <code>.venv</code> as is. It still fails when <code>.venv</code> does not exist or was not created by GraalPy, because the embedded runtime cannot use packages installed for another interpreter, so create it with GraalPy, for example <code>uv sync --python graalpy</code>.</p>
 </div>
 <div class="paragraph">
 <p>By default, Pyronaut installs dependency artifacts into Maven local (<code>~/.m2/repository</code>, or the path configured by the <code>maven.repo.local</code> system property).</p>
@@ -8188,12 +8605,27 @@ before using it.</p>
 <p><code>--refresh</code>: force re-resolution and manifest rewrite without clearing the selected local repository</p>
 </li>
 <li>
+<p><code>--no-python-deps</code>: use the existing GraalPy <code>.venv</code> without installing Python dependencies (see <a href="#python-self-managed-venv">Managing <code>.venv</code> yourself</a>)</p>
+</li>
+<li>
 <p><code>--no-cache</code>: bypass Pyronaut manifest cache reads before rewriting manifests</p>
 </li>
 <li>
 <p><code>--offline</code>: resolve using offline repository mode</p>
 </li>
+<li>
+<p><code>--locked</code>: require every resolved Maven artifact to be listed in <code>pyronaut.lock</code> with a matching checksum (also <code>PYRONAUT_LOCKED=true</code>)</p>
+</li>
+<li>
+<p><code>--lock-repository &lt;dir&gt;</code>: resolve only from this directory of locked artifacts in Maven repository layout; implies <code>--locked</code> (also <code>PYRONAUT_LOCK_REPOSITORY</code>)</p>
+</li>
+<li>
+<p><code>--lock-file &lt;file&gt;</code>: the lock file to verify against (default <code>pyronaut.lock</code> in the project directory, or <code>PYRONAUT_LOCK_FILE</code>)</p>
+</li>
 </ul>
+</div>
+<div class="paragraph">
+<p>When <code>pyronaut.lock</code> exists, every resolved artifact it lists must match its recorded checksum; see <a href="#dependencyLocking">Locking Maven Dependencies</a>.</p>
 </div>
 <div class="paragraph">
 <p>When several scopes are selected, their Maven resolutions run in parallel. On an interactive terminal,
@@ -8410,6 +8842,23 @@ Build-wheel and Docker packaging copy those artifacts into the packaged applicat
 </ul>
 </div>
 </div>
+</div>
+<div class="sect2">
+<h3 id="_pyronaut_lock"><code>pyronaut lock</code></h3>
+<div class="paragraph">
+<p>Records every Maven artifact that <code>pyronaut setup</code>, <code>pyronaut install</code>, and <code>pyronaut build</code> resolve for the project into <code>pyronaut.lock</code>, with its repository URL and SHA-256 checksum:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut lock [--project-dir &lt;dir&gt;] [--local-repository &lt;dir&gt;] [--offline] [--check] [--progress &lt;auto|on|off&gt;]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pyronaut.lock</code> is replaced only when every artifact resolved. <code>--check</code> writes nothing and exits with code <code>8</code> when <code>pyronaut.lock</code> is missing or out of date.
+<code>--offline</code> records from the local repository without downloading.
+See <a href="#dependencyLocking">Locking Maven Dependencies</a> for the file format, checksum verification, and locked resolution.</p>
+</div>
+</div>
 <div class="sect2">
 <h3 id="_pyronaut_process"><code>pyronaut process</code></h3>
 <div class="paragraph">
@@ -8487,6 +8936,58 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 </div>
 </div>
 <div class="sect2">
+<h3 id="autoInstall">Automatic install</h3>
+<div class="paragraph">
+<p><code>pyronaut dev</code>, <code>pyronaut run</code> and <code>pyronaut test</code> run the install step first when the project dependencies changed since the last <code>pyronaut install</code>, so editing <code>pyproject.toml</code> does not require a manual install:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Java dependencies: the CLI records the <code>[tool.pyronaut]</code> table and the Pyronaut version in <code><em>pyronaut</em>/install-state.json</code> after each install. A difference, or missing classpath manifests, runs <code>pyronaut install</code>.</p>
+</li>
+<li>
+<p>Python dependencies: the declarations <code>pyronaut install</code> last applied to <code>.venv</code> (recorded in <code>.venv/.pyronaut-requirements.json</code>) are compared with the current ones: <code>[project].dependencies</code>, <code>[dependency-groups]</code>, <code>requirements.txt</code> and <code>requirements-test.txt</code> for pip, or <code>uv.lock</code> for uv projects. A difference installs only the Python dependencies into <code>.venv</code>. A project that sets <code>[tool.pyronaut.python] manage-dependencies = false</code> manages <code>.venv</code> itself and is never reinstalled.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The CLI prints one line naming the reason before the install renders its own progress, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-text hljs" data-lang="text">• [tool.pyronaut] settings changed since the last install; running pyronaut install before dev</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>pyronaut dev</code> watches <code>pyproject.toml</code> too: a dependency change stops the application, installs, processes and restarts it. Gradle and Maven projects are not affected, because their build tool resolves dependencies.</p>
+</div>
+<div class="paragraph">
+<p>To turn automatic install off, use one of the following (listed from highest to lowest precedence):</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>--no-install</code> on a single <code>dev</code>, <code>run</code> or <code>test</code> invocation.</p>
+</li>
+<li>
+<p>The <code>PYRONAUT_AUTO_INSTALL=false</code> environment variable (<code>true</code> re-enables it, overriding the settings file).</p>
+</li>
+<li>
+<p>The user setting in <code>~/.pyronaut/settings.toml</code>:</p>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[install]
+auto = false</code></pre>
+</div>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>With automatic install off, the commands still warn that the installed dependencies are stale and name the setting that skipped the install.</p>
+</div>
+</div>
+<div class="sect2">
 <h3 id="_pyronaut_dev"><code>pyronaut dev</code></h3>
 <div class="paragraph">
 <p>Runs the processed application via <code>pyronaut-dev</code> in development mode.</p>
@@ -8501,6 +9002,9 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 </li>
 <li>
 <p><code>--debug-vm</code>: enables JDWP JVM debug flags (port 5005)</p>
+</li>
+<li>
+<p><code>--no-install</code>: does not install changed dependencies first; prints a warning instead (see <a href="#autoInstall">Automatic install</a> for the persistent settings)</p>
 </li>
 <li>
 <p><code>--no-validate</code>: explicitly bypasses lifecycle config validation</p>
@@ -8526,6 +9030,9 @@ The command refuses to run in a directory without a <code>pyproject.toml</code>,
 </li>
 <li>
 <p>Automatically performs install/process preflight before launching.</p>
+</li>
+<li>
+<p>Reinstalls before restarting when <code>pyproject.toml</code> dependencies change while the application runs.</p>
 </li>
 <li>
 <p>Starts an owned test-resources server when configuration enables test resources and no reusable external server settings are present.</p>
@@ -8563,6 +9070,9 @@ separate from <code>pyronaut dev</code>, which always uses the development image
 </li>
 <li>
 <p><code>--debug-vm</code>: enables JDWP JVM debug flags (port 5005)</p>
+</li>
+<li>
+<p><code>--no-install</code>: does not install changed dependencies first; prints a warning instead (see <a href="#autoInstall">Automatic install</a> for the persistent settings)</p>
 </li>
 <li>
 <p><code>--no-validate</code>: explicitly bypasses lifecycle config validation</p>
@@ -8621,6 +9131,9 @@ takes precedence over a project dependency with the same module identity.</p>
 </li>
 <li>
 <p><code>--tests &lt;selector&gt;</code>: repeatable Gradle-like test selector filter</p>
+</li>
+<li>
+<p><code>--no-install</code>: does not install changed dependencies first; prints a warning instead (see <a href="#autoInstall">Automatic install</a> for the persistent settings)</p>
 </li>
 <li>
 <p><code>--no-validate</code>: explicitly bypasses lifecycle config validation</p>
@@ -9722,6 +10235,15 @@ ASCII set for the Java tools.</p>
 <ul>
 <li>
 <p><code>PYRONAUT_TRACE_DELEGATION=true</code>: prints delegated command lines.</p>
+</li>
+<li>
+<p><code>PYRONAUT_LOCKED=true</code>: requires every resolved Maven artifact to be listed in <code>pyronaut.lock</code>, for every command that installs dependencies; see <a href="#dependencyLocking">Locking Maven Dependencies</a>.</p>
+</li>
+<li>
+<p><code>PYRONAUT_LOCK_REPOSITORY=&lt;dir&gt;</code>: resolves Maven artifacts only from this directory of locked artifacts; implies <code>PYRONAUT_LOCKED</code>.</p>
+</li>
+<li>
+<p><code>PYRONAUT_LOCK_FILE=&lt;file&gt;</code>: uses this lock file instead of <code>pyronaut.lock</code> in the project directory.</p>
 </li>
 <li>
 <p><code>PYRONAUT_TEST_RESOURCES_DISABLED=true</code>: disables automatic test-resources orchestration for <code>dev</code> and <code>test</code>.</p>
