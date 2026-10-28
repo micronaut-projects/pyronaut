@@ -6545,6 +6545,64 @@ custom base instead, name it: <code>--native-base=&lt;path&gt;</code> for a whee
 </div>
 </div>
 <div class="sect1">
+<h2 id="packaged-python-dependencies">Python runtime dependencies</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Pyronaut installs declared Python runtime dependencies during <code>pyronaut build</code>
+and includes the installed packages in the deployment artifact. The application
+imports them normally, and startup does not run <code>pip install</code> or <code>uv sync</code>.
+Rebuild the artifact after changing its runtime dependencies.</p>
+</div>
+<div class="paragraph">
+<p>For pip projects, Pyronaut installs <code>[project].dependencies</code> from
+<code>pyproject.toml</code> together with <code>requirements.txt</code>, when present, using the
+SDK&#8217;s matching GraalPy interpreter. For example, a project&#8217;s <code>requirements.txt</code>
+can contain:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-text hljs" data-lang="text">idna==3.10</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The packaged application can then use <code>import idna</code> without installing <code>idna</code>
+on the deployment machine separately. Referenced requirements and constraints
+files, relative local packages, and local <code>--find-links</code> wheel directories are
+included as build inputs. Editable local dependencies become ordinary installs
+so they do not refer to temporary build directories at runtime.</p>
+</div>
+<div class="paragraph">
+<p>For uv projects, Pyronaut uses the committed <code>uv.lock</code> and runs
+<code>uv sync --locked --no-dev --no-default-groups --no-install-project --no-editable</code>
+with GraalPy. Keep the lockfile up to date before building. Workspace members
+and relative <code>[tool.uv.sources]</code> paths are included. uv projects resolve their
+runtime dependencies through the lockfile and do not read <code>requirements.txt</code>.</p>
+</div>
+<div class="paragraph">
+<p>Packaging creates a fresh environment from these declarations; it does not
+copy the development <code>.venv</code>. It does not automatically include
+<code>requirements-test.txt</code>, implicit <code>pytest</code>, or development dependency groups.
+Packages explicitly declared as runtime dependencies are still included.
+Local dependency paths and included requirements files must use relative paths
+and remain within the project or uv workspace.</p>
+</div>
+<div class="paragraph">
+<p>JAR and wheel builds need the matching GraalPy interpreter on the build machine;
+run <code>pyronaut setup</code> to provision it. uv must also be available on <code>PATH</code> when
+building these artifacts from a uv project. Generated Dockerfiles provision
+GraalPy and, for uv projects, uv inside the dependency build stage.</p>
+</div>
+<div class="paragraph">
+<p>Python dependencies are resolved for the build platform. Wheels containing
+Python packages have platform-specific tags, even when the packages are pure
+Python, because dependency markers are evaluated during the build. Build wheels
+for the target operating system and architecture. JARs containing native Python
+extensions have the same platform constraint. Docker builds resolve dependencies
+for Linux inside the image build.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="_runnable_fat_jars">Runnable fat JARs</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -6565,6 +6623,14 @@ Java equivalents. The command supports Pyronaut projects, direct Java or Python
 sources, and external Maven or Gradle projects.</p>
 </div>
 <div class="paragraph">
+<p>For <code>fat-jar</code>, installed Python packages are embedded in the application&#8217;s
+GraalPy virtual filesystem inside the JAR. The bundled GraalPy runtime loads
+them when the application imports them. The deployment machine needs the
+compatible JDK, but no separate Python installation, Pyronaut SDK, virtual
+environment, or dependency installation step. An activated host virtual
+environment does not override the embedded packages.</p>
+</div>
+<div class="paragraph">
 <p>The outer JAR contains a small launcher plus an indexed <code>PYRONAUT-INF</code> layout.
 Application classes and resources precede dependencies, followed by dependency
 roots in resolved-classpath order. Duplicate classes use first-root-wins
@@ -6574,6 +6640,10 @@ bean and service markers into <code>META-INF/micronaut/</code> at the archive ro
 Micronaut&#8217;s classpath scanning finds them. The launcher preserves multi-release JAR
 selection and package manifest metadata such as sealing. It reads entries directly
 from the artifact and does not extract them to disk.</p>
+</div>
+<div class="paragraph">
+<p>GraalPy may extract native Python extensions to temporary files when loading
+them; this is separate from the JAR launcher&#8217;s handling of Java dependencies.</p>
 </div>
 <div class="paragraph">
 <p>The packager produces reproducible artifacts by using deterministic entry ordering and timestamps and omitting source
@@ -6599,6 +6669,29 @@ wheel carries the processed application and its runtime launch support; the
 deployment environment must provide a compatible GraalVM JDK.</p>
 </div>
 <div class="paragraph">
+<p>For <code>wheel-jvm</code>, the installed Python packages are embedded in the application&#8217;s
+GraalPy virtual filesystem in the wheel. Installing the wheel copies those
+packages along with the application. It does not install them as separate
+dependencies into the target Python interpreter&#8217;s environment.</p>
+</div>
+<div class="paragraph">
+<p>For a project named <code>hello-pyronaut</code> with version <code>0.1.0</code>, install the matching
+Pyronaut SDK in the target Python environment as described in
+<a href="#installation">Installing Pyronaut</a>, then install and run the application wheel:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install dist/hello_pyronaut-0.1.0-*.whl
+hello-pyronaut</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The target Python interpreter runs the console launcher, which uses the
+Pyronaut SDK to locate or provision the JDK. The application and its dependencies
+run on GraalPy in the JVM. An activated host virtual environment does not replace
+the application&#8217;s embedded packages.</p>
+</div>
+<div class="paragraph">
 <p>Use Docker when the deployment platform expects an OCI image:</p>
 </div>
 <div class="listingblock">
@@ -6610,18 +6703,39 @@ deployment environment must provide a compatible GraalVM JDK.</p>
 <p>The default Dockerfile stages the processed classes, application resources,
 resolved runtime dependencies, and the appropriate production launcher.</p>
 </div>
+<div class="paragraph">
+<p>For <code>docker-jvm</code>, a separate Linux build stage installs the Python packages in
+a GraalPy virtual environment. The final image includes that environment and
+the matching GraalPy installation, and sets <code>VIRTUAL_ENV</code> so the JVM&#8217;s embedded
+GraalPy uses the installed packages. The container requires no Python package
+installation at startup. See <a href="#docker-python-dependencies">Python dependencies in Docker images</a>
+for the shared behavior of all generated Docker formats.</p>
+</div>
 </div>
 </div>
 <div class="sect1">
 <h2 id="_application_native_images">Application native images</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Native builds create <code><em>pyronaut</em>/native/application</code> by default:</p>
+<p><code>wheel-native</code> builds produce a platform-specific wheel in <code>dist/</code> and stage
+the executable under <code><em>pyronaut</em>/native/&lt;project-name&gt;</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut build --native</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>Python runtime dependencies are installed and added to the application&#8217;s
+GraalPy virtual filesystem before native-image compilation. They remain Python
+packages loaded by the embedded GraalPy runtime. The wheel includes the
+application resources, native executable, and its required GraalPy language
+resources.</p>
+</div>
+<div class="paragraph">
+<p>Install and run the wheel with <code>pip</code> and the generated console command, as for
+a JVM wheel. A Python interpreter is needed for the wheel&#8217;s console launcher;
+the native application does not require a separate JDK or GraalPy installation.</p>
 </div>
 <div class="paragraph">
 <p>Native images offer fast startup and low memory consumption, which is useful
@@ -6645,6 +6759,37 @@ builder image:</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut build --native --docker</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>docker-native</code> installs the Python packages in a separate Linux dependency
+stage. Both the native build stage and the final runtime image use the resulting
+GraalPy environment. The final container launches the native executable directly
+and requires no JDK or Python package installation at startup.</p>
+</div>
+<div class="sect2">
+<h3 id="docker-python-dependencies">Python dependencies in Docker images</h3>
+<div class="paragraph">
+<p>Generated <code>docker-jvm</code>, <code>docker-native</code>, and <code>docker-crema</code> images all use the
+same dependency installation stage. It downloads the SDK&#8217;s matching GraalPy
+with checksum verification and installs the declared runtime packages with pip
+or locked uv sync. Its C/C++ compiler can build packages without a compatible
+GraalPy wheel. Packages requiring additional system libraries or build tools
+need a custom Dockerfile.</p>
+</div>
+<div class="paragraph">
+<p>The final image contains the GraalPy installation, virtual environment, and
+required interpreter libraries. The compiler and uv executable stay in the
+dependency build stage. uv is included in that stage for uv projects, even if
+it is unavailable on the host. The host development <code>.venv</code> is not copied.</p>
+</div>
+<div class="paragraph">
+<p>Generated images with Python dependencies need a glibc runtime. <code>--static</code>
+fails with an explanation when runtime Python dependencies are declared.
+Custom Dockerfiles remain responsible for installing Python dependencies.
+Their temporary <code>app/</code> context includes top-level <code>pyproject.toml</code>,
+<code>requirements.txt</code>, <code>uv.lock</code>, and <code>uv.toml</code> when present; automatic dependency
+installation and recursive source staging apply to generated Dockerfiles.</p>
 </div>
 </div>
 </div>
@@ -6675,8 +6820,20 @@ included in a custom base. The first invocation resolves the configured
 the bundle matching the current operating system and architecture; a Docker
 build selects the Linux bundle matching the current architecture. Pyronaut
 chooses <code>pyronaut-run</code> for Java projects and <code>pyronaut-run-python</code> for Python
-projects.
-Pyronaut resolves the bundle using <code>[native-images]</code> in
+projects.</p>
+</div>
+<div class="paragraph">
+<p>For <code>wheel-crema</code>, every application build installs its declared Python runtime
+dependencies and embeds them in the application&#8217;s GraalPy virtual filesystem
+in the wheel. The reusable base supplies GraalPy; the application wheel carries
+its Python packages. Rebuild the application wheel after changing those
+packages. Installing the wheel copies them with the application, and the native
+runtime loads them without a package installation step at startup. The target
+Python interpreter runs the wheel&#8217;s console launcher; no separate JDK or
+GraalPy installation is required to run the native application.</p>
+</div>
+<div class="paragraph">
+<p>Pyronaut resolves the bundle using <code>[native-images]</code> in
 <code>~/.pyronaut/settings.toml</code>, including its configured repository, version,
 proxy, and authentication settings. Pyronaut reuses a valid bundle already cached under
 <code>~/.pyronaut</code>; otherwise it downloads the bundle with progress reporting.</p>
@@ -6708,8 +6865,8 @@ native-base = "default"</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>When the application&#8217;s dependencies should be compiled into the runtime, build
-a custom base by giving it a path, relative to the project directory:</p>
+<p>When the application&#8217;s Java runtime dependencies should be compiled into the
+runtime, build a custom base by giving it a path, relative to the project directory:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -6732,7 +6889,7 @@ native-base = "build/pyronaut-base/pyronaut-run-python"</code></pre>
 </div>
 <div class="paragraph">
 <p>Later builds reuse the configured native base without rebuilding it. Run
-<code>pyronaut build --native-base=&lt;path&gt;</code> again after changing the dependencies
+<code>pyronaut build --native-base=&lt;path&gt;</code> again after changing the Java dependencies
 that the base should contain:</p>
 </div>
 <div class="listingblock">
@@ -6806,9 +6963,15 @@ base-image = "registry.example.com/acme/pyronaut-runtime:1"</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>The final image then adds only the application configuration, processed
-classes, and schemas on top of the shared production runtime layer. For a
-custom layering arrangement, see <a href="#custom-dockerfiles">Custom Dockerfiles with a reusable base</a>.</p>
+<p>For <code>docker-crema</code>, the application image also installs its declared Python
+runtime dependencies through the shared Linux dependency stage. The final
+image adds the GraalPy installation and virtual environment alongside the
+application configuration, processed classes, and schemas on top of the shared
+production runtime layer. <code>VIRTUAL_ENV</code> selects those packages when the Crema
+runtime starts; there is no <code>pip install</code> or <code>uv sync</code> at startup. Rebuilding
+the application image updates its Python packages without adding them to the
+reusable base image. For a custom layering arrangement, see
+<a href="#custom-dockerfiles">Custom Dockerfiles with a reusable base</a>.</p>
 </div>
 <div class="sect2">
 <h3 id="native-base-pgo">Profile-guided optimization</h3>
@@ -6892,6 +7055,12 @@ native base&#8217;s SBOM. A direct-source build with <code>--native-base=&lt;pat
 builds the custom base but does not record it, because the staged
 project is regenerated for every build; add the setting to the
 <code>--setup</code> file to reuse it.</p>
+</div>
+<div class="paragraph">
+<p>For direct-source Python builds, declare runtime Python packages in the setup
+file&#8217;s <code>[project].dependencies</code>. Use a project build when dependency resolution
+needs <code>requirements.txt</code>, <code>uv.lock</code>, or workspace-relative local sources; the
+direct-source flow stages the setup file rather than the complete project.</p>
 </div>
 </div>
 </div>
@@ -9495,6 +9664,14 @@ distributions.</p>
 <p>When <code>--static</code> is present, the generated Dockerfile adds <code>--static --libc=musl</code> and uses <code>tool.pyronaut.build.docker.static-native-builder-image</code> plus <code>tool.pyronaut.build.docker.static-native-base-image</code>.</p>
 </li>
 </ul>
+</div>
+<div class="sect3">
+<h4 id="_python_dependencies_in_deployment_artifacts">Python dependencies in deployment artifacts</h4>
+<div class="paragraph">
+<p>See <a href="#packaged-python-dependencies">Python runtime dependencies</a> for pip and uv
+build inputs, how each packaging format carries installed packages, deployment
+requirements, and platform constraints.</p>
+</div>
 </div>
 <div class="sect3">
 <h4 id="_reusable_crema_base_images">Reusable Crema base images</h4>
