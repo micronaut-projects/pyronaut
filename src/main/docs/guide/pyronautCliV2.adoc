@@ -753,6 +753,12 @@ Native Docker mode (`pyronaut build --native --docker`):
 - Uses `tool.pyronaut.build.docker.native-builder-image` and `tool.pyronaut.build.docker.native-base-image` by default.
 - When `--static` is present, the generated Dockerfile adds `--static --libc=musl` and uses `tool.pyronaut.build.docker.static-native-builder-image` plus `tool.pyronaut.build.docker.static-native-base-image`.
 
+==== Python dependencies in deployment artifacts
+
+See <<packaged-python-dependencies,Python runtime dependencies>> for pip and uv
+build inputs, how each packaging format carries installed packages, deployment
+requirements, and platform constraints.
+
 ==== Reusable Crema base images
 
 `pyronaut build --native-base=<path>` creates a production native launcher that uses

@@ -3175,17 +3175,6 @@ def _run_build(
         if record_native_base:
             _record_native_base_configuration(project_dir, "wheel-crema", ("build", "native-base"), cli_native_base)
 
-    if fat_jar:
-        return _run_fat_jar_build(
-            project_dir=project_dir,
-            project_name=project_name,
-            project_version=project_version,
-            runner=runner,
-            resolver=resolver,
-            java_home_provider=java_home_provider,
-            dist_dir=dist_dir,
-        )
-
     if docker_build:
         return _run_docker_build(
             args=args,
@@ -3206,155 +3195,171 @@ def _run_build(
             additional_native_binaries=additional_native_binaries,
         )
 
-    dist_dir.mkdir(parents=True, exist_ok=True)
-    _remove_existing_built_wheels(dist_dir, project_name)
-    python_exec = _read_env("PYRONAUT_PYTHON_EXECUTABLE") or sys.executable or "python3"
-
-    if mode == "native":
-        try:
-            env = _build_non_test_resources_env("build", java_home_provider)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return PRECONDITION_FAILED
-
-        try:
-            _build_native_classpath(project_dir)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return PRECONDITION_FAILED
-        output_dir = project_dir / "__pyronaut__" / "native"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_binary = output_dir / project_name
-        configured_base = None
-        if packaging_format == "wheel-crema" and selected_native_base is not None and not default_native_base:
-            configured_base = selected_native_base
-        if default_native_base:
-            try:
-                configured_base = _bundled_default_native_base(project_dir, platform_name=platform_name)
-            except RuntimeError as exc:
-                print(str(exc), file=sys.stderr)
-                return PRECONDITION_FAILED
-        if default_native_base and configured_base is None:
-            print("The default native base is not available for this platform.", file=sys.stderr)
-            return PRECONDITION_FAILED
-        if default_native_base:
-            delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
-            if delegate_executable is None:
-                print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
-                return PRECONDITION_FAILED
-            native_command = [
-                delegate_executable,
-                "--project-dir",
-                str(project_dir),
-                "--output",
-                str(output_binary),
-                "--native-base",
-                "--default-native-base",
-                "--default-native-base-path",
-                str(configured_base),
-            ]
-            if _extract_offline(args):
-                native_command.append("--offline")
-            if verbose:
-                native_command.append("--verbose")
-            native_command.extend(_extract_native_build_passthrough_args(args))
-            if _delegation_trace_enabled():
-                print(shlex.join(native_command), file=sys.stderr)
-            exit_code = runner(native_command, env)
-            if exit_code != SUCCESS:
-                return exit_code
-        elif configured_base is not None:
-            try:
-                _stage_native_base_executable(
-                    configured_base,
+    try:
+        with _packaged_python_dependencies(project_dir, offline=_extract_offline(args)):
+            if fat_jar:
+                return _run_fat_jar_build(
                     project_dir=project_dir,
-                    target=output_binary,
-                    offline=_extract_offline(args),
-                )
-            except RuntimeError as exc:
-                print(str(exc), file=sys.stderr)
-                return PRECONDITION_FAILED
-        else:
-            delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
-            if delegate_executable is None:
-                print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
-                return PRECONDITION_FAILED
-            native_command = [
-                delegate_executable,
-                "--project-dir",
-                str(project_dir),
-                "--output",
-                str(output_binary),
-            ]
-            if _extract_offline(args):
-                native_command.append("--offline")
-            if _is_python_runtime_project(project_dir):
-                native_command.append("--include-python")
-            native_command.extend(_native_user_package_args(project_dir))
-            if verbose:
-                native_command.append("--verbose")
-            native_command.extend(_extract_native_build_passthrough_args(args))
-            if _delegation_trace_enabled():
-                print(shlex.join(native_command), file=sys.stderr)
-            exit_code = runner(native_command, env)
-            if exit_code != SUCCESS:
-                return exit_code
-        if not output_binary.exists():
-            print(f"Native build reported success but no binary was produced at: {output_binary}", file=sys.stderr)
-            return PRECONDITION_FAILED
-        with tempfile.TemporaryDirectory(prefix="pyronaut-build-native-") as staging_root:
-            staging_dir = Path(staging_root) / "stage"
-            wheel_exit = _build_wheel(
-                runner,
-                python_exec,
-                staging_dir=staging_dir,
-                dist_dir=dist_dir,
-                project_name=project_name,
-                offline=_extract_offline(args),
-                stage=lambda: _prepare_build_wheel_staging(
-                    project_dir=project_dir,
-                    staging_dir=staging_dir,
                     project_name=project_name,
                     project_version=project_version,
-                    mode="native",
-                    main_class=main_class,
-                    runner_executable=None,
-                    native_bundle_dir=Path(configured_base).parent if default_native_base else None,
-                    native_launcher_executable=str(configured_base) if default_native_base else None,
-                ),
-            )
-        if wheel_exit == SUCCESS:
-            console = _progress_console()
-            console.success(f"Native wheel build complete. Artifacts are in: {_display_path(dist_dir)}")
-            console.hint(f"Install with: {python_exec} -m pip install {_display_path(dist_dir)}/*.whl")
-            console.hint(f"Native binary staged from: {_display_path(output_binary)}")
-        return wheel_exit
+                    runner=runner,
+                    resolver=resolver,
+                    java_home_provider=java_home_provider,
+                    dist_dir=dist_dir,
+                )
 
-    with tempfile.TemporaryDirectory(prefix="pyronaut-build-jvm-") as staging_root:
-        staging_dir = Path(staging_root) / "stage"
-        exit_code = _build_wheel(
-            runner,
-            python_exec,
-            staging_dir=staging_dir,
-            dist_dir=dist_dir,
-            project_name=project_name,
-            offline=_extract_offline(args),
-            stage=lambda: _prepare_build_wheel_staging(
-                project_dir=project_dir,
-                staging_dir=staging_dir,
-                project_name=project_name,
-                project_version=project_version,
-                mode="jvm",
-                main_class=main_class,
-                runner_executable=resolver(PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]),
-            ),
-        )
-    if exit_code == SUCCESS:
-        console = _progress_console()
-        console.success(f"Wheel build complete. Artifacts are in: {_display_path(dist_dir)}")
-        console.hint(f"Install with: {python_exec} -m pip install {_display_path(dist_dir)}/*.whl")
-        console.hint(f"Run the project with: {project_name}")
-    return exit_code
+            dist_dir.mkdir(parents=True, exist_ok=True)
+            _remove_existing_built_wheels(dist_dir, project_name)
+            python_exec = _read_env("PYRONAUT_PYTHON_EXECUTABLE") or sys.executable or "python3"
+
+            if mode == "native":
+                try:
+                    env = _build_non_test_resources_env("build", java_home_provider)
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return PRECONDITION_FAILED
+
+                try:
+                    _build_native_classpath(project_dir)
+                except RuntimeError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return PRECONDITION_FAILED
+                output_dir = project_dir / "__pyronaut__" / "native"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                output_binary = output_dir / project_name
+                configured_base = None
+                if packaging_format == "wheel-crema" and selected_native_base is not None and not default_native_base:
+                    configured_base = selected_native_base
+                if default_native_base:
+                    try:
+                        configured_base = _bundled_default_native_base(project_dir, platform_name=platform_name)
+                    except RuntimeError as exc:
+                        print(str(exc), file=sys.stderr)
+                        return PRECONDITION_FAILED
+                if default_native_base and configured_base is None:
+                    print("The default native base is not available for this platform.", file=sys.stderr)
+                    return PRECONDITION_FAILED
+                if default_native_base:
+                    delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+                    if delegate_executable is None:
+                        print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+                        return PRECONDITION_FAILED
+                    native_command = [
+                        delegate_executable,
+                        "--project-dir",
+                        str(project_dir),
+                        "--output",
+                        str(output_binary),
+                        "--native-base",
+                        "--default-native-base",
+                        "--default-native-base-path",
+                        str(configured_base),
+                    ]
+                    if _extract_offline(args):
+                        native_command.append("--offline")
+                    if verbose:
+                        native_command.append("--verbose")
+                    native_command.extend(_extract_native_build_passthrough_args(args))
+                    if _delegation_trace_enabled():
+                        print(shlex.join(native_command), file=sys.stderr)
+                    exit_code = runner(native_command, env)
+                    if exit_code != SUCCESS:
+                        return exit_code
+                elif configured_base is not None:
+                    try:
+                        _stage_native_base_executable(
+                            configured_base,
+                            project_dir=project_dir,
+                            target=output_binary,
+                            offline=_extract_offline(args),
+                        )
+                    except RuntimeError as exc:
+                        print(str(exc), file=sys.stderr)
+                        return PRECONDITION_FAILED
+                else:
+                    delegate_executable = resolver(NATIVE_BUILD_EXECUTABLE)
+                    if delegate_executable is None:
+                        print(f"Missing delegated executable: {NATIVE_BUILD_EXECUTABLE}", file=sys.stderr)
+                        return PRECONDITION_FAILED
+                    native_command = [
+                        delegate_executable,
+                        "--project-dir",
+                        str(project_dir),
+                        "--output",
+                        str(output_binary),
+                    ]
+                    if _extract_offline(args):
+                        native_command.append("--offline")
+                    if _is_python_runtime_project(project_dir):
+                        native_command.append("--include-python")
+                    native_command.extend(_native_user_package_args(project_dir))
+                    if verbose:
+                        native_command.append("--verbose")
+                    native_command.extend(_extract_native_build_passthrough_args(args))
+                    if _delegation_trace_enabled():
+                        print(shlex.join(native_command), file=sys.stderr)
+                    exit_code = runner(native_command, env)
+                    if exit_code != SUCCESS:
+                        return exit_code
+                if not output_binary.exists():
+                    print(f"Native build reported success but no binary was produced at: {output_binary}", file=sys.stderr)
+                    return PRECONDITION_FAILED
+                with tempfile.TemporaryDirectory(prefix="pyronaut-build-native-") as staging_root:
+                    staging_dir = Path(staging_root) / "stage"
+                    wheel_exit = _build_wheel(
+                        runner,
+                        python_exec,
+                        staging_dir=staging_dir,
+                        dist_dir=dist_dir,
+                        project_name=project_name,
+                        offline=_extract_offline(args),
+                        stage=lambda: _prepare_build_wheel_staging(
+                            project_dir=project_dir,
+                            staging_dir=staging_dir,
+                            project_name=project_name,
+                            project_version=project_version,
+                            mode="native",
+                            main_class=main_class,
+                            runner_executable=None,
+                            native_bundle_dir=Path(configured_base).parent if default_native_base else None,
+                            native_launcher_executable=str(configured_base) if default_native_base else None,
+                        ),
+                    )
+                if wheel_exit == SUCCESS:
+                    console = _progress_console()
+                    console.success(f"Native wheel build complete. Artifacts are in: {_display_path(dist_dir)}")
+                    console.hint(f"Install with: {python_exec} -m pip install {_display_path(dist_dir)}/*.whl")
+                    console.hint(f"Native binary staged from: {_display_path(output_binary)}")
+                return wheel_exit
+
+            with tempfile.TemporaryDirectory(prefix="pyronaut-build-jvm-") as staging_root:
+                staging_dir = Path(staging_root) / "stage"
+                exit_code = _build_wheel(
+                    runner,
+                    python_exec,
+                    staging_dir=staging_dir,
+                    dist_dir=dist_dir,
+                    project_name=project_name,
+                    offline=_extract_offline(args),
+                    stage=lambda: _prepare_build_wheel_staging(
+                        project_dir=project_dir,
+                        staging_dir=staging_dir,
+                        project_name=project_name,
+                        project_version=project_version,
+                        mode="jvm",
+                        main_class=main_class,
+                        runner_executable=resolver(PYTHON_RUN_EXECUTABLE if _is_python_runtime_project(project_dir) else COMMAND_TO_EXECUTABLE["run"]),
+                    ),
+                )
+            if exit_code == SUCCESS:
+                console = _progress_console()
+                console.success(f"Wheel build complete. Artifacts are in: {_display_path(dist_dir)}")
+                console.hint(f"Install with: {python_exec} -m pip install {_display_path(dist_dir)}/*.whl")
+                console.hint(f"Run the project with: {project_name}")
+            return exit_code
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
 
 
 def _build_wheel(
@@ -3583,7 +3588,9 @@ def _prepare_build_wheel_staging(
         launcher_package=launcher_package,
         project_name=project_name,
         project_version=project_version,
-        native=(mode == "native"),
+        native=(mode == "native" or (
+            project_dir / "__pyronaut__/classes/META-INF/GRAALPY-VFS/micronaut-application/venv/pyronaut-packaged.txt"
+        ).is_file()),
     )
     _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
     for resource_dir in layout.additional_resources_dirs:
@@ -3662,6 +3669,10 @@ build-backend = "setuptools.build_meta"
                 "    def finalize_options(self):",
                 "        super().finalize_options()",
                 "        self.root_is_pure = False",
+                "",
+                "    def get_tag(self):",
+                "        _, _, platform = super().get_tag()",
+                "        return 'py3', 'none', platform",
                 "",
             ]
         )
@@ -4222,9 +4233,234 @@ def _prepare_common_docker_app_context(project_dir: Path, context_dir: Path) -> 
     _copy_layout_dir_if_exists(project_dir, layout.resources_dir, app_dir)
     for resource_dir in layout.additional_resources_dirs:
         _copy_layout_dir_if_exists(project_dir, resource_dir, app_dir)
-    if (project_dir / "pyproject.toml").exists():
-        shutil.copy2(project_dir / "pyproject.toml", app_dir / "pyproject.toml")
+    for name in ("pyproject.toml", "requirements.txt", "uv.lock", "uv.toml"):
+        if (project_dir / name).is_file():
+            shutil.copy2(project_dir / name, app_dir / name)
     return app_dir
+
+
+def _stage_python_package_inputs(project_dir: Path, target: Path, *, uv: bool) -> Path:
+    """Stage dependency inputs, keeping workspace-relative paths inside the context."""
+    project_dir = project_dir.resolve()
+    lock = _uv_lock_file(project_dir) if uv else None
+    if uv and lock is None:
+        raise RuntimeError("Packaging uv projects requires uv.lock. Run uv lock first.")
+    root = lock.parent if lock is not None else project_dir
+    copied: set[Path] = set()
+    scanned_requirements: set[Path] = set()
+    staged_requirements: dict[Path, str] = {}
+
+    def ignored(directory: str, names: list[str]) -> set[str]:
+        excluded = shutil.ignore_patterns(".git", ".venv", ".env", ".env.*", "__pycache__", "__pyronaut__", "build", "dist")(directory, names)
+        for name in set(names) - excluded:
+            source = Path(directory) / name
+            if source.is_symlink() and not source.resolve().is_relative_to(root):
+                raise RuntimeError(f"Python dependency is outside the project/workspace: {source}")
+        return excluded
+
+    def copy(source: Path) -> None:
+        source = Path(os.path.abspath(source))
+        if not source.resolve().is_relative_to(root):
+            raise RuntimeError(f"Python dependency is outside the project/workspace: {source}")
+        if source in copied:
+            return
+        copied.add(source)
+        destination = target / source.relative_to(root)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, destination, dirs_exist_ok=True, ignore=ignored)
+        else:
+            shutil.copy2(source, destination)
+
+    def requirements_file(source: Path) -> None:
+        copy(source)
+        if source.resolve() in scanned_requirements:
+            return
+        scanned_requirements.add(source.resolve())
+        text = source.read_text(encoding="utf-8").replace("\\\n", "")
+        # Editable installs would point at the build stage's source tree at runtime.
+        staged_requirements[target / Path(os.path.abspath(source)).relative_to(root)] = re.sub(
+            r"(?m)^([ \t]*)(?:-e\s*|--editable[=\s]+)", r"\1", text)
+        for line in text.splitlines():
+            line = re.sub(r"(^|\s+)#.*$", "", line).strip()
+            if not line:
+                continue
+            match = re.match(r"^(?:-r\s*|-c\s*|--requirement[=\s]+|--constraint[=\s]+)(.+)", line.strip())
+            if match:
+                reference = shlex.split(match.group(1))[0]
+                if urllib.parse.urlparse(reference).scheme in {"http", "https"}:
+                    continue
+                if Path(reference).is_absolute():
+                    raise RuntimeError("Packaged requirements and constraints must use project/workspace-relative paths.")
+                requirements_file(source.parent / reference)
+            else:
+                links = re.match(r"^(?:-f\s*|--find-links[=\s]+)(.+)", line)
+                local_requirement(links.group(1) if links else line, project_dir)
+
+    def local_requirement(requirement: str, directory: Path) -> None:
+        value = requirement.split(";", 1)[0].strip()
+        value = re.sub(r"^(?:-e\s*|--editable[=\s]+)", "", value)
+        if " @ " in value:
+            value = value.split(" @ ", 1)[1]
+        if value.startswith("file:"):
+            value = urllib.parse.unquote(urllib.parse.urlparse(value).path)
+        if "://" not in value:
+            value = shlex.split(value)[0] if value else ""
+            path = directory / value.split("[", 1)[0].strip("\"'")
+            if path.exists():
+                if Path(value).is_absolute():
+                    raise RuntimeError("Packaged Python dependencies must use project/workspace-relative paths.")
+                copy(path)
+
+    for directory in dict.fromkeys((root, project_dir)):
+        for name in ("pyproject.toml", "uv.toml", "uv.lock"):
+            if (directory / name).is_file():
+                copy(directory / name)
+    if uv:
+        directories = list(dict.fromkeys((root, project_dir)))
+        data = _read_pyproject_data(root) or {}
+        workspace = data.get("tool", {}).get("uv", {}).get("workspace", {})
+        for pattern in workspace.get("members", []):
+            for member in root.glob(pattern):
+                if ((member / "pyproject.toml").is_file()
+                        and not any(member.relative_to(root).match(exclude) for exclude in workspace.get("exclude", []))):
+                    copy(member)
+                    if member not in directories:
+                        directories.append(member)
+        for directory in directories:
+            data = _read_pyproject_data(directory) or {}
+            for source in data.get("tool", {}).get("uv", {}).get("sources", {}).values():
+                for entry in source if isinstance(source, list) else [source]:
+                    if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                        if Path(entry["path"]).is_absolute():
+                            raise RuntimeError("Packaged uv sources must use project/workspace-relative paths.")
+                        dependency = (directory / entry["path"]).resolve()
+                        copy(dependency)
+                        if dependency.is_dir() and dependency not in directories:
+                            directories.append(dependency)
+    else:
+        if (project_dir / "requirements.txt").is_file():
+            requirements_file(project_dir / "requirements.txt")
+        data = _read_pyproject_data(project_dir) or {}
+        for requirement in data.get("project", {}).get("dependencies", []):
+            local_requirement(requirement, project_dir)
+    # Copying a local project (for example `-e .`) can also copy its requirements again.
+    for path, text in staged_requirements.items():
+        path.write_text(text, encoding="utf-8")
+    return project_dir.relative_to(root)
+
+
+@contextlib.contextmanager
+def _packaged_python_dependencies(project_dir: Path, *, offline: bool) -> Iterator[None]:
+    """Keep vendoring local to the build, preserving the development classpath."""
+    data = _read_pyproject_data(project_dir) or {}
+    if not data.get("project", {}).get("dependencies") and not (project_dir / "requirements.txt").is_file():
+        yield
+        return
+    vfs = _pyronaut_output_dir(project_dir) / "classes/META-INF/GRAALPY-VFS/micronaut-application"
+    venv = vfs / "venv"
+    index = vfs / "fileslist.txt"
+    previous_index = index.read_bytes() if index.is_file() else None
+    with tempfile.TemporaryDirectory(prefix="pyronaut-python-vfs-") as temporary:
+        backup = Path(temporary) / "venv"
+        if venv.exists():
+            shutil.move(str(venv), backup)
+        try:
+            _prepare_packaged_python_dependencies(project_dir, offline=offline)
+            yield
+        finally:
+            if venv.exists():
+                shutil.rmtree(venv)
+            if backup.exists():
+                shutil.move(str(backup), venv)
+            if previous_index is not None:
+                index.write_bytes(previous_index)
+            else:
+                index.unlink(missing_ok=True)
+
+
+def _prepare_packaged_python_dependencies(project_dir: Path, *, offline: bool) -> None:
+    """Make runtime packages available to FAT JARs and both wheel launchers."""
+    from . import python_packages
+
+    classes = _pyronaut_output_dir(project_dir) / "classes"
+    python_packages.remove_packaged_environment(classes)
+    data = _read_pyproject_data(project_dir) or {}
+    requirements = data.get("project", {}).get("dependencies", [])
+    if not isinstance(requirements, list) or any(not isinstance(value, str) or not value.strip() for value in requirements):
+        raise ValueError("Invalid project.dependencies: expected an array of requirement strings")
+    if not requirements and not (project_dir / "requirements.txt").is_file():
+        return
+    python = _graalpy_for_project_environment()
+    if python is None:
+        raise RuntimeError("Packaging Python dependencies requires the matching GraalPy interpreter. Run pyronaut setup.")
+    uv = _is_uv_project(project_dir)
+    if uv and _find_uv() is None:
+        raise RuntimeError("Packaging a uv project requires uv on PATH so its lockfile and sources are preserved.")
+    with tempfile.TemporaryDirectory(prefix="pyronaut-python-packages-") as temporary:
+        root = Path(temporary)
+        relative = _stage_python_package_inputs(project_dir, root / "project", uv=uv)
+        python_packages.install(root / "project" / relative, requirements, uv=uv, python=python,
+                                venv=root / "venv", offline=offline)
+        python_packages.package(root / "venv", classes)
+
+
+def _add_docker_python_dependencies(project_dir: Path, context_dir: Path, dockerfile: Path, *, static_native: bool) -> None:
+    """Install Python packages for Linux before copying them into generated images."""
+    data = _read_pyproject_data(project_dir) or {}
+    requirements = data.get("project", {}).get("dependencies", [])
+    if not isinstance(requirements, list) or any(not isinstance(value, str) or not value.strip() for value in requirements):
+        raise ValueError("Invalid project.dependencies: expected an array of requirement strings")
+    uv = _is_uv_project(project_dir)
+    if not requirements and not (project_dir / "requirements.txt").is_file():
+        return
+    if static_native:
+        raise RuntimeError("Python dependencies require a glibc runtime image; omit --static or use a custom Dockerfile.")
+    spec = _required_graalpy()
+    if spec is None:
+        raise RuntimeError("Cannot determine the Docker GraalPy version. Build and install the Pyronaut SDK wheel first.")
+    inputs = context_dir / "python-dependencies"
+    relative_project = _stage_python_package_inputs(project_dir, inputs / "project", uv=uv)
+    package = inputs / "builder" / "pyronaut_cli_v2"
+    package.mkdir(parents=True)
+    # Reuse the SDK's verified GraalPy download instead of provisioning a different interpreter.
+    for source in Path(__file__).parent.glob("*.py"):
+        shutil.copy2(source, package / source.name)
+    (package / "version.properties").write_text(
+        f"graalpy={spec.version or ''}\ngraalpy.pyenv={spec.name}\ngraalpy.release-tag={spec.release_tag}\n", encoding="utf-8"
+    )
+    (inputs / "builder" / "dependencies.json").write_text(json.dumps({
+        "project": relative_project.as_posix(), "requirements": requirements, "uv": uv,
+    }), encoding="utf-8")
+    uv_copy = "COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv\n" if uv else ""
+    # The build stage needs a C/C++ toolchain for packages without GraalPy wheels.
+    stage = (
+        "FROM python:3.13-bookworm AS pyronaut-python-dependencies\n"
+        "ENV PYRONAUT_HOME=/opt/pyronaut/python\n"
+        "COPY python-dependencies/builder/pyronaut_cli_v2/ /python-builder/pyronaut_cli_v2/\n"
+        "RUN PYTHONPATH=/python-builder python3 -m pyronaut_cli_v2.python_packages provision\n"
+        "COPY python-dependencies/builder/dependencies.json /python-builder/dependencies.json\n"
+        "COPY python-dependencies/project/ /python-project/\n"
+        + uv_copy
+        + "RUN PYTHONPATH=/python-builder python3 -m pyronaut_cli_v2.python_packages\n\n"
+    )
+    runtime = (
+        "COPY --from=pyronaut-python-dependencies /opt/pyronaut/python/ /opt/pyronaut/python/\n"
+        "ENV VIRTUAL_ENV=/opt/pyronaut/python/venv\n"
+        "ENV PATH=\"/opt/pyronaut/python/venv/bin:$PATH\"\n"
+        "ENV LD_LIBRARY_PATH=\"/opt/pyronaut/python/lib${LD_LIBRARY_PATH:+:}${LD_LIBRARY_PATH:-}\"\n"
+    )
+    content = dockerfile.read_text(encoding="utf-8")
+    content = content.replace("EXPOSE 8080\n", "EXPOSE 8080\n" + runtime)
+    content = content.replace("WORKDIR /workspace\n", "WORKDIR /workspace\n" + runtime)
+    dockerfile.write_text(stage + content, encoding="utf-8")
+
+
+def _copy_docker_classes(source: Path, target: Path) -> None:
+    from . import python_packages
+
+    _copytree_if_exists(source, target)
+    python_packages.remove_packaged_environment(target)
 
 
 def _prepare_jvm_docker_context(
@@ -4241,7 +4477,7 @@ def _prepare_jvm_docker_context(
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing classpath manifest: {runtime_manifest}. Run pyronaut install first.")
-    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copy_docker_classes(classes_dir, pyronaut_dir / "classes")
     _stage_manifest_artifacts(
         source=runtime_manifest,
         target=pyronaut_dir / "resolved-runtime-dependencies",
@@ -4271,7 +4507,7 @@ def _prepare_native_docker_context(
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
-    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copy_docker_classes(classes_dir, pyronaut_dir / "classes")
     _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _stage_native_build_configuration(project_dir, app_dir)
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
@@ -4303,7 +4539,7 @@ def _prepare_bundled_docker_context(
     runtime_manifest = project_dir / "__pyronaut__" / "resolved-runtime-dependencies"
     if not runtime_manifest.exists():
         raise RuntimeError(f"Missing runtime classpath manifest: {runtime_manifest}. Run pyronaut install first.")
-    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copy_docker_classes(classes_dir, pyronaut_dir / "classes")
     _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
     (pyronaut_dir / "schemas").mkdir(parents=True, exist_ok=True)
@@ -4410,7 +4646,7 @@ def _prepare_crema_native_docker_context(
     classes_dir = project_dir / "__pyronaut__" / "classes"
     if not classes_dir.is_dir():
         raise RuntimeError(f"Missing processed classes directory: {classes_dir}. Run pyronaut process first.")
-    _copytree_if_exists(classes_dir, pyronaut_dir / "classes")
+    _copy_docker_classes(classes_dir, pyronaut_dir / "classes")
     _exclude_native_configuration_resources(pyronaut_dir / "classes")
     _stage_native_build_configuration(project_dir, app_dir)
     _copytree_if_exists(project_dir / "__pyronaut__" / "schemas", pyronaut_dir / "schemas")
@@ -4583,7 +4819,7 @@ def _write_crema_base_dockerfile(
     build_command.extend(passthrough_args)
     if static_native:
         build_command.extend(["--static", "--libc=musl"])
-    dockerfile = f"""\\
+    dockerfile = f"""\
 FROM {builder_image} AS builder
 WORKDIR /workspace
 COPY app/ /workspace/app/
@@ -4636,7 +4872,7 @@ ENTRYPOINT [\"/opt/pyronaut/bin/{runner_name}\", \"--project-dir\", \"/app\"]
 def _write_crema_application_dockerfile(
     *, target: Path, base_image: str, runner_name: str, resource_copies: Sequence[str]
 ) -> None:
-    dockerfile = f"""\\
+    dockerfile = f"""\
 FROM {base_image}
 WORKDIR /app
 EXPOSE 8080
@@ -4707,6 +4943,7 @@ def _run_docker_build(
 
     with tempfile.TemporaryDirectory(prefix=f"pyronaut-build-{mode}-docker-") as context_root:
         context_dir = Path(context_root)
+        custom = None
         build_args = {
             "PYRONAUT_PROJECT_NAME": project_name,
             "PYRONAUT_PROJECT_VERSION": project_version,
@@ -4907,6 +5144,13 @@ def _run_docker_build(
                     runner_name=runner_name,
                     runtime_copies=_manifest_docker_copy_lines(context_dir),
                 )
+
+        if custom is None:
+            try:
+                _add_docker_python_dependencies(project_dir, context_dir, dockerfile, static_native=static_native)
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(str(exc), file=sys.stderr)
+                return PRECONDITION_FAILED
 
         command = _build_docker_command(
             dockerfile=dockerfile,
