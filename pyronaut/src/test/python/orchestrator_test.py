@@ -5753,7 +5753,9 @@ additional-test-resources = ["test-fixtures"]
         self.assertEqual(cli.USAGE_ERROR, exit_code)
         self.assertIn("--static is only supported with pyronaut build --native --docker", stderr.getvalue())
 
-    def test_build_docker_jvm_runs_preflight_then_docker_build(self):
+    @patch.object(cli, "_required_graalpy", return_value=cli._GraalPySpec("graalpy3.13-25.4.4", "25.4.4.1.1", "graal-25.4.4"))
+    @patch.object(cli, "_ensure_project_virtualenv", return_value=cli.SUCCESS)
+    def test_build_docker_jvm_runs_preflight_then_docker_build(self, _venv, _graalpy):
         executed = []
         captured: dict[str, object] = {}
 
@@ -5791,6 +5793,8 @@ additional-test-resources = ["test-fixtures"]
                 encoding="utf-8",
             )
             run_executable = self._write_fake_install_dist(root_dir, "pyronaut-run")
+
+            (project_dir / "requirements.txt").write_text("idna==3.10\n", encoding="utf-8")
 
             def resolver(command_name):
                 if command_name == "pyronaut-run":
@@ -5830,6 +5834,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("app/__pyronaut__/tools/pyronaut-run/bin/pyronaut-run", captured["context_files"])
         self.assertIn("app/config/application.toml", captured["context_files"])
         self.assertIn("app/pyproject.toml", captured["context_files"])
+        self.assertIn("python-dependencies/project/requirements.txt", captured["context_files"])
+        self.assertIn("AS pyronaut-python-dependencies", captured["dockerfile"])
         self.assertIn("Docker image build complete: demo-app:1.2.3", stderr.getvalue())
 
     def test_build_docker_native_uses_container_build_and_static_args(self):
@@ -6000,7 +6006,8 @@ additional-test-resources = ["test-fixtures"]
         self.assertIn("COPY --from=builder /workspace/base/ /opt/pyronaut/bin/", dockerfiles[0])
         self.assertIn("COPY app/__pyronaut__/classes /app/__pyronaut__/classes", dockerfiles[0])
 
-    def test_build_docker_uses_custom_dockerfiles_from_pyproject(self):
+    @patch.object(cli, "_ensure_project_virtualenv", return_value=cli.SUCCESS)
+    def test_build_docker_uses_custom_dockerfiles_from_pyproject(self, _venv):
         executed = []
         captured: dict[str, object] = {}
 
@@ -6025,6 +6032,7 @@ additional-test-resources = ["test-fixtures"]
                 encoding="utf-8",
             )
             (project_dir / "docker").mkdir(parents=True, exist_ok=True)
+            (project_dir / "requirements.txt").write_text("idna==3.10\n", encoding="utf-8")
             (project_dir / "docker" / "Dockerfile.jvm").write_text(
                 "FROM ${PYRONAUT_JVM_BASE_IMAGE}\nARG PYRONAUT_PROJECT_NAME\n",
                 encoding="utf-8",

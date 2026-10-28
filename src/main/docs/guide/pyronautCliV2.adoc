@@ -753,6 +753,38 @@ Native Docker mode (`pyronaut build --native --docker`):
 - Uses `tool.pyronaut.build.docker.native-builder-image` and `tool.pyronaut.build.docker.native-base-image` by default.
 - When `--static` is present, the generated Dockerfile adds `--static --libc=musl` and uses `tool.pyronaut.build.docker.static-native-builder-image` plus `tool.pyronaut.build.docker.static-native-base-image`.
 
+==== Python dependencies in deployment artifacts
+
+Generated JVM, native, and Crema Dockerfiles install Python runtime dependencies in a separate Linux build stage.
+The stage provisions the SDK's matching GraalPy with checksum verification, creates a GraalPy virtual environment,
+and installs `[project].dependencies` and `requirements.txt` with GraalPy's `pip`.
+Referenced requirements and constraints files and relative local package sources are included in the build context.
+Local `--find-links` wheel directories are included too. The build stage supplies a C/C++ compiler for source distributions;
+packages needing other system libraries or build tools require a custom Dockerfile.
+The final image contains the GraalPy installation and virtual environment and sets `VIRTUAL_ENV` so the embedded
+runtime can import the installed packages. The host `.venv` is not copied.
+
+For uv projects, the stage includes uv and runs `uv sync --locked --no-dev --no-default-groups --no-install-project --no-editable`
+with the matching GraalPy interpreter, regardless of whether uv is installed on the host.
+Commit an up-to-date `uv.lock` before building. Workspace members and relative `[tool.uv.sources]` paths within
+the project or workspace are included. uv projects use their lockfile instead of `requirements.txt`.
+Neither installer adds `requirements-test.txt`, implicit `pytest`, or development dependency groups to the image.
+
+Generated images with Python dependencies require a glibc runtime; `--static` fails with an explanation.
+Absolute local dependency paths and paths outside the project or workspace require a custom Dockerfile.
+Custom Dockerfiles are used unchanged and remain responsible for installing Python dependencies;
+the temporary `app/` context includes `requirements.txt`, `uv.lock`, and `uv.toml` when present.
+
+FAT JARs and application wheels also install runtime dependencies with the matching GraalPy interpreter,
+using pip or a locked uv sync, and embed the installed packages in the application's GraalPy virtual filesystem.
+The target machine does not need the build machine's `.venv`, and an activated environment does not override
+the embedded packages. Packaging does not include test-only requirements or dependency groups.
+Wheels containing Python packages are tagged for the build platform because dependency markers and native
+extensions are resolved there; build for the target operating system and architecture.
+uv must be installed on the build machine for JAR and wheel builds of uv projects.
+Local dependencies and included requirements files must stay within the project or uv workspace and use relative paths
+for all artifact formats. Build JARs with native Python extensions on the target operating system and architecture too.
+
 ==== Reusable Crema base images
 
 `pyronaut build --native-base=<path>` creates a production native launcher that uses
