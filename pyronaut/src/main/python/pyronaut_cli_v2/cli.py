@@ -9077,6 +9077,10 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                 return False
             for line in descriptor.read_text(encoding="utf-8").splitlines():
                 fields = line.split("\t")
+                repository_filename = fields[-1]
+                if len(fields) == 7 and fields[3].endswith("-SNAPSHOT"):
+                    classifier_suffix = f"-{fields[5]}" if fields[5] else ""
+                    repository_filename = f"{fields[2]}-{fields[3]}{classifier_suffix}.{fields[4]}"
                 if len(fields) == 2 and fields[0] == "bundled":
                     artifact = cache_root / "tools" / "shared" / "lib" / fields[1]
                     expected_source = packaged_tools / "shared" / "lib" / fields[1]
@@ -9093,7 +9097,7 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                             / Path(*fields[1].split("."))
                             / fields[2]
                             / fields[3]
-                            / fields[6]
+                            / repository_filename
                         )
                 elif len(fields) == 7 and fields[0] == "control-panel":
                     artifact = cache_root / "tools" / "pyronaut-dev" / "lib" / "control-panel" / fields[6]
@@ -9105,7 +9109,7 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                         / Path(*fields[1].split("."))
                         / fields[2]
                         / fields[3]
-                        / fields[6]
+                        / repository_filename
                     )
                 else:
                     return False

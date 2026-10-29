@@ -307,11 +307,16 @@ final class ToolClasspathInstaller {
         if (!entry.maven()) {
             return packagedTools.resolve(SHARED_LIB).resolve(entry.fileName()).toAbsolutePath().normalize();
         }
+        String repositoryFileName = entry.fileName();
+        if (entry.version().endsWith("-SNAPSHOT")) {
+            String classifierSuffix = entry.classifier().isEmpty() ? "" : "-" + entry.classifier();
+            repositoryFileName = entry.artifactId() + "-" + entry.version() + classifierSuffix + "." + entry.extension();
+        }
         return localRepository.toAbsolutePath().normalize()
             .resolve(entry.group().replace('.', '/'))
             .resolve(entry.artifactId())
             .resolve(entry.version())
-            .resolve(entry.fileName());
+            .resolve(repositoryFileName);
     }
 
     private static boolean validArtifactLink(Path artifact, Path expectedSource) {

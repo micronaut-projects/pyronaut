@@ -174,12 +174,19 @@ final class ToolClasspathInstallerTest {
     }
 
     @Test
-    void reportsResolutionProgress(@TempDir Path tempDir) throws Exception {
+    void reportsResolutionProgressAndReusesSnapshotLayoutOffline(@TempDir Path tempDir) throws Exception {
         Path packagedTools = packagedTools(tempDir);
         Path localRepository = tempDir.resolve("repository");
-        writeArtifact(localRepository, "com.example", "external", "1.0", new byte[]{1, 2, 3});
+        byte[] external = {1, 2, 3};
+        byte[] classified = {4, 5, 6};
+        byte[] controlPanel = {7, 8, 9};
+        writeArtifact(localRepository, "com.example", "external", "1.0-SNAPSHOT", external);
+        writeArtifact(localRepository, "com.example", "classified", "1.0-SNAPSHOT", "tests", classified);
+        writeArtifact(localRepository, "com.example", "control-panel", "1.0-SNAPSHOT", controlPanel);
         writeTool(packagedTools, "pyronaut-run", List.of(
-            "maven\tcom.example\texternal\t1.0\tjar\t\texternal-1.0.jar"
+            "maven\tcom.example\texternal\t1.0-SNAPSHOT\tjar\t\texternal-1.0-20261029.120000-1.jar",
+            "maven\tcom.example\tclassified\t1.0-SNAPSHOT\tjar\ttests\tclassified-1.0-20261029.120000-1-tests.jar",
+            "control-panel\tcom.example\tcontrol-panel\t1.0-SNAPSHOT\tjar\t\tcontrol-panel-1.0-20261029.120000-1.jar"
         ));
         List<String> events = new ArrayList<>();
         DependencyProgressListener listener = new DependencyProgressListener() {
@@ -197,12 +204,21 @@ final class ToolClasspathInstallerTest {
             tempDir.resolve("cache")
         );
 
-        installer.install(null, localRepository, true, false, listener);
+        Path current = installer.install(null, localRepository, true, false, listener);
 
         assertTrue(events.contains("reset"));
         assertTrue(events.contains("begin"));
-        assertTrue(events.stream().anyMatch(event -> event.startsWith("planned:com.example:external:jar:1.0")));
-        assertTrue(events.stream().anyMatch(event -> event.startsWith("completed:com.example:external:jar:1.0")));
+        assertTrue(events.stream().anyMatch(event -> event.startsWith("planned:com.example:external:jar:1.0-SNAPSHOT")));
+        assertTrue(events.stream().anyMatch(event -> event.startsWith("completed:com.example:external:jar:1.0-SNAPSHOT")));
+        assertArrayEquals(external, Files.readAllBytes(current.resolve("tools/shared/lib/external-1.0-20261029.120000-1.jar")));
+        assertArrayEquals(classified,
+            Files.readAllBytes(current.resolve("tools/shared/lib/classified-1.0-20261029.120000-1-tests.jar")));
+        assertArrayEquals(controlPanel,
+            Files.readAllBytes(current.resolve("tools/pyronaut-dev/lib/control-panel/control-panel-1.0-20261029.120000-1.jar")));
+
+        events.clear();
+        assertEquals(current, installer.install(null, localRepository, true, false, listener));
+        assertTrue(events.isEmpty(), "A complete snapshot layout must not resolve its artifacts again");
     }
 
     @Test

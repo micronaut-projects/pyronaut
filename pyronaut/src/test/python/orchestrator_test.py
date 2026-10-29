@@ -10133,10 +10133,6 @@ java-version = 25
             tools = package / "tools"
             tool_descriptor = tools / "pyronaut-run" / "bin" / "pyronaut-tool-classpath.tsv"
             tool_descriptor.parent.mkdir(parents=True)
-            tool_descriptor.write_text(
-                "maven\tio.micronaut.pyronaut\tmicronaut-pyronaut-run\t1.2.3\tjar\t\tmicronaut-pyronaut-run-1.2.3.jar\n",
-                encoding="utf-8",
-            )
             (tools / "tool-runtime.properties").write_text(
                 "sdk.version=1.2.3\ndescriptor.sha256=tool-hash\n", encoding="utf-8"
             )
@@ -10145,6 +10141,31 @@ java-version = 25
             tool_executable.parent.mkdir(parents=True)
             tool_executable.write_text("#!/bin/sh\n", encoding="utf-8")
             tool_executable.chmod(0o755)
+            local_repository = home / ".m2" / "repository"
+            descriptor_entries = []
+            for kind, artifact_id, classifier in (
+                ("maven", "runtime", ""),
+                ("maven", "compiler", "tests"),
+                ("control-panel", "panel", ""),
+            ):
+                suffix = f"-{classifier}" if classifier else ""
+                filename = f"{artifact_id}-1.2-20261029.120000-1{suffix}.jar"
+                descriptor_entries.append(
+                    f"{kind}\tcom.example\t{artifact_id}\t1.2-SNAPSHOT\tjar\t{classifier}\t{filename}"
+                )
+                source = local_repository / "com" / "example" / artifact_id / "1.2-SNAPSHOT" / f"{artifact_id}-1.2-SNAPSHOT{suffix}.jar"
+                source.parent.mkdir(parents=True)
+                source.write_bytes(artifact_id.encode())
+                destination = tool_root / "tools" / (
+                    "pyronaut-dev/lib/control-panel" if kind == "control-panel" else "shared/lib"
+                ) / filename
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.symlink_to(source)
+            tool_descriptor.write_text("\n".join(descriptor_entries) + "\n", encoding="utf-8")
+            (tool_root / "tool-runtime.properties").write_text(
+                f"sdk.version=1.2.3\ndescriptor.sha256=tool-hash\nlocal.repository={local_repository}\n",
+                encoding="utf-8",
+            )
 
             installer = root / "pyronaut-install"
             installer.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -10232,7 +10253,6 @@ java-version = 25
                 patch.object(cli, "_bundled_executable", return_value=installer),
                 patch.object(cli, "_seed_bundled_pyronaut_maven_repository") as seed_repository,
                 patch.object(cli, "_resolved_tool_cache_root", return_value=tool_root),
-                patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
                 patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
                 patch("pathlib.Path.home", return_value=home),
                 redirect_stderr(stderr),
@@ -10277,15 +10297,17 @@ java-version = 25
                 )
                 self.assertNotIn("executable", state["images"][image_name])
 
-            def validate_manifest():
+            def validate_manifest(*, reuse_offline=False):
                 with (
                     patch.object(cli, "__file__", str(package / "cli.py")),
                     patch.object(cli, "_setup_manifest_path", return_value=manifest_path),
                     patch.object(cli, "_setup_expectation", return_value=expectation),
-                    patch.object(cli, "_resolved_tools_cache_complete", return_value=True),
                     patch.object(cli, "_read_graalvm_metadata", return_value=metadata),
+                    patch.object(cli, "_ensure_graalvm_java_home", side_effect=AssertionError("setup cache hit provisioned a JDK")),
                     patch("pathlib.Path.home", return_value=home),
                 ):
+                    if reuse_offline:
+                        return cli._run_setup(["--offline"], Mock(side_effect=AssertionError("setup cache hit invoked installer")))
                     return cli._read_valid_setup_manifest([])
 
             graalpy.executable.parent.mkdir(parents=True)
@@ -10293,6 +10315,7 @@ java-version = 25
             graalpy.executable.chmod(0o755)
             # The state is valid although no native launcher was downloaded.
             self.assertEqual(state, validate_manifest())
+            self.assertEqual(cli.SUCCESS, validate_manifest(reuse_offline=True))
 
             # A wheel whose descriptor changed invalidates the recorded classpath.
             descriptor = tools / "pyronaut-run" / "bin" / "native-compile-classpath.txt"
