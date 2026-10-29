@@ -5768,12 +5768,24 @@ Pyronaut uses Maven Central when you declare no repository; once you declare a r
 </div>
 
 
+<div id="preamble">
+<div class="sectionbody">
 <div class="paragraph">
-<p>Pyronaut resolves Java dependencies through Apache Maven Resolver.</p>
+<p>Pyronaut resolves Java dependencies through Apache Maven Resolver. This includes
+project installation, direct-source execution, and the SDK dependencies resolved
+by <code>pyronaut setup</code>.</p>
 </div>
 <div class="paragraph">
-<p>Direct-source applications can instead use <code>MavenRepository</code>; see <a href="#directSourceDeclarations">Declaring Direct Source Dependencies</a>.
-Configure remote and local repositories in <code>[tool.pyronaut]</code>:</p>
+<p>Direct-source applications can declare <code>MavenRepository</code>; see
+<a href="#directSourceDeclarations">Declaring Direct Source Dependencies</a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_project_repositories">Project repositories</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Configure repositories for a project in <code>[tool.pyronaut]</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -5787,7 +5799,7 @@ repositories = [
 </div>
 </div>
 <div class="paragraph">
-<p>Supported entries:</p>
+<p>Supported entries are:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -5798,7 +5810,7 @@ repositories = [
 <p><code>mavenLocal</code>: the effective Maven local repository</p>
 </li>
 <li>
-<p><code><a href="https://&#8230;&#8203" class="bare">https://&#8230;&#8203</a>;</code>: a remote Maven repository URL</p>
+<p><code><a href="https://&#8230;&#8203" class="bare">https://&#8230;&#8203</a>;</code> or <code><a href="file://&#8230;&#8203" class="bare">file://&#8230;&#8203</a>;</code>: a remote or local Maven repository URL</p>
 </li>
 <li>
 <p>relative or absolute file paths: local Maven repository directories</p>
@@ -5806,32 +5818,189 @@ repositories = [
 </ul>
 </div>
 <div class="paragraph">
-<p>If <code>repositories</code> is omitted or empty, Pyronaut uses Maven Central. Pyronaut resolves relative file paths against the project directory.</p>
+<p>Relative project paths are resolved against the project directory. An explicit
+non-empty project list takes precedence over the global list described below.</p>
 </div>
 <div class="paragraph">
-<p>When the configured Micronaut Core version or the installed Pyronaut SDK is a snapshot, Pyronaut additionally consults the Sonatype Central snapshots repository and the local Maven repository so that snapshot artifacts resolve. Set <code>PYRONAUT_SONATYPE_SNAPSHOTS=false</code> (or <code>-Dpyronaut.sonatype.snapshots.enabled=false</code>) to disable the snapshot repository.</p>
+<p><code>mavenLocal</code> is a source repository entry. It is separate from the install
+destination selected by <code>pyronaut install --local-repository</code>. By default, that
+destination is also Maven local, so many local development flows do not need to
+list <code>mavenLocal</code> explicitly. Use it when a dependency was published locally
+and no other configured repository provides it.</p>
 </div>
 <div class="paragraph">
-<p>The repositories above are project repositories used by <code>pyronaut install</code>.
-The global <code>pyronaut setup</code> command has a separate repository list in <code>~/.pyronaut/settings.toml</code>:</p>
+<p>If a project omits <code>repositories</code> (or leaves it empty), Pyronaut uses the
+non-empty <code>[maven].repositories</code> list from the user settings file. If that list
+is also omitted, Pyronaut uses Maven Central. Direct-source declarations use the
+same fallback when they do not declare a <code>MavenRepository</code>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_global_repositories">Global repositories</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The global settings file is <code>settings.toml</code> in Pyronaut&#8217;s configuration
+directory (normally <code>~/.pyronaut</code>; with the XDG layout it is
+<code>$XDG_CONFIG_HOME/pyronaut</code>). Configure shared defaults with <code>[maven]</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
-repositories = ["mavenCentral"]</code></pre>
+repositories = [
+  "mavenCentral",
+  "https://repo.example.com/snapshots/"
+]</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>If this global list is omitted, setup uses Maven Central and automatically adds the Sonatype Central snapshots repository when the installed Pyronaut SDK version is a snapshot.
-An explicit global list replaces those defaults.</p>
+<p><code>pyronaut setup</code> uses this list for SDK resolution. Relative paths in this list
+are resolved against the directory containing <code>settings.toml</code>, not the project
+directory.</p>
 </div>
 <div class="paragraph">
-<p><code>mavenLocal</code> is a source repository entry.
-It is separate from the install destination selected by <code>pyronaut install --local-repository</code>.
-By default, the install destination is also Maven local, so many local development flows do not need to list <code>mavenLocal</code> explicitly.</p>
+<p>When project, direct-source, or SDK resolution falls back to the automatic
+defaults, snapshot resolution also consults the local Maven repository and the
+Sonatype Central snapshots repository. A non-empty global list used as that
+fallback replaces the defaults and suppresses the automatic Sonatype addition;
+include the snapshots URL yourself when it is needed. An explicit project
+repository list retains the existing automatic snapshot behavior. Set
+<code>PYRONAUT_SONATYPE_SNAPSHOTS=false</code> (or
+<code>-Dpyronaut.sonatype.snapshots.enabled=false</code>) to disable automatic snapshot
+lookup.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_mirrors">Mirrors</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Add Maven mirror rules as repeatable <code><a id="maven.mirrors"></a></code> tables. The <code>mirror-of</code>
+value uses Maven Resolver&#8217;s matching syntax: comma-separated repository IDs,
+<code>external:*</code> for external repositories, <code>*</code> for every repository, and <code>!id</code> to
+exclude an ID.</p>
 </div>
 <div class="paragraph">
-<p>Use <code>mavenLocal</code> when you published the dependency locally and no other configured repository provides it.</p>
+<p>For example, this configuration keeps a local pipeline fixture available while
+mirroring external repositories:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+repositories = [
+  "file:///opt/build/maven-repository",
+  "mavenCentral"
+]
+
+[[maven.mirrors]]
+id = "company-mirror"
+url = "https://maven.example.org/mirror/"
+mirror-of = "external:*"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>external:*</code> does not match local <code>file://</code> repositories. To mirror only Maven
+Central and leave an external pipeline URL alone, use the repository IDs
+explicitly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[[maven.mirrors]]
+id = "central-mirror"
+url = "https://maven.example.org/mirror/"
+mirror-of = "mavenCentral,central"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Mirrors apply both to repositories configured as resolution roots and to
+repositories discovered from POM files. A mirror changes the repository used
+for resolution; it does not change the repository declarations in the project
+or POM.</p>
+</div>
+<div class="paragraph">
+<p>An explicit <code>--lock-repository</code> takes precedence over global repository defaults
+and mirror rules. See <a href="#dependencyLocking">Locking Maven Dependencies</a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_repository_credentials">Repository credentials</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Configure HTTP Basic credentials in user settings with <code><a id="maven.credentials"></a></code>.
+Each entry applies to one repository URL, including its path:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[[maven.credentials]]
+url = "https://maven.example.org/repository/private/"
+username-env = "PYRONAUT_MAVEN_USERNAME"
+password-env = "PYRONAUT_MAVEN_PASSWORD"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Provide the named environment variables through your shell or CI secret settings.
+For literal values, use <code>username</code> and <code>password</code> instead of the corresponding
+<code>-env</code> fields. Each field must select exactly one source. Tokens can be supplied
+as the password when the repository supports token-based HTTP Basic authentication.</p>
+</div>
+<div class="paragraph">
+<p>Credentials are selected using the effective repository URL after mirror selection.
+For an authenticated mirror, configure its URL in the credentials entry. Matching
+ignores trailing slashes. Separate repository roots on the same host need separate
+entries. This applies to project, SDK, native-classpath,
+and direct-source resolution, including repositories discovered from POM files.</p>
+</div>
+<div class="paragraph">
+<p>Environment variables are read only for matching repositories during online
+resolution. Missing variables produce a configuration error; offline resolution
+of cached artifacts does not require them. Secret environment values are not
+added to cache fingerprints or SDK metadata, so rotating a secret does not
+invalidate already cached artifacts.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_settings_caches_and_isolation">Settings, caches, and isolation</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The settings file and its directory are part of the Java/Python install and SDK
+resolution cache fingerprints. Editing any section of <code>settings.toml</code> invalidates
+those cache entries. Run <code>pyronaut install</code> again for a project; if setup is reported stale, run
+<code>pyronaut setup</code> (use <code>--refresh</code> to force re-resolution).</p>
+</div>
+<div class="paragraph">
+<p>When a repository rebuilds an artifact under the same coordinates, use
+<code>--refresh</code>. For separate bundles that reuse coordinates, use an isolated local
+repository per bundle, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut install --refresh --local-repository .pyronaut-m2/bundle-a</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>To isolate the configuration and SDK state for a complete command or test gate,
+set <code>PYRONAUT_HOME</code> to a separate directory. Child Java, launcher, and Python
+processes inherit the resulting state locations:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">export PYRONAUT_HOME="$PWD/.gate-pyronaut"
+mkdir -p "$PYRONAUT_HOME"
+# Save the repository configuration above in "$PYRONAUT_HOME/settings.toml".
+pyronaut setup</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>These settings configure Pyronaut&#8217;s embedded Maven Resolver. Gradle repositories
+remain independently configured in the Gradle build. Pyronaut does not import
+mirrors or server credentials from Maven <code>settings.xml</code>; it only uses an
+active Maven proxy from <code>~/.m2/settings.xml</code> as the proxy fallback when no
+environment or Pyronaut proxy is configured. See <a href="#proxyConfig">Proxy
+Configuration</a>.</p>
+</div>
+</div>
 </div>
 
 <h2 id="dependencyLocking"><a class="anchor" href="#dependencyLocking"></a>9.10 Locking Maven Dependencies</h2>
