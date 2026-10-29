@@ -18,6 +18,7 @@ package io.micronaut.pyronaut.install;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -29,6 +30,68 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class NativeClasspathInstallerTest {
+    @Test
+    void resolvesTimestampedSnapshotDescriptorsToNormalizedLocalArtifacts(@TempDir Path tempDir) throws Exception {
+        Path repository = tempDir.resolve("repository");
+        Path published = writeArtifact(repository, "com.example", "library", "1.0-SNAPSHOT", "jar", "tests", "snapshot");
+        String snapshotFileName = "library-1.0-20261029.120000-1-tests.jar";
+        Files.move(published, published.resolveSibling(snapshotFileName));
+        Files.writeString(published.resolveSibling("maven-metadata.xml"), """
+            <metadata>
+              <groupId>com.example</groupId><artifactId>library</artifactId><version>1.0-SNAPSHOT</version>
+              <versioning>
+                <snapshot><timestamp>20261029.120000</timestamp><buildNumber>1</buildNumber></snapshot>
+                <lastUpdated>20261029120000</lastUpdated>
+                <snapshotVersions><snapshotVersion>
+                  <extension>jar</extension><classifier>tests</classifier>
+                  <value>1.0-20261029.120000-1</value><updated>20261029120000</updated>
+                </snapshotVersion></snapshotVersions>
+              </versioning>
+            </metadata>
+            """);
+        Path descriptors = Files.createDirectories(tempDir.resolve("descriptors"));
+        for (String image : NativeClasspathInstaller.IMAGE_NAMES) {
+            Files.writeString(descriptors.resolve(image + ".tsv"), descriptor(
+                "com.example", "library", "1.0-SNAPSHOT", "jar", "tests", snapshotFileName
+            ) + "\n");
+        }
+
+        Path localRepository = tempDir.resolve("local");
+        new NativeClasspathInstaller(new MavenClasspathResolver()).install(
+            ToolClasspathInstaller.defaultModel(List.of(repository.toUri().toString())),
+            descriptors, localRepository, false, false, null
+        );
+
+        Path artifact = localRepository.resolve("com/example/library/1.0-SNAPSHOT/library-1.0-SNAPSHOT-tests.jar");
+        assertEquals("snapshot", Files.readString(artifact));
+        for (String image : NativeClasspathInstaller.IMAGE_NAMES) {
+            assertEquals(List.of(artifact.toAbsolutePath().normalize().toString()),
+                Files.readAllLines(descriptors.resolve("resolved").resolve(image + ".txt")));
+        }
+    }
+
+    @Test
+    void rejectsUnrelatedSnapshotFilenamesAndUnsafeClassifiers(@TempDir Path tempDir) throws Exception {
+        Path descriptors = Files.createDirectories(tempDir.resolve("descriptors"));
+        for (String[] entry : List.of(
+            new String[]{"1.0", "", "library-1.0-20261029.120000-1.jar"},
+            new String[]{"1.0-SNAPSHOT", "", "other-1.0-20261029.120000-1.jar"},
+            new String[]{"1.0-SNAPSHOT", "", "library-2.0-20261029.120000-1.jar"},
+            new String[]{"1.0-SNAPSHOT", "tests", "library-1.0-20261029.120000-1.jar"},
+            new String[]{"1.0-SNAPSHOT", "", "../library-1.0-20261029.120000-1.jar"},
+            new String[]{"1.0-SNAPSHOT", "..\\tests", "library-1.0-SNAPSHOT-..\\tests.jar"}
+        )) {
+            for (String image : NativeClasspathInstaller.IMAGE_NAMES) {
+                Files.writeString(descriptors.resolve(image + ".tsv"),
+                    descriptor("com.example", "library", entry[0], "jar", entry[1], entry[2]) + "\n");
+            }
+            assertThrows(IOException.class, () -> new NativeClasspathInstaller(new MavenClasspathResolver()).install(
+                ToolClasspathInstaller.defaultModel(List.of()), descriptors, tempDir.resolve("repository"), true, false, null
+            ));
+        }
+        assertTrue(Files.notExists(descriptors.resolve("resolved")));
+    }
+
     @Test
     void resolvesAllNativeDescriptorsAndPreservesOrder(@TempDir Path tempDir) throws Exception {
         Path repository = tempDir.resolve("repository");

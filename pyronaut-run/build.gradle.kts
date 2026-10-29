@@ -167,7 +167,12 @@ val writeNativeClasspathManifest by tasks.registering {
             check('/' !in fields[5] && '\\' !in fields[5]) { "Invalid native classpath classifier: $entry" }
             val classifier = fields[5].takeIf { it.isNotEmpty() }?.let { "-$it" } ?: ""
             val expectedFileName = "${fields[2]}-${fields[3]}$classifier.${fields[4]}"
-            check(fields[6] == expectedFileName && !File(fields[6]).isAbsolute && File(fields[6]).name == fields[6]) {
+            val timestampedSnapshot = fields[3].endsWith("-SNAPSHOT") && Regex(
+                Regex.escape("${fields[2]}-${fields[3].removeSuffix("-SNAPSHOT")}-") +
+                    "[0-9]{8}\\.[0-9]{6}-[0-9]+" + Regex.escape("$classifier.${fields[4]}")
+            ).matches(fields[6])
+            check((fields[6] == expectedFileName || timestampedSnapshot) &&
+                !File(fields[6]).isAbsolute && File(fields[6]).name == fields[6]) {
                 "Native classpath descriptor contains a host path: $entry"
             }
         }

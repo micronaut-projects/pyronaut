@@ -2258,11 +2258,17 @@ def _native_launcher_compile_classpath_entries(
         resolved = []
         for entry in entries:
             fields = entry.split("\t")
+            filenames = [fields[6]]
+            if fields[3].endswith("-SNAPSHOT"):
+                # Maven Resolver normalizes timestamped snapshots in its local cache.
+                classifier = f"-{fields[5]}" if fields[5] else ""
+                filenames.append(f"{fields[2]}-{fields[3]}{classifier}.{fields[4]}")
             path = next(
                 (
-                    repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6])
+                    repository.joinpath(*fields[1].split("."), fields[2], fields[3], filename)
                     for repository in repositories
-                    if repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6]).is_file()
+                    for filename in filenames
+                    if repository.joinpath(*fields[1].split("."), fields[2], fields[3], filename).is_file()
                 ),
                 None,
             )
@@ -9890,11 +9896,19 @@ def _validated_native_compile_descriptor(image_name: str, entries: list[str]) ->
             raise RuntimeError(f"Invalid native compiler Maven coordinate for {image_name}")
         if "/" in fields[5] or "\\" in fields[5]:
             raise RuntimeError(f"Invalid native compiler Maven classifier for {image_name}")
-        expected_filename = (
-            f"{fields[2]}-{fields[3]}"
-            f"{'-' + fields[5] if fields[5] else ''}.{fields[4]}"
+        classifier = f"-{fields[5]}" if fields[5] else ""
+        expected_filename = f"{fields[2]}-{fields[3]}{classifier}.{fields[4]}"
+        timestamped_snapshot = fields[3].endswith("-SNAPSHOT") and re.fullmatch(
+            re.escape(f"{fields[2]}-{fields[3][:-len('-SNAPSHOT')]}-")
+            + r"[0-9]{8}\.[0-9]{6}-[0-9]+"
+            + re.escape(f"{classifier}.{fields[4]}"),
+            fields[6],
         )
-        if not fields[6] or Path(fields[6]).name != fields[6] or fields[6] != expected_filename:
+        if (
+            not fields[6]
+            or Path(fields[6]).name != fields[6]
+            or (fields[6] != expected_filename and not timestamped_snapshot)
+        ):
             raise RuntimeError(f"Invalid native compiler artifact filename for {image_name}")
     return entries
 

@@ -71,6 +71,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -507,11 +508,11 @@ final class MavenClasspathResolver {
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
-            List<ResolvedEditorArtifact> editorArtifacts = result.getArtifactResults().stream()
+            List<Artifact> editorBinaries = result.getArtifactResults().stream()
                 .map(ArtifactResult::getArtifact)
                 .filter(Objects::nonNull)
-                .map(artifact -> toResolvedEditorArtifact(artifact, repositories, session))
                 .toList();
+            List<ResolvedEditorArtifact> editorArtifacts = resolveEditorArtifacts(editorBinaries, repositories, session);
             validateProductionControlPanelSecurity(model, scope, result);
             lock.check();
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
@@ -1730,41 +1731,49 @@ final class MavenClasspathResolver {
         return PyronautHome.userHome().resolve(".m2").resolve("repository");
     }
 
-    private ResolvedEditorArtifact toResolvedEditorArtifact(Artifact artifact,
-                                                            List<RemoteRepository> repositories,
-                                                            CloseableSession session) {
-        Path binaryPath = artifact.getPath();
-        Path sourcePath = resolveSourceArtifact(artifact, repositories, session);
-        return new ResolvedEditorArtifact(
-            artifact.getGroupId(),
-            artifact.getArtifactId(),
-            artifact.getVersion(),
-            binaryPath == null ? null : binaryPath.toAbsolutePath(),
-            sourcePath == null ? null : sourcePath.toAbsolutePath()
-        );
-    }
-
-    private Path resolveSourceArtifact(Artifact artifact,
-                                       List<RemoteRepository> repositories,
-                                       CloseableSession session) {
-        if (artifact.getPath() == null || !"jar".equalsIgnoreCase(artifact.getExtension())) {
-            return null;
+    private List<ResolvedEditorArtifact> resolveEditorArtifacts(List<Artifact> artifacts,
+                                                               List<RemoteRepository> repositories,
+                                                               CloseableSession session) {
+        List<ArtifactRequest> requests = new ArrayList<>();
+        ArtifactRequest[] requestByIndex = new ArtifactRequest[artifacts.size()];
+        for (int i = 0; i < artifacts.size(); i++) {
+            Artifact artifact = artifacts.get(i);
+            if (artifact.getPath() != null && "jar".equalsIgnoreCase(artifact.getExtension())) {
+                Artifact source = new DefaultArtifact(
+                    artifact.getGroupId(), artifact.getArtifactId(), "sources", artifact.getExtension(), artifact.getVersion()
+                );
+                ArtifactRequest request = new ArtifactRequest(source, repositories, null);
+                requestByIndex[i] = request;
+                requests.add(request);
+            }
         }
-        Artifact sourceArtifact = new DefaultArtifact(
-            artifact.getGroupId(),
-            artifact.getArtifactId(),
-            "sources",
-            artifact.getExtension(),
-            artifact.getVersion()
-        );
-        ArtifactRequest request = new ArtifactRequest(sourceArtifact, repositories, null);
-        try {
-            ArtifactResult result = repositorySystem.resolveArtifact(session, request);
-            Artifact resolved = result.getArtifact();
-            return resolved == null ? null : resolved.getPath();
-        } catch (ArtifactResolutionException e) {
-            return null;
+        List<ArtifactResult> results = List.of();
+        if (!requests.isEmpty()) {
+            try {
+                results = repositorySystem.resolveArtifacts(session, requests);
+            } catch (ArtifactResolutionException e) {
+                // Sources are optional; keep successful downloads when another request fails.
+                results = e.getResults();
+            }
         }
+        Map<ArtifactRequest, Path> sourcePaths = new IdentityHashMap<>();
+        for (ArtifactResult result : results) {
+            if (result.isResolved()) {
+                sourcePaths.put(result.getRequest(), result.getArtifact().getPath());
+            }
+        }
+        List<ResolvedEditorArtifact> resolved = new ArrayList<>(artifacts.size());
+        for (int i = 0; i < artifacts.size(); i++) {
+            Artifact artifact = artifacts.get(i);
+            Path binaryPath = artifact.getPath();
+            Path sourcePath = sourcePaths.get(requestByIndex[i]);
+            resolved.add(new ResolvedEditorArtifact(
+                artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion(),
+                binaryPath == null ? null : binaryPath.toAbsolutePath(),
+                sourcePath == null ? null : sourcePath.toAbsolutePath()
+            ));
+        }
+        return List.copyOf(resolved);
     }
 
     record ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {

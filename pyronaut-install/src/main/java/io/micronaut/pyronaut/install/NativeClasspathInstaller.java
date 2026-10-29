@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /** Resolves portable native launcher classpath descriptors into local path manifests. */
 final class NativeClasspathInstaller {
@@ -131,9 +132,17 @@ final class NativeClasspathInstaller {
             if (fileName.isBlank() || !Path.of(fileName).getFileName().toString().equals(fileName)) {
                 throw new IOException("Invalid native classpath artifact filename in " + descriptor + ": " + fileName);
             }
+            if (fields[5].indexOf('/') >= 0 || fields[5].indexOf('\\') >= 0) {
+                throw new IOException("Invalid native classpath classifier in " + descriptor + ": " + line);
+            }
             String classifierSuffix = fields[5].isBlank() ? "" : "-" + fields[5];
             String expectedFileName = fields[2] + "-" + fields[3] + classifierSuffix + "." + fields[4];
-            if (!expectedFileName.equals(fileName)) {
+            boolean timestampedSnapshot = fields[3].endsWith("-SNAPSHOT") && Pattern.matches(
+                Pattern.quote(fields[2] + "-" + fields[3].substring(0, fields[3].length() - "-SNAPSHOT".length()) + "-")
+                    + "[0-9]{8}\\.[0-9]{6}-[0-9]+" + Pattern.quote(classifierSuffix + "." + fields[4]),
+                fileName
+            );
+            if (!expectedFileName.equals(fileName) && !timestampedSnapshot) {
                 throw new IOException(
                     "Native classpath filename does not match its Maven coordinate in " + descriptor + ": " + fileName
                 );

@@ -1,6 +1,7 @@
 import io.micronaut.pyronaut.gradle.PyenvVersions
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.Configuration
+import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.attributes.Bundling
 import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.LibraryElements
@@ -251,14 +252,10 @@ val includedDataArtifacts = listOf(
     IncludedBuildPublishedArtifact("data-tx", "micronaut-data-tx"),
 )
 
-fun versionFromCatalog(file: java.io.File, key: String): String {
-    val pattern = Regex("""^${Regex.escape(key)}\s*=\s*"([^"]+)"""", RegexOption.MULTILINE)
-    return pattern.find(file.readText())?.groupValues?.get(1)
-        ?: throw GradleException("Unable to find version '$key' in ${file.absolutePath}")
-}
-
 fun versionFromCatalog(key: String): String {
-    return versionFromCatalog(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile, key)
+    return extensions.getByType<VersionCatalogsExtension>().named("libs")
+        .findVersion(key).orElseThrow { GradleException("Missing version '$key' in the libs catalog") }
+        .requiredVersion
 }
 
 fun requiredGradleProperty(name: String): String =
@@ -713,6 +710,7 @@ fun mavenPomContent(
     }
     if (artifactId == "micronaut-platform") {
         content = replacePomProperty(content, "graal.version", functionalTestGraalPyVersion)
+        content = replacePomProperty(content, "graalpy.version", functionalTestGraalPyVersion)
         content = replacePomProperty(content, "graalpy.embedding.version", functionalTestGraalPyVersion)
         content = replacePomProperty(content, "micronaut.sourcegen.version", includedCoreSourcegenVersion)
         content = replacePomProperty(content, "micronaut.test.version", functionalTestMicronautTestVersion)
@@ -1356,6 +1354,9 @@ val stageMicronautPlatformFixtureArtifact by tasks.registering {
     group = "build setup"
     description = "Stages the Micronaut Platform BOM used by the functional-test file repository."
     inputs.files(fixturePlatformPom)
+    inputs.property("graalPyVersion", functionalTestGraalPyVersion)
+    inputs.property("micronautTestVersion", functionalTestMicronautTestVersion)
+    inputs.property("micronautTestResourcesVersion", functionalTestResourcesVersion)
     outputs.files(
         stagedMavenArtifactOutputFiles(
             "io.micronaut.platform",
@@ -1372,6 +1373,7 @@ val stageMicronautPlatformFixtureArtifact by tasks.registering {
 val stageMicronautCoreFixtureArtifacts by tasks.registering {
     group = "build setup"
     description = "Stages included Micronaut Core artifacts into the functional-test file repository."
+    inputs.property("graalPyVersion", functionalTestGraalPyVersion)
     val micronautCoreIncludedBuild = gradle.includedBuilds.find { it.name == "micronaut-core" }
     val taskDependencies = mutableListOf<Any>()
     if (micronautCoreIncludedBuild != null) {
@@ -1791,6 +1793,14 @@ val process by tasks.registering {
     group = "verification"
     description = "Processes the functional-test app sources with the local processor."
     dependsOn(validateConfig, validateInvalidConfig)
+    val compilerClasspath = providers.provider {
+        if (useNativeExecutables.get()) {
+            project(":micronaut-pyronaut-dev").configurations.getByName("nativeCompileClasspath").files
+        } else {
+            emptySet<java.io.File>()
+        }
+    }
+    inputs.files(compilerClasspath)
     inputs.dir(fixtureAppDir.dir("src"))
     inputs.dir(fixtureAppDir.dir("tests"))
     inputs.property(
@@ -1820,9 +1830,22 @@ val process by tasks.registering {
             if (useNativeExecutables.get()) "native" else "JVM",
             processorExecutable.absolutePath
         )
-        project.runFixtureCommand(
-            pyronautCommand("process", processorExecutable, "--project-dir", fixtureAppDir.asFile.absolutePath)
-        )
+        val processArgs = mutableListOf("--project-dir", fixtureAppDir.asFile.absolutePath)
+        if (useNativeExecutables.get()) {
+            // Javac still needs compiler API JARs when their classes are embedded in the native launcher.
+            val compilerEntries = compilerClasspath.get().map { it.absolutePath }
+            val mainEntries = fixtureResolvedRuntimeDependencies.asFile.readLines()
+            val testEntries = listOf(
+                fixtureResolvedTestDependencies,
+                fixtureResolvedRuntimeDependencies,
+                fixtureResolvedBuildDependencies,
+            ).flatMap { it.asFile.readLines() }
+            processArgs.addAll(listOf(
+                "--classpath", (mainEntries + compilerEntries).filter(String::isNotBlank).distinct().joinToString(java.io.File.pathSeparator),
+                "--test-classpath", (testEntries + compilerEntries).filter(String::isNotBlank).distinct().joinToString(java.io.File.pathSeparator),
+            ))
+        }
+        project.runFixtureCommand(pyronautCommand("process", processorExecutable, *processArgs.toTypedArray()))
     }
 }
 
