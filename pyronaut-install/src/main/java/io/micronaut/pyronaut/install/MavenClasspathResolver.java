@@ -94,6 +94,7 @@ final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CONTROL_PANEL_MODULE = "io.micronaut.testresources:micronaut-test-resources-control-panel";
     private static final String NASHORN_MODULE = "org.openjdk.nashorn:nashorn-core";
     private static final String POM_EXTENSION = "pom";
+    private static final String MAVEN_CENTRAL = "mavenCentral";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MICRONAUT_OPENAPI_PROCESSOR_MODULE = "io.micronaut.openapi:micronaut-openapi";
     private static final String MICRONAUT_OPENAPI_ANNOTATIONS_MODULE = "io.micronaut.openapi:micronaut-openapi-annotations";
@@ -1627,7 +1628,7 @@ final class MavenClasspathResolver {
                                                  boolean forceUpdates,
                                                  Path projectDirectory) {
         List<String> repositories = configuredRepositories == null || configuredRepositories.isEmpty()
-            ? List.of("mavenCentral")
+            ? List.of(MAVEN_CENTRAL)
             : configuredRepositories;
 
         Map<String, RemoteRepository> resolved = new LinkedHashMap<>();
@@ -1638,7 +1639,7 @@ final class MavenClasspathResolver {
             }
             String lower = value.toLowerCase(Locale.ROOT);
             if ("mavencentral".equals(lower)) {
-                resolved.put("mavenCentral", newRemoteRepository("mavenCentral", "https://repo1.maven.org/maven2/", forceUpdates));
+                resolved.put(MAVEN_CENTRAL, newRemoteRepository(MAVEN_CENTRAL, "https://repo1.maven.org/maven2/", forceUpdates));
             } else if ("mavenlocal".equals(lower)) {
                 String localPath = resolveLocalMavenRepository().toUri().toString();
                 RepositoryPolicy localPolicy = new RepositoryPolicy(true, RepositoryPolicy.UPDATE_POLICY_NEVER, RepositoryPolicy.CHECKSUM_POLICY_IGNORE);
@@ -1673,7 +1674,7 @@ final class MavenClasspathResolver {
             return configuration.repositories();
         }
         if (repositories.isEmpty()) {
-            repositories = List.of("mavenCentral");
+            repositories = List.of(MAVEN_CENTRAL);
         }
         if (model.pyronaut() == null || !snapshotRepositoryRequired(model) || !snapshotRepositoryEnabled()) {
             return repositories;
