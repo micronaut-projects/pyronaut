@@ -54,8 +54,9 @@ record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirr
             byte[] contents = Files.readAllBytes(settings);
             JsonNode root = Parser.parse(new String(contents, StandardCharsets.UTF_8));
             JsonNode maven = root.get("maven");
+            Path settingsDirectory = settings.toAbsolutePath().getParent().toRealPath();
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update(settings.toAbsolutePath().getParent().toRealPath().toString().getBytes(StandardCharsets.UTF_8));
+            digest.update(settingsDirectory.toString().getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
             String fingerprint = HexFormat.of().formatHex(digest.digest(contents));
             if (maven == null) {
@@ -64,7 +65,7 @@ record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirr
             if (!maven.isObject()) {
                 throw new PyprojectModelException("[maven] must be a table in " + settings);
             }
-            return new MavenRepositoryConfiguration(readRepositories(maven, settings), readMirrors(maven), fingerprint);
+            return new MavenRepositoryConfiguration(readRepositories(maven, settingsDirectory), readMirrors(maven), fingerprint);
         } catch (IOException e) {
             throw new PyprojectModelException("Failed reading Maven settings from " + settings, e);
         } catch (NoSuchAlgorithmException e) {
@@ -80,7 +81,7 @@ record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirr
         return selector;
     }
 
-    private static List<String> readRepositories(JsonNode maven, Path settings) {
+    private static List<String> readRepositories(JsonNode maven, Path settingsDirectory) {
         JsonNode configured = maven.get("repositories");
         if (configured == null) {
             return List.of();
@@ -95,7 +96,7 @@ record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirr
             }
             String repository = value.getStringValue().trim();
             if (!repository.contains("://") && !repository.equalsIgnoreCase("mavenCentral") && !repository.equalsIgnoreCase("mavenLocal")) {
-                repository = settings.toAbsolutePath().getParent().resolve(repository).normalize().toString();
+                repository = settingsDirectory.resolve(repository).normalize().toString();
             }
             repositories.add(repository);
         }

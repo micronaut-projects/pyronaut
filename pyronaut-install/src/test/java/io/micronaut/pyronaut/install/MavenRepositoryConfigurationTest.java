@@ -79,10 +79,14 @@ class MavenRepositoryConfigurationTest {
 
         MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load(settings);
 
-        assertEquals(List.of(settings.getParent().resolve("repository").toAbsolutePath().normalize().toString()),
+        assertEquals(List.of(settings.getParent().toRealPath().resolve("repository").toString()),
             configuration.repositories());
         assertEquals("internal", configuration.mirrors().getFirst().id());
         assertEquals("external:*", configuration.mirrors().getFirst().mirrorOf());
+        Path linkedDirectory = Files.createSymbolicLink(tempDir.resolve("linked-settings"), settings.getParent());
+        MavenRepositoryConfiguration linked = MavenRepositoryConfiguration.load(linkedDirectory.resolve("settings.toml"));
+        assertEquals(configuration.repositories(), linked.repositories());
+        assertEquals(configuration.fingerprint(), linked.fingerprint());
         Path secondSettings = tempDir.resolve("other/settings.toml");
         Files.createDirectories(secondSettings.getParent());
         Files.writeString(secondSettings, validSettings, StandardCharsets.UTF_8);

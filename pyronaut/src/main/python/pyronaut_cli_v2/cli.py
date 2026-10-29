@@ -9821,7 +9821,7 @@ def _setup_repositories() -> list[str]:
                 raise RuntimeError(f"[maven].repositories[{index}] must be a non-empty string")
             repository = value.strip()
             if "://" not in repository and repository.lower() not in ("mavencentral", "mavenlocal"):
-                repository = str((_settings_path().parent / repository).resolve())
+                repository = os.path.abspath(_settings_path().parent.resolve() / repository)
             repositories.append(repository)
         return repositories
     repositories = ["mavenCentral"]
