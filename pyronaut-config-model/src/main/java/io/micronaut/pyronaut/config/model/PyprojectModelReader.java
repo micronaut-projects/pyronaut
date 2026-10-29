@@ -127,7 +127,8 @@ public final class PyprojectModelReader {
                 resolveProcessorMode(parsed),
                 readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_INCREMENTAL),
                 readEnum(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_PYTHON_INCREMENTAL_MODE),
-                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_DAEMON)
+                readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_DAEMON),
+                readStringList(parsed, PyprojectConfigSpec.PYRONAUT_PROCESSOR_EXCLUDE)
             ),
             new PyprojectModel.Test(resolveTestMode(parsed), resolveTestEngine(parsed), readBoolean(parsed, PyprojectConfigSpec.PYRONAUT_TEST_VERBOSE)),
             sources,
