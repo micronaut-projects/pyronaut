@@ -53,6 +53,9 @@ final class ResolutionCache {
             digest.update((byte) 0);
             digest.update(Files.readAllBytes(pyprojectFile));
             digest.update((byte) 0);
+            digest.update("mavenSettings=".getBytes(StandardCharsets.UTF_8));
+            digest.update(MavenRepositoryConfiguration.load().fingerprint().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
             digest.update("localRepository=".getBytes(StandardCharsets.UTF_8));
             digest.update(localRepositoryPath.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
@@ -80,6 +83,7 @@ final class ResolutionCache {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update("external-install-v5-sdk-versions".getBytes(StandardCharsets.UTF_8));
+            digest.update(MavenRepositoryConfiguration.load().fingerprint().getBytes(StandardCharsets.UTF_8));
             for (String name : List.of("pyproject.toml", "pom.xml", "mvnw", "mvnw.cmd", "settings.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "gradlew.bat", "gradle.properties")) {
                 Path file = projectRoot.resolve(name);
                 if (Files.isRegularFile(file)) {

@@ -95,6 +95,7 @@ final class PyronautDevNativeSmokeTest {
             enabled = false
             """);
 
+        Path outputFile = tempDir.resolve("install-output.txt");
         Process process = new ProcessBuilder(
             binary,
             "install",
@@ -104,9 +105,19 @@ final class PyronautDevNativeSmokeTest {
             tempDir.resolve("maven-local").toString()
         )
             .redirectErrorStream(true)
+            .redirectOutput(outputFile.toFile())
             .start();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(process.waitFor(2, TimeUnit.MINUTES), output);
+        boolean finished;
+        try {
+            finished = process.waitFor(5, TimeUnit.MINUTES);
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS);
+            }
+        }
+        String output = Files.readString(outputFile, StandardCharsets.UTF_8);
+        assertTrue(finished, "Native install timed out after five minutes:\n" + output);
         assertEquals(0, process.exitValue(), output);
         String options = Files.readString(
             project.resolve("__pyronaut__/annotation-processor-options.properties"),

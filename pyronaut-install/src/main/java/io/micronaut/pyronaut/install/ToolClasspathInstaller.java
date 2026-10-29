@@ -155,6 +155,7 @@ final class ToolClasspathInstaller {
             metadata.setProperty(DESCRIPTOR_HASH_PROPERTY, descriptorHash);
             metadata.setProperty(SDK_VERSION_PROPERTY, sdkVersion);
             metadata.setProperty("local.repository", localRepository.toAbsolutePath().normalize().toString());
+            metadata.setProperty("maven.settings.sha256", MavenRepositoryConfiguration.load().fingerprint());
             ReproducibleProperties.write(metadata, temporary.resolve(RUNTIME_PROPERTIES_FILE), null);
             if (!Files.isDirectory(layout, LinkOption.NOFOLLOW_LINKS)
                 || !completeLayout(layout, descriptors, sdkVersion, descriptorHash, localRepository)) {
@@ -282,7 +283,8 @@ final class ToolClasspathInstaller {
             return false;
         }
         return sdkVersion.equals(metadata.getProperty(SDK_VERSION_PROPERTY))
-            && descriptorHash.equals(metadata.getProperty(DESCRIPTOR_HASH_PROPERTY));
+            && descriptorHash.equals(metadata.getProperty(DESCRIPTOR_HASH_PROPERTY))
+            && MavenRepositoryConfiguration.load().fingerprint().equals(metadata.getProperty("maven.settings.sha256", ""));
     }
 
     private Map<String, Path> preferredSources(List<ToolDescriptor> descriptors, Path localRepository) {
@@ -307,11 +309,16 @@ final class ToolClasspathInstaller {
         if (!entry.maven()) {
             return packagedTools.resolve(SHARED_LIB).resolve(entry.fileName()).toAbsolutePath().normalize();
         }
+        String repositoryFileName = entry.fileName();
+        if (entry.version().endsWith("-SNAPSHOT")) {
+            String classifierSuffix = entry.classifier().isEmpty() ? "" : "-" + entry.classifier();
+            repositoryFileName = entry.artifactId() + "-" + entry.version() + classifierSuffix + "." + entry.extension();
+        }
         return localRepository.toAbsolutePath().normalize()
             .resolve(entry.group().replace('.', '/'))
             .resolve(entry.artifactId())
             .resolve(entry.version())
-            .resolve(entry.fileName());
+            .resolve(repositoryFileName);
     }
 
     private static boolean validArtifactLink(Path artifact, Path expectedSource) {
@@ -567,7 +574,7 @@ final class ToolClasspathInstaller {
     }
 
     static PyprojectModel defaultModel() {
-        return defaultModel(List.of("mavenCentral"));
+        return defaultModel(List.of());
     }
 
     static PyprojectModel defaultModel(List<String> repositories) {

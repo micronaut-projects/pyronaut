@@ -8,7 +8,19 @@ If you are interested in contributing to Micronaut and are looking for issues to
 
 ## JDK Setup
 
-Micronaut pyronaut currently requires JDK 21.
+Pyronaut requires JDK 25.
+
+When testing an alternate GraalVM build, use a compatible GraalVM JDK, GraalPy
+standalone, and GraalPy/Truffle Maven artifacts. Matching the Java major version
+alone is insufficient: mixing compiler and runtime build lines can fail with
+missing Truffle compiler classes.
+
+Apply GraalPy version overrides to both configured Gradle catalogs, `libs` and
+`mn`. Functional-test POMs and SDK version metadata use the configured catalog
+values. Catalogs declare requested versions; dependency constraints or resolution
+rules may also be needed to align the resolved graph. Gradle repository settings
+apply to Gradle downloads; Pyronaut's Maven resolver uses the application's own
+repository configuration.
 
 ## IDE Setup
 

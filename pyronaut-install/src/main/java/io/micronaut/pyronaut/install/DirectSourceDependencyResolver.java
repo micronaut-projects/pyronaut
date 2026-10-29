@@ -579,6 +579,7 @@ public final class DirectSourceDependencyResolver {
             update(digest, "build", build);
             update(digest, "runtime", runtime);
             update(digest, "repositories", repositories);
+            update(digest, "maven-settings", List.of(MavenRepositoryConfiguration.load().fingerprint()));
             update(digest, "local-repository", localRepository == null
                 ? List.of()
                 : List.of(localRepository.toAbsolutePath().normalize().toString()));

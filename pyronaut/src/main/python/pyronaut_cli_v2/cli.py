@@ -2258,11 +2258,17 @@ def _native_launcher_compile_classpath_entries(
         resolved = []
         for entry in entries:
             fields = entry.split("\t")
+            filenames = [fields[6]]
+            if fields[3].endswith("-SNAPSHOT"):
+                # Maven Resolver normalizes timestamped snapshots in its local cache.
+                classifier = f"-{fields[5]}" if fields[5] else ""
+                filenames.append(f"{fields[2]}-{fields[3]}{classifier}.{fields[4]}")
             path = next(
                 (
-                    repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6])
+                    repository.joinpath(*fields[1].split("."), fields[2], fields[3], filename)
                     for repository in repositories
-                    if repository.joinpath(*fields[1].split("."), fields[2], fields[3], fields[6]).is_file()
+                    for filename in filenames
+                    if repository.joinpath(*fields[1].split("."), fields[2], fields[3], filename).is_file()
                 ),
                 None,
             )
@@ -7333,6 +7339,16 @@ def _read_pyronaut_user_settings() -> dict[str, object]:
     return settings
 
 
+def _maven_settings_fingerprint() -> str:
+    settings = _settings_path()
+    if not settings.exists():
+        return ""
+    try:
+        return hashlib.sha256(str(settings.parent.resolve()).encode("utf-8") + b"\0" + settings.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError(f"Failed reading {settings}: {exc}") from exc
+
+
 def _installed_pyronaut_version() -> str:
     try:
         version = importlib.metadata.version("pyronaut")
@@ -8346,6 +8362,7 @@ def _install_inputs_state(project_dir: Path) -> dict[str, object]:
     return {
         "pyronaut": _installed_pyronaut_version(),
         "toolPyronautSha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "mavenSettingsSha256": _maven_settings_fingerprint(),
     }
 
 
@@ -8380,6 +8397,8 @@ def _java_install_stale_reason(project_dir: Path) -> str | None:
         return "Pyronaut changed since the last install"
     if recorded.get("toolPyronautSha256") != current["toolPyronautSha256"]:
         return "[tool.pyronaut] settings changed since the last install"
+    if recorded.get("mavenSettingsSha256", "") != current["mavenSettingsSha256"]:
+        return "Maven user settings changed since the last install"
     return None
 
 
@@ -9071,6 +9090,10 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                 return False
             for line in descriptor.read_text(encoding="utf-8").splitlines():
                 fields = line.split("\t")
+                repository_filename = fields[-1]
+                if len(fields) == 7 and fields[3].endswith("-SNAPSHOT"):
+                    classifier_suffix = f"-{fields[5]}" if fields[5] else ""
+                    repository_filename = f"{fields[2]}-{fields[3]}{classifier_suffix}.{fields[4]}"
                 if len(fields) == 2 and fields[0] == "bundled":
                     artifact = cache_root / "tools" / "shared" / "lib" / fields[1]
                     expected_source = packaged_tools / "shared" / "lib" / fields[1]
@@ -9087,7 +9110,7 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                             / Path(*fields[1].split("."))
                             / fields[2]
                             / fields[3]
-                            / fields[6]
+                            / repository_filename
                         )
                 elif len(fields) == 7 and fields[0] == "control-panel":
                     artifact = cache_root / "tools" / "pyronaut-dev" / "lib" / "control-panel" / fields[6]
@@ -9099,7 +9122,7 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                         / Path(*fields[1].split("."))
                         / fields[2]
                         / fields[3]
-                        / fields[6]
+                        / repository_filename
                     )
                 else:
                     return False
@@ -9119,8 +9142,9 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
             bool(descriptors)
             and metadata.get("sdk.version") == version
             and metadata.get("descriptor.sha256") == packaged_metadata.get("descriptor.sha256")
+            and metadata.get("maven.settings.sha256", "") == _maven_settings_fingerprint()
         )
-    except (OSError, UnicodeError, ValueError):
+    except (OSError, UnicodeError, ValueError, RuntimeError):
         return False
 
 
@@ -9795,7 +9819,10 @@ def _setup_repositories() -> list[str]:
         for index, value in enumerate(configured):
             if not isinstance(value, str) or not value.strip():
                 raise RuntimeError(f"[maven].repositories[{index}] must be a non-empty string")
-            repositories.append(value.strip())
+            repository = value.strip()
+            if "://" not in repository and repository.lower() not in ("mavencentral", "mavenlocal"):
+                repository = os.path.abspath(_settings_path().parent.resolve() / repository)
+            repositories.append(repository)
         return repositories
     repositories = ["mavenCentral"]
     version = _installed_pyronaut_version()
@@ -9890,11 +9917,19 @@ def _validated_native_compile_descriptor(image_name: str, entries: list[str]) ->
             raise RuntimeError(f"Invalid native compiler Maven coordinate for {image_name}")
         if "/" in fields[5] or "\\" in fields[5]:
             raise RuntimeError(f"Invalid native compiler Maven classifier for {image_name}")
-        expected_filename = (
-            f"{fields[2]}-{fields[3]}"
-            f"{'-' + fields[5] if fields[5] else ''}.{fields[4]}"
+        classifier = f"-{fields[5]}" if fields[5] else ""
+        expected_filename = f"{fields[2]}-{fields[3]}{classifier}.{fields[4]}"
+        timestamped_snapshot = fields[3].endswith("-SNAPSHOT") and re.fullmatch(
+            re.escape(f"{fields[2]}-{fields[3][:-len('-SNAPSHOT')]}-")
+            + r"[0-9]{8}\.[0-9]{6}-[0-9]+"
+            + re.escape(f"{classifier}.{fields[4]}"),
+            fields[6],
         )
-        if not fields[6] or Path(fields[6]).name != fields[6] or fields[6] != expected_filename:
+        if (
+            not fields[6]
+            or Path(fields[6]).name != fields[6]
+            or (fields[6] != expected_filename and not timestamped_snapshot)
+        ):
             raise RuntimeError(f"Invalid native compiler artifact filename for {image_name}")
     return entries
 
@@ -9911,6 +9946,7 @@ def _setup_expectation(args: Sequence[str]) -> dict[str, object]:
         "platform": _setup_platform(),
         "localRepository": str(_setup_local_repository(args)),
         "repositories": _setup_repositories(),
+        "mavenSettingsSha256": _maven_settings_fingerprint(),
         "sdkDescriptorSha256": _packaged_sdk_descriptor_hash(),
         "toolDescriptorSha256": _packaged_tool_descriptor_hash(),
         "nativeImages": {
@@ -9937,6 +9973,7 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
         "platform",
         "localRepository",
         "repositories",
+        "mavenSettingsSha256",
         "sdkDescriptorSha256",
         "toolDescriptorSha256",
         "nativeImages",

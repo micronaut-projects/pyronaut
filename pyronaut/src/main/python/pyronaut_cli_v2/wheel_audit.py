@@ -105,16 +105,22 @@ def _validate_native_descriptor(name: str, payload: bytes) -> None:
         filename = fields[6]
         classifier = f"-{fields[5]}" if fields[5] else ""
         expected_filename = f"{fields[2]}-{fields[3]}{classifier}.{fields[4]}"
+        timestamped_snapshot = fields[3].endswith("-SNAPSHOT") and re.fullmatch(
+            re.escape(f"{fields[2]}-{fields[3][:-len('-SNAPSHOT')]}-")
+            + r"[0-9]{8}\.[0-9]{6}-[0-9]+"
+            + re.escape(f"{classifier}.{fields[4]}"),
+            filename,
+        )
         if (
             not filename
             or Path(filename).name != filename
             or "/" in filename
             or "\\" in filename
-            or filename != expected_filename
+            or (filename != expected_filename and not timestamped_snapshot)
         ):
             raise WheelAuditError(
                 f"Invalid native classpath descriptor in wheel: {name} "
-                f"(filename must be {expected_filename!r}, got {filename!r})"
+                f"(filename does not match the Maven coordinate: {filename!r})"
             )
 
 

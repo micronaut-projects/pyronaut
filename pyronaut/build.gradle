@@ -45,21 +45,13 @@ def pyenvExecutable = providers.provider {
 }
 def usesPyenv = pyenvExecutable.map { !it.isEmpty() }
 def pythonCommand = pyenvExecutable.map { it ? [it, "exec", "python"] : ["python3"] }
-def versionFromCatalog = { String key ->
-    def catalogFile = rootProject.layout.projectDirectory.file("gradle/libs.versions.toml").asFile
-    def matcher = catalogFile.getText("UTF-8") =~ /(?m)^${Pattern.quote(key)}\s*=\s*"([^"]+)"/
-    if (!matcher.find()) {
-        throw new GradleException("Unable to find version '${key}' in ${catalogFile.absolutePath}")
-    }
-    matcher.group(1)
-}
 def requiredGradleProperty = { String name ->
     providers.gradleProperty(name).orElse(providers.provider {
         throw new GradleException("Missing Gradle property '${name}'")
     })
 }
 def micronautCoreVersion = requiredGradleProperty("pyronaut.micronaut.core.version")
-def graalPyVersion = providers.provider { versionFromCatalog("graalpy") }
+def graalPyVersion = libs.versions.graalpy
 def effectiveMavenLocalRepositoryDir = providers.provider {
     def configured = System.getProperty("maven.repo.local")
     if (configured == null || configured.isBlank()) {
@@ -203,6 +195,7 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
 
 tasks.register("prepareWheelSources", Sync) {
     inputs.property("wheelVersion", wheelVersion)
+    inputs.property("graalPyVersion", graalPyVersion)
     // The SDK embeds only JVM launcher distributions. Keep them fresh whenever
     // the wheel is rebuilt so runtime fixes are not masked by stale output.
     dependsOn(project(":micronaut-pyronaut-run").tasks.named("installDist"))

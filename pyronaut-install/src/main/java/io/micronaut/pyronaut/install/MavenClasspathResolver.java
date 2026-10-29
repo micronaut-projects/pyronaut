@@ -71,6 +71,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -93,6 +94,7 @@ final class MavenClasspathResolver {
     private static final String TEST_RESOURCES_CONTROL_PANEL_MODULE = "io.micronaut.testresources:micronaut-test-resources-control-panel";
     private static final String NASHORN_MODULE = "org.openjdk.nashorn:nashorn-core";
     private static final String POM_EXTENSION = "pom";
+    private static final String MAVEN_CENTRAL = "mavenCentral";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MICRONAUT_OPENAPI_PROCESSOR_MODULE = "io.micronaut.openapi:micronaut-openapi";
     private static final String MICRONAUT_OPENAPI_ANNOTATIONS_MODULE = "io.micronaut.openapi:micronaut-openapi-annotations";
@@ -310,11 +312,11 @@ final class MavenClasspathResolver {
         // enhanced local repository manager can match _remote.repositories
         // provenance. The offline session still prohibits every download.
         DependencyLock lock = DependencyLock.current();
-        List<RemoteRepository> repositories = lock.repositories(
-            toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
-        );
+        MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load();
+        List<RemoteRepository> requestedRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, configuration)) {
+            List<RemoteRepository> repositories = lock.repositories(repositorySystem.newResolutionRepositories(session, requestedRepositories));
             List<ArtifactRequest> requests = artifacts.stream()
                 .map(artifact -> new ArtifactRequest(artifact, repositories, null))
                 .toList();
@@ -375,11 +377,11 @@ final class MavenClasspathResolver {
         // so dropping the remote repositories would reject previously downloaded
         // artifacts. The offline session still prohibits every download.
         DependencyLock lock = DependencyLock.current();
-        List<RemoteRepository> repositories = lock.repositories(
-            toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
-        );
+        MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load();
+        List<RemoteRepository> requestedRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, configuration)) {
+            List<RemoteRepository> repositories = lock.repositories(repositorySystem.newResolutionRepositories(session, requestedRepositories));
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
             if (progressListener != null) progressListener.reset();
             Map<String, String> managedVersions = new LinkedHashMap<>();
@@ -507,11 +509,11 @@ final class MavenClasspathResolver {
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
-            List<ResolvedEditorArtifact> editorArtifacts = result.getArtifactResults().stream()
+            List<Artifact> editorBinaries = result.getArtifactResults().stream()
                 .map(ArtifactResult::getArtifact)
                 .filter(Objects::nonNull)
-                .map(artifact -> toResolvedEditorArtifact(artifact, repositories, session))
                 .toList();
+            List<ResolvedEditorArtifact> editorArtifacts = resolveEditorArtifacts(editorBinaries, repositories, session);
             validateProductionControlPanelSecurity(model, scope, result);
             lock.check();
             return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
@@ -1472,9 +1474,18 @@ final class MavenClasspathResolver {
                                         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration,
                                         boolean forceUpdates,
                                         DependencyProgressListener progressListener,
-                                        DependencyLock lock) {
+                                        DependencyLock lock,
+                                        MavenRepositoryConfiguration configuration) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        if (!offline && lock.repository() == null && !configuration.credentials().isEmpty()) {
+            sessionBuilder.setAuthenticationSelector(configuration.authenticationSelector(envReader));
+            // Resolver otherwise omits authentication on repositories declared in dependency POMs.
+            sessionBuilder.setConfigProperty("aether.remoteRepositoryManager.authToDescriptorRepositories", true);
+        }
+        if (lock.repository() == null) {
+            sessionBuilder.setMirrorSelector(configuration.mirrorSelector());
+        }
         if (lock.repository() != null) {
             // The lock repository is a local directory: it stays usable when
             // the session is offline, which is how air-gapped builds run.
@@ -1622,7 +1633,7 @@ final class MavenClasspathResolver {
                                                  boolean forceUpdates,
                                                  Path projectDirectory) {
         List<String> repositories = configuredRepositories == null || configuredRepositories.isEmpty()
-            ? List.of("mavenCentral")
+            ? List.of(MAVEN_CENTRAL)
             : configuredRepositories;
 
         Map<String, RemoteRepository> resolved = new LinkedHashMap<>();
@@ -1633,7 +1644,7 @@ final class MavenClasspathResolver {
             }
             String lower = value.toLowerCase(Locale.ROOT);
             if ("mavencentral".equals(lower)) {
-                resolved.put("mavenCentral", newRemoteRepository("mavenCentral", "https://repo1.maven.org/maven2/", forceUpdates));
+                resolved.put(MAVEN_CENTRAL, newRemoteRepository(MAVEN_CENTRAL, "https://repo1.maven.org/maven2/", forceUpdates));
             } else if ("mavenlocal".equals(lower)) {
                 String localPath = resolveLocalMavenRepository().toUri().toString();
                 RepositoryPolicy localPolicy = new RepositoryPolicy(true, RepositoryPolicy.UPDATE_POLICY_NEVER, RepositoryPolicy.CHECKSUM_POLICY_IGNORE);
@@ -1661,12 +1672,16 @@ final class MavenClasspathResolver {
         return path.toAbsolutePath().normalize();
     }
 
-    private List<String> repositoriesForModel(PyprojectModel model) {
-        if (model.pyronaut() == null) {
-            return List.of();
+    private List<String> repositoriesForModel(PyprojectModel model, MavenRepositoryConfiguration configuration) {
+        List<String> repositories = model.pyronaut() == null || model.pyronaut().repositories() == null
+            ? List.of() : model.pyronaut().repositories();
+        if (repositories.isEmpty() && !configuration.repositories().isEmpty()) {
+            return configuration.repositories();
         }
-        List<String> repositories = model.pyronaut().repositories() == null ? List.of() : model.pyronaut().repositories();
-        if (!snapshotRepositoryRequired(model) || !snapshotRepositoryEnabled()) {
+        if (repositories.isEmpty()) {
+            repositories = List.of(MAVEN_CENTRAL);
+        }
+        if (model.pyronaut() == null || !snapshotRepositoryRequired(model) || !snapshotRepositoryEnabled()) {
             return repositories;
         }
         List<String> withSnapshots = new ArrayList<>(repositories.size() + 2);
@@ -1730,41 +1745,49 @@ final class MavenClasspathResolver {
         return PyronautHome.userHome().resolve(".m2").resolve("repository");
     }
 
-    private ResolvedEditorArtifact toResolvedEditorArtifact(Artifact artifact,
-                                                            List<RemoteRepository> repositories,
-                                                            CloseableSession session) {
-        Path binaryPath = artifact.getPath();
-        Path sourcePath = resolveSourceArtifact(artifact, repositories, session);
-        return new ResolvedEditorArtifact(
-            artifact.getGroupId(),
-            artifact.getArtifactId(),
-            artifact.getVersion(),
-            binaryPath == null ? null : binaryPath.toAbsolutePath(),
-            sourcePath == null ? null : sourcePath.toAbsolutePath()
-        );
-    }
-
-    private Path resolveSourceArtifact(Artifact artifact,
-                                       List<RemoteRepository> repositories,
-                                       CloseableSession session) {
-        if (artifact.getPath() == null || !"jar".equalsIgnoreCase(artifact.getExtension())) {
-            return null;
+    private List<ResolvedEditorArtifact> resolveEditorArtifacts(List<Artifact> artifacts,
+                                                               List<RemoteRepository> repositories,
+                                                               CloseableSession session) {
+        List<ArtifactRequest> requests = new ArrayList<>();
+        ArtifactRequest[] requestByIndex = new ArtifactRequest[artifacts.size()];
+        for (int i = 0; i < artifacts.size(); i++) {
+            Artifact artifact = artifacts.get(i);
+            if (artifact.getPath() != null && "jar".equalsIgnoreCase(artifact.getExtension())) {
+                Artifact source = new DefaultArtifact(
+                    artifact.getGroupId(), artifact.getArtifactId(), "sources", artifact.getExtension(), artifact.getVersion()
+                );
+                ArtifactRequest request = new ArtifactRequest(source, repositories, null);
+                requestByIndex[i] = request;
+                requests.add(request);
+            }
         }
-        Artifact sourceArtifact = new DefaultArtifact(
-            artifact.getGroupId(),
-            artifact.getArtifactId(),
-            "sources",
-            artifact.getExtension(),
-            artifact.getVersion()
-        );
-        ArtifactRequest request = new ArtifactRequest(sourceArtifact, repositories, null);
-        try {
-            ArtifactResult result = repositorySystem.resolveArtifact(session, request);
-            Artifact resolved = result.getArtifact();
-            return resolved == null ? null : resolved.getPath();
-        } catch (ArtifactResolutionException e) {
-            return null;
+        List<ArtifactResult> results = List.of();
+        if (!requests.isEmpty()) {
+            try {
+                results = repositorySystem.resolveArtifacts(session, requests);
+            } catch (ArtifactResolutionException e) {
+                // Sources are optional; keep successful downloads when another request fails.
+                results = e.getResults();
+            }
         }
+        Map<ArtifactRequest, Path> sourcePaths = new IdentityHashMap<>();
+        for (ArtifactResult result : results) {
+            if (result.isResolved()) {
+                sourcePaths.put(result.getRequest(), result.getArtifact().getPath());
+            }
+        }
+        List<ResolvedEditorArtifact> resolved = new ArrayList<>(artifacts.size());
+        for (int i = 0; i < artifacts.size(); i++) {
+            Artifact artifact = artifacts.get(i);
+            Path binaryPath = artifact.getPath();
+            Path sourcePath = sourcePaths.get(requestByIndex[i]);
+            resolved.add(new ResolvedEditorArtifact(
+                artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion(),
+                binaryPath == null ? null : binaryPath.toAbsolutePath(),
+                sourcePath == null ? null : sourcePath.toAbsolutePath()
+            ));
+        }
+        return List.copyOf(resolved);
     }
 
     record ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {

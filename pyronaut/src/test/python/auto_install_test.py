@@ -404,6 +404,19 @@ class AutoInstallTest(unittest.TestCase):
 
         self.assertFalse((self.project_dir / "__pyronaut__").exists())
 
+    def test_maven_user_settings_changes_require_install(self):
+        settings = Path(self._temp_dir.name) / "settings.toml"
+        with patch.object(cli, "_settings_path", return_value=settings):
+            self._write_pyproject()
+            self._write_installed_state()
+            self.assertIsNone(cli._java_install_stale_reason(self.project_dir))
+
+            settings.write_text('[maven]\nrepositories = ["https://repo.example/releases"]\n', encoding="utf-8")
+            self.assertEqual("Maven user settings changed since the last install", cli._java_install_stale_reason(self.project_dir))
+            self.assertEqual(cli.SUCCESS, self._run(["run", "--project-dir", str(self.project_dir)]))
+            self.assertEqual(["install", "process", "run"], self._commands())
+            self.assertIsNone(cli._java_install_stale_reason(self.project_dir))
+
     def test_external_build_projects_are_not_checked(self):
         self._write_pyproject()
         (self.project_dir / "build.gradle").write_text("", encoding="utf-8")
