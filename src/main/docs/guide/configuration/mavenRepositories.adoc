@@ -138,8 +138,10 @@ processes inherit the resulting state locations:
 
 [source,bash]
 ----
-mkdir -p .gate-pyronaut
-PYRONAUT_HOME="$PWD/.gate-pyronaut" pyronaut setup
+export PYRONAUT_HOME="$PWD/.gate-pyronaut"
+mkdir -p "$PYRONAUT_HOME"
+# Save the repository configuration above in "$PYRONAUT_HOME/settings.toml".
+pyronaut setup
 ----
 
 These settings configure Pyronaut's embedded Maven Resolver. Gradle repositories
