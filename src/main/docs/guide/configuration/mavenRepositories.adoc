@@ -116,6 +116,36 @@ or POM.
 An explicit `--lock-repository` takes precedence over global repository defaults
 and mirror rules. See <<dependencyLocking,Locking Maven Dependencies>>.
 
+== Repository credentials
+
+Configure HTTP Basic credentials in user settings with `[[maven.credentials]]`.
+Each entry applies to one repository URL, including its path:
+
+[source,toml]
+----
+[[maven.credentials]]
+url = "https://maven.example.org/repository/private/"
+username-env = "PYRONAUT_MAVEN_USERNAME"
+password-env = "PYRONAUT_MAVEN_PASSWORD"
+----
+
+Provide the named environment variables through your shell or CI secret settings.
+For literal values, use `username` and `password` instead of the corresponding
+`-env` fields. Each field must select exactly one source. Tokens can be supplied
+as the password when the repository supports token-based HTTP Basic authentication.
+
+Credentials are selected using the effective repository URL after mirror selection.
+For an authenticated mirror, configure its URL in the credentials entry. Matching
+ignores trailing slashes. Separate repository roots on the same host need separate
+entries. This applies to project, SDK, native-classpath,
+and direct-source resolution, including repositories discovered from POM files.
+
+Environment variables are read only for matching repositories during online
+resolution. Missing variables produce a configuration error; offline resolution
+of cached artifacts does not require them. Secret environment values are not
+added to cache fingerprints or SDK metadata, so rotating a secret does not
+invalidate already cached artifacts.
+
 == Settings, caches, and isolation
 
 The settings file and its directory are part of the Java/Python install and SDK
@@ -146,7 +176,7 @@ pyronaut setup
 
 These settings configure Pyronaut's embedded Maven Resolver. Gradle repositories
 remain independently configured in the Gradle build. Pyronaut does not import
-Maven `settings.xml` mirrors or repository authentication; it only uses an
+mirrors or server credentials from Maven `settings.xml`; it only uses an
 active Maven proxy from `~/.m2/settings.xml` as the proxy fallback when no
 environment or Pyronaut proxy is configured. See <<proxyConfig,Proxy
 Configuration>>.

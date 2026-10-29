@@ -1478,6 +1478,11 @@ final class MavenClasspathResolver {
                                         MavenRepositoryConfiguration configuration) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        if (!offline && lock.repository() == null && !configuration.credentials().isEmpty()) {
+            sessionBuilder.setAuthenticationSelector(configuration.authenticationSelector(envReader));
+            // Resolver otherwise omits authentication on repositories declared in dependency POMs.
+            sessionBuilder.setConfigProperty("aether.remoteRepositoryManager.authToDescriptorRepositories", true);
+        }
         if (lock.repository() == null) {
             sessionBuilder.setMirrorSelector(configuration.mirrorSelector());
         }

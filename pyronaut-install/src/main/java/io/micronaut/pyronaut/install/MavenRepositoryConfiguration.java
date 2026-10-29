@@ -19,6 +19,8 @@ import io.micronaut.json.tree.JsonNode;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyronautHome;
 import io.micronaut.toml.Parser;
+import org.eclipse.aether.repository.Authentication;
+import org.eclipse.aether.repository.AuthenticationSelector;
 import org.eclipse.aether.util.repository.DefaultMirrorSelector;
 
 import java.io.IOException;
@@ -33,22 +35,27 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
- * User repository defaults and Maven mirror rules shared by every embedded resolver invocation.
+ * User Maven repository settings shared by every embedded resolver invocation.
  *
  * @param repositories defaults used when a project does not declare repositories
  * @param mirrors Maven mirror selection rules
+ * @param credentials credentials for effective repository URLs
  * @param fingerprint digest of the settings directory and file contents, or empty when absent
  */
-record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirrors, String fingerprint) {
+record MavenRepositoryConfiguration(List<String> repositories,
+                                    List<Mirror> mirrors,
+                                    List<MavenRepositoryCredentials> credentials,
+                                    String fingerprint) {
     static MavenRepositoryConfiguration load() {
         return load(PyronautHome.configHome().resolve("settings.toml"));
     }
 
     static MavenRepositoryConfiguration load(Path settings) {
         if (!Files.exists(settings)) {
-            return new MavenRepositoryConfiguration(List.of(), List.of(), "");
+            return new MavenRepositoryConfiguration(List.of(), List.of(), List.of(), "");
         }
         try {
             byte[] contents = Files.readAllBytes(settings);
@@ -60,12 +67,13 @@ record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirr
             digest.update((byte) 0);
             String fingerprint = HexFormat.of().formatHex(digest.digest(contents));
             if (maven == null) {
-                return new MavenRepositoryConfiguration(List.of(), List.of(), fingerprint);
+                return new MavenRepositoryConfiguration(List.of(), List.of(), List.of(), fingerprint);
             }
             if (!maven.isObject()) {
                 throw new PyprojectModelException("[maven] must be a table in " + settings);
             }
-            return new MavenRepositoryConfiguration(readRepositories(maven, settingsDirectory), readMirrors(maven), fingerprint);
+            return new MavenRepositoryConfiguration(readRepositories(maven, settingsDirectory), readMirrors(maven),
+                MavenRepositoryCredentials.read(maven.get("credentials")), fingerprint);
         } catch (IOException e) {
             throw new PyprojectModelException("Failed reading Maven settings from " + settings, e);
         } catch (NoSuchAlgorithmException e) {
@@ -79,6 +87,18 @@ record MavenRepositoryConfiguration(List<String> repositories, List<Mirror> mirr
             selector.add(mirror.id(), mirror.url(), "default", false, false, mirror.mirrorOf(), "*");
         }
         return selector;
+    }
+
+    AuthenticationSelector authenticationSelector(Function<String, String> environment) {
+        return repository -> {
+            for (MavenRepositoryCredentials credential : credentials) {
+                Authentication authentication = credential.authentication(repository, environment);
+                if (authentication != null) {
+                    return authentication;
+                }
+            }
+            return null;
+        };
     }
 
     private static List<String> readRepositories(JsonNode maven, Path settingsDirectory) {
