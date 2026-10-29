@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
@@ -36,9 +37,12 @@ class PyronautInstallNativeSmokeTest {
         writeArtifact(repository, "com.example", "runtime-dep", "1.0.0");
         writeArtifact(repository, "com.example", "build-dep", "1.0.0");
         writeArtifact(repository, "com.example", "test-dep", "1.0.0");
-        Files.writeString(project.resolve("pyproject.toml"), pyproject(repository));
+        Files.writeString(project.resolve("pyproject.toml"), pyproject());
+        Path config = Files.createDirectories(tempDir.resolve("config"));
+        Files.writeString(config.resolve("settings.toml"), "[maven]\nrepositories = [\"" + repository.toUri() + "\"]\n");
 
-        Process process = new ProcessBuilder(
+        Path outputFile = tempDir.resolve("install-output.txt");
+        ProcessBuilder builder = new ProcessBuilder(
             binary.toString(),
             "--project-dir",
             project.toString(),
@@ -46,9 +50,21 @@ class PyronautInstallNativeSmokeTest {
             tempDir.resolve("maven-local").toString()
         )
             .redirectErrorStream(true)
-            .start();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        int exitCode = process.waitFor();
+            .redirectOutput(outputFile.toFile());
+        builder.environment().put("PYRONAUT_HOME", config.toString());
+        Process process = builder.start();
+        boolean finished;
+        try {
+            finished = process.waitFor(1, TimeUnit.MINUTES);
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS);
+            }
+        }
+        String output = Files.readString(outputFile, StandardCharsets.UTF_8);
+        assertTrue(finished, output);
+        int exitCode = process.exitValue();
 
         assertEquals(InstallExitCode.SUCCESS.code(), exitCode, output);
         Path cacheDir = project.resolve("__pyronaut__");
@@ -220,20 +236,17 @@ class PyronautInstallNativeSmokeTest {
         assertTrue(stubs.contains("Says hello."), output);
     }
 
-    private static String pyproject(Path repository) {
+    private static String pyproject() {
         return """
             [project]
             name = "native-smoke"
             version = "1.0.0"
 
-            [tool.pyronaut]
-            repositories = ["%s"]
-
             [tool.pyronaut.dependencies]
             runtime = ["com.example:runtime-dep:1.0.0"]
             build = ["com.example:build-dep:1.0.0"]
             test = ["com.example:test-dep:1.0.0"]
-            """.formatted(repository.toUri());
+            """;
     }
 
     private static String bomManagedPyproject(Path repository) {

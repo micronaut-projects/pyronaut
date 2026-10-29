@@ -311,11 +311,11 @@ final class MavenClasspathResolver {
         // enhanced local repository manager can match _remote.repositories
         // provenance. The offline session still prohibits every download.
         DependencyLock lock = DependencyLock.current();
-        List<RemoteRepository> repositories = lock.repositories(
-            toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
-        );
+        MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load();
+        List<RemoteRepository> requestedRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, configuration)) {
+            List<RemoteRepository> repositories = lock.repositories(repositorySystem.newResolutionRepositories(session, requestedRepositories));
             List<ArtifactRequest> requests = artifacts.stream()
                 .map(artifact -> new ArtifactRequest(artifact, repositories, null))
                 .toList();
@@ -376,11 +376,11 @@ final class MavenClasspathResolver {
         // so dropping the remote repositories would reject previously downloaded
         // artifacts. The offline session still prohibits every download.
         DependencyLock lock = DependencyLock.current();
-        List<RemoteRepository> repositories = lock.repositories(
-            toRepositories(repositoriesForModel(model), forceUpdates, projectDirectory)
-        );
+        MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load();
+        List<RemoteRepository> requestedRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
-        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock)) {
+        try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, configuration)) {
+            List<RemoteRepository> repositories = lock.repositories(repositorySystem.newResolutionRepositories(session, requestedRepositories));
             List<Dependency> managedDependencies = managedDependencies(model, repositories, session);
             if (progressListener != null) progressListener.reset();
             Map<String, String> managedVersions = new LinkedHashMap<>();
@@ -1473,9 +1473,13 @@ final class MavenClasspathResolver {
                                         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration,
                                         boolean forceUpdates,
                                         DependencyProgressListener progressListener,
-                                        DependencyLock lock) {
+                                        DependencyLock lock,
+                                        MavenRepositoryConfiguration configuration) {
         SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
         sessionBuilder.setOffline(offline);
+        if (lock.repository() == null) {
+            sessionBuilder.setMirrorSelector(configuration.mirrorSelector());
+        }
         if (lock.repository() != null) {
             // The lock repository is a local directory: it stays usable when
             // the session is offline, which is how air-gapped builds run.
@@ -1662,12 +1666,16 @@ final class MavenClasspathResolver {
         return path.toAbsolutePath().normalize();
     }
 
-    private List<String> repositoriesForModel(PyprojectModel model) {
-        if (model.pyronaut() == null) {
-            return List.of();
+    private List<String> repositoriesForModel(PyprojectModel model, MavenRepositoryConfiguration configuration) {
+        List<String> repositories = model.pyronaut() == null || model.pyronaut().repositories() == null
+            ? List.of() : model.pyronaut().repositories();
+        if (repositories.isEmpty() && !configuration.repositories().isEmpty()) {
+            return configuration.repositories();
         }
-        List<String> repositories = model.pyronaut().repositories() == null ? List.of() : model.pyronaut().repositories();
-        if (!snapshotRepositoryRequired(model) || !snapshotRepositoryEnabled()) {
+        if (repositories.isEmpty()) {
+            repositories = List.of("mavenCentral");
+        }
+        if (model.pyronaut() == null || !snapshotRepositoryRequired(model) || !snapshotRepositoryEnabled()) {
             return repositories;
         }
         List<String> withSnapshots = new ArrayList<>(repositories.size() + 2);

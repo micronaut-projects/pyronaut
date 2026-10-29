@@ -10086,9 +10086,12 @@ java-version = 25
 
     def test_setup_repositories_can_be_replaced_in_user_settings(self):
         settings = {"maven": {"repositories": ["https://repo.example/releases", "companySnapshots"]}}
-        with patch.object(cli, "_read_pyronaut_user_settings", return_value=settings):
+        with (
+            patch.object(cli, "_read_pyronaut_user_settings", return_value=settings),
+            patch.object(cli, "_settings_path", return_value=Path("/tmp/pyronaut-config/settings.toml")),
+        ):
             self.assertEqual(
-                ["https://repo.example/releases", "companySnapshots"],
+                ["https://repo.example/releases", str(Path("/tmp/pyronaut-config/companySnapshots").resolve())],
                 cli._setup_repositories(),
             )
 
@@ -10316,6 +10319,13 @@ java-version = 25
             # The state is valid although no native launcher was downloaded.
             self.assertEqual(state, validate_manifest())
             self.assertEqual(cli.SUCCESS, validate_manifest(reuse_offline=True))
+
+            settings = home / ".pyronaut" / "settings.toml"
+            settings.write_text('[maven]\nrepositories = ["https://repo.example/releases"]\n', encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, cli._SETUP_REQUIRED_MESSAGE):
+                validate_manifest()
+            settings.unlink()
+            self.assertEqual(state, validate_manifest())
 
             # A wheel whose descriptor changed invalidates the recorded classpath.
             descriptor = tools / "pyronaut-run" / "bin" / "native-compile-classpath.txt"

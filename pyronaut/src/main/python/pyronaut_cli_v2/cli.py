@@ -7339,6 +7339,16 @@ def _read_pyronaut_user_settings() -> dict[str, object]:
     return settings
 
 
+def _maven_settings_fingerprint() -> str:
+    settings = _settings_path()
+    if not settings.exists():
+        return ""
+    try:
+        return hashlib.sha256(str(settings.parent.resolve()).encode("utf-8") + b"\0" + settings.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError(f"Failed reading {settings}: {exc}") from exc
+
+
 def _installed_pyronaut_version() -> str:
     try:
         version = importlib.metadata.version("pyronaut")
@@ -8352,6 +8362,7 @@ def _install_inputs_state(project_dir: Path) -> dict[str, object]:
     return {
         "pyronaut": _installed_pyronaut_version(),
         "toolPyronautSha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "mavenSettingsSha256": _maven_settings_fingerprint(),
     }
 
 
@@ -8386,6 +8397,8 @@ def _java_install_stale_reason(project_dir: Path) -> str | None:
         return "Pyronaut changed since the last install"
     if recorded.get("toolPyronautSha256") != current["toolPyronautSha256"]:
         return "[tool.pyronaut] settings changed since the last install"
+    if recorded.get("mavenSettingsSha256", "") != current["mavenSettingsSha256"]:
+        return "Maven user settings changed since the last install"
     return None
 
 
@@ -9129,8 +9142,9 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
             bool(descriptors)
             and metadata.get("sdk.version") == version
             and metadata.get("descriptor.sha256") == packaged_metadata.get("descriptor.sha256")
+            and metadata.get("maven.settings.sha256", "") == _maven_settings_fingerprint()
         )
-    except (OSError, UnicodeError, ValueError):
+    except (OSError, UnicodeError, ValueError, RuntimeError):
         return False
 
 
@@ -9805,7 +9819,10 @@ def _setup_repositories() -> list[str]:
         for index, value in enumerate(configured):
             if not isinstance(value, str) or not value.strip():
                 raise RuntimeError(f"[maven].repositories[{index}] must be a non-empty string")
-            repositories.append(value.strip())
+            repository = value.strip()
+            if "://" not in repository and repository.lower() not in ("mavencentral", "mavenlocal"):
+                repository = str((_settings_path().parent / repository).resolve())
+            repositories.append(repository)
         return repositories
     repositories = ["mavenCentral"]
     version = _installed_pyronaut_version()
@@ -9929,6 +9946,7 @@ def _setup_expectation(args: Sequence[str]) -> dict[str, object]:
         "platform": _setup_platform(),
         "localRepository": str(_setup_local_repository(args)),
         "repositories": _setup_repositories(),
+        "mavenSettingsSha256": _maven_settings_fingerprint(),
         "sdkDescriptorSha256": _packaged_sdk_descriptor_hash(),
         "toolDescriptorSha256": _packaged_tool_descriptor_hash(),
         "nativeImages": {
@@ -9955,6 +9973,7 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
         "platform",
         "localRepository",
         "repositories",
+        "mavenSettingsSha256",
         "sdkDescriptorSha256",
         "toolDescriptorSha256",
         "nativeImages",

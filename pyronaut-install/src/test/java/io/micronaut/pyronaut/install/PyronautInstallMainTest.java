@@ -126,7 +126,7 @@ class PyronautInstallMainTest {
 
         assertEquals(1, invocations.size());
         Invocation invocation = invocations.getFirst();
-        assertEquals(List.of("mavenCentral"), invocation.model().pyronaut().repositories());
+        assertEquals(List.of(), invocation.model().pyronaut().repositories());
         assertNull(invocation.model().pyronaut().coreVersion());
         assertNull(invocation.model().pyronaut().platformVersion());
         assertEquals(projectlessDirectory.resolve("custom-repository").toAbsolutePath().normalize(), invocation.repository());
