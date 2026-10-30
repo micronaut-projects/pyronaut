@@ -250,7 +250,7 @@ class PytestFunctionInvokerTest {
     }
 
     @Test
-    void pytestRunnerUsesProcessedBytecodeAndDisablesPytestCacheProvider() throws Exception {
+    void pytestRunnerUsesSysCaptureAndDisablesPytestCacheProvider() throws Exception {
         try (Context context = Context.newBuilder("python")
             .allowAllAccess(true)
             .build()) {
@@ -294,7 +294,8 @@ class PytestFunctionInvokerTest {
             assertEquals("--assert=plain", recordedArgs.getArrayElement(0).asString());
             assertEquals("-p", recordedArgs.getArrayElement(1).asString());
             assertEquals("no:cacheprovider", recordedArgs.getArrayElement(2).asString());
-            assertEquals("tests/test_demo.py", recordedArgs.getArrayElement(3).asString());
+            assertEquals("--capture=sys", recordedArgs.getArrayElement(3).asString());
+            assertEquals("tests/test_demo.py", recordedArgs.getArrayElement(4).asString());
         }
     }
 
