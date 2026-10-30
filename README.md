@@ -396,7 +396,9 @@ Configure a private bundle repository or pinned CI version in
 `~/.pyronaut/settings.toml` under `[native-images]` before running setup.
 
 Setup resolves from Maven Central by default and adds Sonatype Central
-snapshots for snapshot SDK versions. Configure replacement repositories with:
+snapshots for snapshot SDK versions. Configure replacement defaults with
+`repositories`, or use `prepend-repositories` to put a CI/source-built
+repository before project-declared repositories:
 
 ```toml
 [maven]

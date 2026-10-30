@@ -110,7 +110,8 @@ public final class DirectSourceDependencyResolver {
         String hash = fingerprint(build, runtime, repositories, localRepository, fingerprintInputs);
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
-        if (!bypassCache && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+        if (!bypassCache && !MavenArtifactVerification.requiresResolution()
+            && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest) && Files.isRegularFile(runtimeManifest)) {
             List<String> cachedBuild = read(buildManifest);
             List<String> cachedRuntime = read(runtimeManifest);
@@ -136,6 +137,7 @@ public final class DirectSourceDependencyResolver {
         Files.write(buildManifest, buildResult);
         Files.write(runtimeManifest, runtimeResult);
         Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
+        writeVerificationReport(cacheDirectory, buildDetails, runtimeDetails);
         return new DetailedResult(
             buildResult,
             runtimeResult,
@@ -194,7 +196,8 @@ public final class DirectSourceDependencyResolver {
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
         Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
-        if (!bypassCache && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+        if (!bypassCache && !MavenArtifactVerification.requiresResolution()
+            && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest) && Files.isRegularFile(runtimeManifest) && Files.isRegularFile(testManifest)) {
             return new DetailedResult(read(buildManifest), read(runtimeManifest), read(testManifest),
                 artifactsFromClasspath(read(buildManifest)), artifactsFromClasspath(read(runtimeManifest)), true);
@@ -211,6 +214,7 @@ public final class DirectSourceDependencyResolver {
         Files.write(runtimeManifest, runtimeResult);
         Files.write(testManifest, testResult);
         Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
+        writeVerificationReport(cacheDirectory, buildDetails, runtimeDetails, testDetails);
         return new DetailedResult(buildResult, runtimeResult, testResult,
             artifactsFromResolvedDetails(buildDetails.editorArtifacts()), artifactsFromResolvedDetails(runtimeDetails.editorArtifacts()), false);
     }
@@ -289,28 +293,12 @@ public final class DirectSourceDependencyResolver {
         Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
         Path serverManifest = cacheDirectory.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
         Path metadata = cacheDirectory.resolve(LAUNCH_METADATA_FILE);
-        if (Files.isRegularFile(cacheDirectory.resolve(HASH_FILE))
-            && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
-            && Files.isRegularFile(buildManifest)
-            && Files.isRegularFile(runtimeManifest)
-            && (test.isEmpty() || Files.isRegularFile(testManifest))
-            && Files.isRegularFile(metadata)) {
-            boolean required = readTestResourcesRequired(metadata);
-            if (!required || Files.isRegularFile(serverManifest)) {
-                if (!required) {
-                    Files.deleteIfExists(serverManifest);
-                }
-                if (progress != null) {
-                    progress.directSourceLaunchCacheHit(build.size() + runtime.size() + test.size());
-                }
-                return new LaunchResult(
-                    read(buildManifest),
-                    read(runtimeManifest),
-                    required ? read(serverManifest) : List.of(),
-                    required,
-                    true
-                );
+        LaunchResult cached = cachedLaunch(cacheDirectory, hash, !test.isEmpty());
+        if (cached != null) {
+            if (progress != null) {
+                progress.directSourceLaunchCacheHit(build.size() + runtime.size() + test.size());
             }
+            return cached;
         }
 
         PyprojectModel baseModel = model(build, runtime, test, boms, exclusions, repositories, null);
@@ -350,7 +338,42 @@ public final class DirectSourceDependencyResolver {
         }
         Files.writeString(metadata, "testResourcesRequired=" + required + System.lineSeparator());
         Files.writeString(cacheDirectory.resolve(HASH_FILE), hash);
+        writeVerificationReport(cacheDirectory, buildDetails, runtimeDetails, testDetails, serverDetails);
         return new LaunchResult(buildResult, runtimeResult, serverResult, required, false);
+    }
+
+    private static void writeVerificationReport(Path cacheDirectory,
+                                                MavenClasspathResolver.ResolvedScopeDetails... scopes) throws IOException {
+        List<MavenArtifactVerification.VerifiedArtifact> artifacts = new ArrayList<>();
+        for (MavenClasspathResolver.ResolvedScopeDetails scope : scopes) {
+            if (scope != null) {
+                artifacts.addAll(scope.verifiedArtifacts());
+            }
+        }
+        MavenArtifactVerification.writeReport(cacheDirectory, artifacts);
+    }
+
+    private static LaunchResult cachedLaunch(Path cacheDirectory, String hash, boolean hasTests) throws IOException {
+        Path hashFile = cacheDirectory.resolve(HASH_FILE);
+        Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
+        Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
+        Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
+        Path serverManifest = cacheDirectory.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
+        Path metadata = cacheDirectory.resolve(LAUNCH_METADATA_FILE);
+        if (MavenArtifactVerification.requiresResolution() || !Files.isRegularFile(hashFile)
+            || !hash.equals(Files.readString(hashFile).trim()) || !Files.isRegularFile(buildManifest)
+            || !Files.isRegularFile(runtimeManifest) || (hasTests && !Files.isRegularFile(testManifest))
+            || !Files.isRegularFile(metadata)) {
+            return null;
+        }
+        boolean required = readTestResourcesRequired(metadata);
+        if (required && !Files.isRegularFile(serverManifest)) {
+            return null;
+        }
+        if (!required) {
+            Files.deleteIfExists(serverManifest);
+        }
+        return new LaunchResult(read(buildManifest), read(runtimeManifest), required ? read(serverManifest) : List.of(), required, true);
     }
 
     /**

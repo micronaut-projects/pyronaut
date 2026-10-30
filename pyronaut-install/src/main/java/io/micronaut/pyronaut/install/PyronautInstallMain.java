@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -424,6 +425,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
             ResolvedScopes resolved = resolveScopes(root, model, localRepo, activeScopes, bypassRequested, progressReporter);
             writeResolvedState(root, cacheDir, model, resolved, progressReporter);
             ResolutionCache.write(cacheDir, hash, resolved.classpaths());
+            MavenArtifactVerification.writeReport(cacheDir, resolved.verifiedArtifacts());
             installToolClasspaths(root, model, progressReporter);
         }
         return InstallExitCode.SUCCESS.code();
@@ -465,6 +467,7 @@ public final class PyronautInstallMain implements Callable<Integer> {
                                          InstallProgressReporter progressReporter) {
         Map<InstallScope, List<String>> resolved = new EnumMap<>(InstallScope.class);
         Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> resolvedEditorArtifacts = new EnumMap<>(InstallScope.class);
+        List<MavenArtifactVerification.VerifiedArtifact> verifiedArtifacts = new ArrayList<>();
         Map<InstallScope, Future<MavenClasspathResolver.ResolvedScopeDetails>> futures = new EnumMap<>(InstallScope.class);
         for (InstallScope installScope : activeScopes) {
             progressReporter.startScope(installScope);
@@ -498,12 +501,13 @@ public final class PyronautInstallMain implements Callable<Integer> {
                 progressReporter.finishScope(installScope, classpath.size());
                 resolved.put(installScope, classpath);
                 resolvedEditorArtifacts.put(installScope, details.editorArtifacts());
+                verifiedArtifacts.addAll(details.verifiedArtifacts());
             }
         }
         if (firstFailure != null) {
             throw firstFailure;
         }
-        return new ResolvedScopes(resolved, resolvedEditorArtifacts);
+        return new ResolvedScopes(resolved, resolvedEditorArtifacts, verifiedArtifacts);
     }
 
     private static RuntimeException resolutionFailure(ExecutionException e) {
@@ -551,7 +555,8 @@ public final class PyronautInstallMain implements Callable<Integer> {
     }
 
     private record ResolvedScopes(Map<InstallScope, List<String>> classpaths,
-                                  Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> editorArtifacts) {
+                                  Map<InstallScope, List<MavenClasspathResolver.ResolvedEditorArtifact>> editorArtifacts,
+                                  List<MavenArtifactVerification.VerifiedArtifact> verifiedArtifacts) {
     }
 
     private void installToolClasspaths(Path root, PyprojectModel model) throws IOException {

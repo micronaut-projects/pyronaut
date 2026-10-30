@@ -106,7 +106,7 @@ final class ToolClasspathInstaller {
                  FileLock ignored = channel.lock()) {
                 Path current = versionRoot.resolve("current");
                 if (!refresh && completeLayout(current, descriptors, sdkVersion, descriptorHash, localRepository)) {
-                    if (DependencyLock.current().requiresResolution()) {
+                    if (DependencyLock.current().requiresResolution() || MavenArtifactVerification.requiresResolution()) {
                         // Recording or enforcing a dependency lock has to observe
                         // every artifact, also when the layout is already complete.
                         resolver.resolveToolArtifacts(model == null ? defaultModel() : model, mavenArtifacts(descriptors),
@@ -251,6 +251,7 @@ final class ToolClasspathInstaller {
             return false;
         }
         Map<String, Path> sharedSources = preferredSources(descriptors, localRepository);
+        MavenArtifactVerification verification = MavenRepositoryConfiguration.load().verification();
         for (ToolDescriptor descriptor : descriptors) {
             Path bin = layout.resolve(TOOLS_DIR).resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
             if (!Files.isRegularFile(bin)) {
@@ -263,11 +264,12 @@ final class ToolClasspathInstaller {
                 Path expected = entry.controlPanel()
                     ? expectedSource(entry, localRepository)
                     : sharedSources.get(entry.fileName());
-                if (!validArtifactLink(artifact, expected)) {
+                if (!validArtifact(artifact, expected, entry, verification)) {
                     return false;
                 }
             }
         }
+        verification.check();
         return true;
     }
 
@@ -321,16 +323,18 @@ final class ToolClasspathInstaller {
             .resolve(repositoryFileName);
     }
 
-    private static boolean validArtifactLink(Path artifact, Path expectedSource) {
+    private static boolean validArtifact(Path artifact, Path expectedSource, ToolEntry entry, MavenArtifactVerification verification) {
         if (!Files.isRegularFile(artifact) || !Files.isRegularFile(expectedSource)) {
             return false;
         }
         try {
-            if (Files.isSymbolicLink(artifact)) {
-                Path target = artifact.getParent().resolve(Files.readSymbolicLink(artifact)).normalize();
-                return target.equals(expectedSource);
+            boolean matches = Files.isSymbolicLink(artifact)
+                ? artifact.getParent().resolve(Files.readSymbolicLink(artifact)).normalize().equals(expectedSource)
+                : Files.mismatch(artifact, expectedSource) == -1L;
+            if (matches && entry.maven()) {
+                verification.verifyArtifact(entry.artifact().setPath(artifact));
             }
-            return Files.mismatch(artifact, expectedSource) == -1L;
+            return matches;
         } catch (IOException e) {
             return false;
         }

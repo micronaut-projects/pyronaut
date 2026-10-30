@@ -113,6 +113,8 @@ _NATIVE_UNSUPPORTED_ARTIFACT_IDS = frozenset({"micronaut-runtime-osx", "director
 _SETUP_SCHEMA_VERSION = 1
 _SETUP_REQUIRED_MESSAGE = "Pyronaut setup is missing or stale. Run pyronaut setup."
 _NATIVE_IMAGE_SETTINGS_TABLE = "native-images"
+_MAVEN_VERIFICATION_REPORT_FILE = "verified-maven-artifacts.json"
+_MAVEN_GROUP_PATTERN = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:\.\*)?")
 _DEFAULT_DOCKER_JVM_BASE_IMAGE = f"container-registry.oracle.com/graalvm/jdk:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BUILDER_IMAGE = f"container-registry.oracle.com/graalvm/native-image:{_DEFAULT_GRAALVM_DOWNLOAD_VERSION}"
 _DEFAULT_DOCKER_NATIVE_BASE_IMAGE = "gcr.io/distroless/base"
@@ -1085,7 +1087,10 @@ def _delegate(
         if direct_classpath:
             env = dict(env or os.environ)
             env["PYRONAUT_DIRECT_CLASSPATH"] = os.pathsep.join(direct_classpath)
-    return runner(command_line, env)
+    result = runner(command_line, env)
+    if command == "install" and result == SUCCESS:
+        _clear_maven_verification_report_if_disabled(Path(_extract_project_dir(args)).resolve())
+    return result
 
 
 def _delegate_direct_source(
@@ -1605,14 +1610,24 @@ def _resolve_java_executable(env: dict[str, str] | None) -> str:
     return resolved
 
 
-def _read_manifest_entries(file: Path) -> list[str]:
+def _read_manifest_entries(file: Path, *, require_verification_report: bool = True) -> list[str]:
     if not file.exists():
         raise RuntimeError(f"Missing classpath manifest: {file}. Run pyronaut install first.")
+    verification = _maven_verification()
+    report = (
+        _read_maven_verification_report(file.parent, verification)
+        if verification is not None and require_verification_report
+        else None
+    )
     entries: list[str] = []
     for line in file.read_text(encoding="utf-8").splitlines():
         value = line.strip()
         if value:
+            if report is not None:
+                _verify_maven_manifest_entry(Path(value), report, verification)
             entries.append(value)
+    if report is not None:
+        _verify_maven_report_poms(report, verification, _maven_verification_report_path(file.parent))
     return entries
 
 
@@ -2278,6 +2293,7 @@ def _native_launcher_compile_classpath_entries(
                 raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
             resolved.append(path)
         if resolved:
+            _verify_descriptor_paths(entries, resolved)
             return [str(path) for path in resolved]
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
     try:
@@ -2293,6 +2309,7 @@ def _native_launcher_compile_classpath_entries(
         resolved = image["classpath"]
         if len(resolved) != len(entries) or not all(isinstance(path, str) and Path(path).is_file() for path in resolved):
             raise ValueError("native classpath is incomplete")
+        _verify_descriptor_paths(entries, resolved)
         return list(resolved)
     except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
@@ -2971,6 +2988,7 @@ def _run_direct_source_build(
             "resolved-runtime-dependencies",
             "resolved-test-dependencies",
             "m2-repository",
+            _MAVEN_VERIFICATION_REPORT_FILE,
         ):
             source = source_cache / name
             if source.is_dir():
@@ -2981,6 +2999,7 @@ def _run_direct_source_build(
         # not materialize this otherwise-required shared pipeline manifest.
         (staging_cache / "resolved-test-dependencies").touch(exist_ok=True)
 
+        saved_direct_report: dict[str, object] | None = None
         if setup is not None:
             direct_manifests = {
                 name: _read_manifest_entries(staging_cache / name)
@@ -2990,6 +3009,8 @@ def _run_direct_source_build(
                     "resolved-test-dependencies",
                 )
             }
+            if _maven_verification() is not None:
+                saved_direct_report = _load_verification_report_json(staging_cache)
             setup_install_args = [
                 "--project-dir",
                 str(staging_project),
@@ -3000,6 +3021,14 @@ def _run_direct_source_build(
             setup_install_code = _delegate("install", setup_install_args, runner, resolver, java_home_provider=java_home_provider)
             if setup_install_code != SUCCESS:
                 return setup_install_code
+            if saved_direct_report is not None:
+                verification = _maven_verification()
+                if verification is None:
+                    raise _verification_failure(
+                        _maven_verification_report_path(staging_cache),
+                        "Maven verification policy was disabled during direct-source install",
+                    )
+                _merge_maven_verification_reports(staging_cache, saved_direct_report, verification)
             for name, direct_entries in direct_manifests.items():
                 manifest = staging_cache / name
                 configured_entries = _read_manifest_entries(manifest)
@@ -3742,7 +3771,13 @@ def _stage_manifest_artifacts(
     project_root = project_dir.resolve()
     artifact_root = pyronaut_dir / "m2-repository"
     rewritten: list[str] = []
-    entries = _read_manifest_entries(source)
+    # External Gradle/Maven manifests are owned by the external build and do
+    # not have an embedded-resolver verification report. Managed manifests
+    # are validated before they are copied into the generated staging layout.
+    entries = _read_manifest_entries(
+        source,
+        require_verification_report=not _is_external_build_project(project_root),
+    )
     if launcher_executable:
         entries = _filter_native_launcher_provided_entries(
             entries, launcher_executable, "build"
@@ -5975,10 +6010,12 @@ def _build_native_classpath(project_dir: Path) -> str:
 
     entries = []
     if runtime_manifest.exists():
-        for line in runtime_manifest.read_text(encoding="utf-8").splitlines():
-            value = line.strip()
-            if value:
-                entries.append(value)
+        entries.extend(
+            _read_manifest_entries(
+                runtime_manifest,
+                require_verification_report=not _is_external_build_project(project_dir),
+            )
+        )
     entries.append(str(classes_dir))
     return os.pathsep.join(entries)
 
@@ -7339,12 +7376,400 @@ def _read_pyronaut_user_settings() -> dict[str, object]:
     return settings
 
 
+class _MavenVerification(NamedTuple):
+    lock_file: Path
+    groups: tuple[str, ...]
+    entries: dict[str, tuple[str, str]]
+    contents: bytes
+
+
+def _maven_coordinate_parts(coordinates: str) -> tuple[str, str, str, str, str]:
+    fields = coordinates.split(":")
+    if len(fields) == 4:
+        group, artifact, extension, version = fields
+        classifier = ""
+    elif len(fields) == 5:
+        group, artifact, extension, classifier, version = fields
+    else:
+        raise ValueError("coordinates must be group:artifact:extension[:classifier]:version")
+    if any(not field or "/" in field or "\\" in field for field in (group, artifact, extension, version)):
+        raise ValueError("coordinates contain an empty or unsafe field")
+    if "/" in classifier or "\\" in classifier:
+        raise ValueError("coordinates contain an empty or unsafe field")
+    return group, artifact, extension, classifier, version
+
+
+def _maven_layout_path(coordinates: str) -> str:
+    group, artifact, extension, classifier, version = _maven_coordinate_parts(coordinates)
+    # Maven Resolver records timestamped snapshots under their base version.
+    timestamp = re.fullmatch(r"(.+)-[0-9]{8}\.[0-9]{6}-[0-9]+", version)
+    base_version = f"{timestamp.group(1)}-SNAPSHOT" if timestamp else version
+    suffix = f"-{classifier}" if classifier else ""
+    return (
+        f"{group.replace('.', '/')}/{artifact}/{base_version}/"
+        f"{artifact}-{version}{suffix}.{extension}"
+    )
+
+
+def _parse_maven_verification(settings: Path, settings_contents: bytes) -> _MavenVerification | None:
+    try:
+        parsed = _toml_parser(_settings_label()).loads(settings_contents.decode("utf-8"))
+    except (UnicodeError, ValueError, RuntimeError) as exc:
+        raise RuntimeError(f"Failed reading {settings}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Invalid Pyronaut settings in {settings}")
+    maven = parsed.get("maven")
+    if maven is None:
+        return None
+    if not isinstance(maven, dict):
+        raise RuntimeError(f"[maven] in {settings} must be a table")
+    verification = maven.get("verification")
+    if verification is None:
+        return None
+    if not isinstance(verification, dict):
+        raise RuntimeError(f"[maven.verification] in {settings} must be a table")
+    lock_name = verification.get("lock-file")
+    groups = verification.get("groups")
+    if not isinstance(lock_name, str) or not lock_name.strip() or not isinstance(groups, list) or not groups:
+        raise RuntimeError("[maven.verification] requires a non-empty lock-file string and groups array")
+    if any(not isinstance(group, str) or _MAVEN_GROUP_PATTERN.fullmatch(group) is None for group in groups):
+        raise RuntimeError("[maven.verification].groups entries must be Maven group IDs, optionally ending in .*")
+    lock_file = (settings.parent.resolve() / lock_name).resolve()
+    try:
+        contents = lock_file.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"Failed reading trusted Maven bundle lock {lock_file}: {exc}") from exc
+    try:
+        lock = _toml_parser(str(lock_file)).loads(contents.decode("utf-8"))
+    except (UnicodeError, ValueError, RuntimeError) as exc:
+        raise RuntimeError(f"Invalid Maven verification lock {lock_file}: {exc}") from exc
+    if not isinstance(lock, dict) or type(lock.get("version")) is not int or lock.get("version") != 1:
+        raise RuntimeError(f"Unsupported {lock_file} format version; expected version = 1")
+    artifacts = lock.get("artifact", [])
+    if not isinstance(artifacts, list):
+        raise RuntimeError(f"Invalid {lock_file}: artifact must be an array of tables")
+    entries: dict[str, tuple[str, str]] = {}
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise RuntimeError(f"Invalid {lock_file}: artifact entries must be tables")
+        coordinates = artifact.get("coordinates")
+        path = artifact.get("path")
+        sha256 = artifact.get("sha256")
+        if not isinstance(coordinates, str) or not coordinates.strip():
+            raise RuntimeError(f"Invalid {lock_file}: every artifact requires coordinates")
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or Path(path).is_absolute()
+            or "\\" in path
+            or ".." in path.split("/")
+        ):
+            raise RuntimeError(f"Invalid {lock_file}: artifact path {path!r} must be relative")
+        if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
+            raise RuntimeError(f"Invalid {lock_file}: sha256 of {path} is not a SHA-256 checksum")
+        try:
+            group = _maven_coordinate_parts(coordinates)[0]
+            expected_path = _maven_layout_path(coordinates)
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid Maven verification lock {lock_file}: {exc}") from exc
+        if expected_path != path:
+            raise RuntimeError(f"Invalid Maven verification lock {lock_file}: coordinates do not match path {path}")
+        if path in entries:
+            raise RuntimeError(f"Invalid Maven verification lock {lock_file}: duplicate artifact path {path}")
+        entries[path] = (group, sha256.lower())
+    return _MavenVerification(lock_file, tuple(groups), entries, contents)
+
+
+def _maven_verification() -> _MavenVerification | None:
+    settings = _settings_path()
+    if not settings.is_file():
+        return None
+    try:
+        contents = settings.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"Failed reading {settings}: {exc}") from exc
+    return _parse_maven_verification(settings, contents)
+
+
+def _maven_group_selected(groups: Sequence[str], group: str) -> bool:
+    return any(
+        group.startswith(pattern[:-1]) if pattern.endswith(".*") else group == pattern
+        for pattern in groups
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise RuntimeError(f"Cannot verify Maven artifact {path}: {exc}") from exc
+    return digest.hexdigest()
+
+
+def _maven_verification_report_path(cache_dir: Path) -> Path:
+    return cache_dir / _MAVEN_VERIFICATION_REPORT_FILE
+
+
+def _verification_failure(report: Path, detail: str) -> RuntimeError:
+    return RuntimeError(
+        f"Maven bundle verification report is missing or stale ({report}: {detail}); "
+        "run pyronaut install"
+    )
+
+
+def _read_maven_verification_report(
+    cache_dir: Path,
+    verification: _MavenVerification,
+) -> dict[str, dict[str, str]]:
+    report = _maven_verification_report_path(cache_dir)
+    try:
+        parsed = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise _verification_failure(report, str(exc)) from exc
+    if not isinstance(parsed, dict) or type(parsed.get("version")) is not int or parsed.get("version") != 1:
+        raise _verification_failure(report, "unsupported format version")
+    if parsed.get("mavenSettingsSha256") != _maven_settings_fingerprint():
+        raise _verification_failure(report, "Maven settings changed")
+    artifacts = parsed.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise _verification_failure(report, "artifacts must be an array")
+    records: dict[str, dict[str, str]] = {}
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
+            raise _verification_failure(report, f"artifact {index} is not an object")
+        group = artifact.get("groupId")
+        path = artifact.get("path")
+        file_name = artifact.get("file")
+        if (
+            not isinstance(group, str)
+            or not group
+            or not isinstance(path, str)
+            or not path
+            or Path(path).is_absolute()
+            or "\\" in path
+            or ".." in path.split("/")
+            or not isinstance(file_name, str)
+            or not Path(file_name).is_absolute()
+        ):
+            raise _verification_failure(report, f"artifact {index} has invalid identity")
+        actual_file = Path(file_name).absolute()
+        record = {"groupId": group, "path": path, "file": str(actual_file)}
+        key = str(actual_file)
+        previous = records.get(key)
+        if previous is not None and previous != record:
+            raise _verification_failure(report, f"file {actual_file} has conflicting identities")
+        records[key] = record
+
+    for record in records.values():
+        if not _maven_group_selected(verification.groups, record["groupId"]):
+            continue
+        trusted = verification.entries.get(record["path"])
+        if trusted is None or trusted[0] != record["groupId"]:
+            raise _verification_failure(
+                report,
+                f"selected artifact {record['groupId']}:{record['path']} is not a trusted lock identity",
+            )
+    return records
+
+
+def _verify_maven_report_record(
+    record: dict[str, str], verification: _MavenVerification, report: Path,
+) -> None:
+    trusted = verification.entries.get(record["path"])
+    if trusted is None or trusted[0] != record["groupId"]:
+        raise _verification_failure(report, f"selected artifact {record['path']} is not trusted")
+    actual_file = Path(record["file"])
+    if not actual_file.is_file():
+        raise RuntimeError(f"Maven bundle verification failed: missing artifact {actual_file}")
+    actual = _sha256_file(actual_file)
+    if actual.lower() != trusted[1]:
+        raise RuntimeError(
+            f"Maven bundle verification failed for {record['path']}: expected SHA-256 {trusted[1]}, "
+            f"but {actual_file} has {actual}"
+        )
+
+
+def _verify_maven_report_poms(
+    records: dict[str, dict[str, str]], verification: _MavenVerification, report: Path,
+) -> None:
+    for record in records.values():
+        if (
+            _maven_group_selected(verification.groups, record["groupId"])
+            and Path(record["path"]).suffix.lower() == ".pom"
+        ):
+            _verify_maven_report_record(record, verification, report)
+
+
+def _verify_maven_manifest_entry(
+    path: Path,
+    records: dict[str, dict[str, str]],
+    verification: _MavenVerification,
+) -> None:
+    actual_file = path.absolute()
+    record = records.get(str(actual_file))
+    if record is None:
+        raise RuntimeError(
+            f"Maven bundle verification failed: classpath artifact {actual_file} is absent from "
+            f"{_MAVEN_VERIFICATION_REPORT_FILE}; run pyronaut install"
+        )
+    if not actual_file.is_file():
+        raise RuntimeError(f"Maven bundle verification failed: missing artifact {actual_file}")
+    if _maven_group_selected(verification.groups, record["groupId"]):
+        _verify_maven_report_record(
+            record,
+            verification,
+            _maven_verification_report_path(path.parent),
+        )
+
+
+def _clear_maven_verification_report_if_disabled(project_dir: Path) -> None:
+    if _maven_verification() is not None:
+        return
+    with contextlib.suppress(OSError):
+        _maven_verification_report_path(_pyronaut_output_dir(project_dir)).unlink()
+
+
+def _load_verification_report_json(cache_dir: Path) -> dict[str, object]:
+    report = _maven_verification_report_path(cache_dir)
+    try:
+        parsed = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise _verification_failure(report, str(exc)) from exc
+    if not isinstance(parsed, dict):
+        raise _verification_failure(report, "top-level value must be an object")
+    return parsed
+
+
+def _merge_maven_verification_reports(
+    cache_dir: Path, saved: dict[str, object], verification: _MavenVerification,
+) -> None:
+    report = _maven_verification_report_path(cache_dir)
+    current = _load_verification_report_json(cache_dir)
+    expected_fingerprint = _maven_settings_fingerprint()
+    if (
+        saved.get("version") != 1
+        or current.get("version") != 1
+        or saved.get("mavenSettingsSha256") != expected_fingerprint
+        or current.get("mavenSettingsSha256") != expected_fingerprint
+        or not isinstance(saved.get("artifacts"), list)
+        or not isinstance(current.get("artifacts"), list)
+    ):
+        raise _verification_failure(report, "inconsistent direct-source metadata")
+    merged: list[object] = []
+    seen: dict[str, object] = {}
+    for artifact in [*saved["artifacts"], *current["artifacts"]]:
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("file"), str):
+            raise _verification_failure(report, "invalid artifact identity")
+        key = str(Path(artifact["file"]).absolute())
+        previous = seen.get(key)
+        if previous is not None and previous != artifact:
+            raise _verification_failure(report, f"file {key} has conflicting identities")
+        if previous is None:
+            seen[key] = artifact
+            merged.append(artifact)
+    report.write_text(
+        json.dumps(
+            {"version": 1, "mavenSettingsSha256": expected_fingerprint, "artifacts": merged},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # Ensure the merged report still obeys the trusted lock before any merged
+    # manifest is consumed.
+    _read_maven_verification_report(cache_dir, verification)
+
+
+def _descriptor_maven_layout_candidates(fields: Sequence[str]) -> tuple[str, ...]:
+    group, artifact, version, extension, classifier, filename = fields[1:7]
+    prefix = f"{group.replace('.', '/')}/{artifact}/{version}"
+    classifier_suffix = f"-{classifier}" if classifier else ""
+    normalized = f"{artifact}-{version}{classifier_suffix}.{extension}"
+    return (f"{prefix}/{filename}", f"{prefix}/{normalized}")
+
+
+def _descriptor_expected_hash(
+    fields: Sequence[str], verification: _MavenVerification,
+) -> str | None:
+    group, artifact, version, extension, classifier, _ = fields[1:7]
+    candidates = [
+        verification.entries[candidate]
+        for candidate in dict.fromkeys(_descriptor_maven_layout_candidates(fields))
+        if candidate in verification.entries
+        and _maven_group_selected(verification.groups, verification.entries[candidate][0])
+    ]
+    if not candidates and version.endswith("-SNAPSHOT"):
+        prefix = f"{group.replace('.', '/')}/{artifact}/{version}/"
+        classifier_suffix = f"-{classifier}" if classifier else ""
+        pattern = re.compile(
+            re.escape(f"{artifact}-{version[:-len('-SNAPSHOT')]}")
+            + r"-[0-9]{8}\.[0-9]{6}-[0-9]+"
+            + re.escape(f"{classifier_suffix}.{extension}")
+            + "$"
+        )
+        candidates = [
+            value
+            for relative, value in verification.entries.items()
+            if relative.startswith(prefix)
+            and pattern.fullmatch(Path(relative).name)
+            and _maven_group_selected(verification.groups, value[0])
+        ]
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"Maven bundle verification failed: {group}:{artifact}:{version} "
+            f"matches multiple entries in {verification.lock_file}"
+        )
+    return candidates[0][1] if candidates else None
+
+
+def _verify_descriptor_paths(
+    entries: Sequence[str], paths: Sequence[str | Path], verification: _MavenVerification | None = None,
+) -> None:
+    verification = verification or _maven_verification()
+    if verification is None:
+        return
+    if len(entries) != len(paths):
+        raise RuntimeError("Maven bundle verification failed: classpath and descriptor lengths differ")
+    for entry, path_value in zip(entries, paths):
+        fields = entry.split("\t")
+        if len(fields) != 7 or fields[0] not in {"maven", "control-panel"}:
+            continue
+        group = fields[1]
+        if not _maven_group_selected(verification.groups, group):
+            continue
+        expected = _descriptor_expected_hash(fields, verification)
+        if expected is None:
+            raise RuntimeError(
+                f"Maven bundle verification failed: {group}:{fields[2]}:{fields[3]} "
+                f"is missing from {verification.lock_file}"
+            )
+        actual_path = Path(path_value)
+        if not actual_path.is_file():
+            raise RuntimeError(f"Maven bundle verification failed: missing artifact {actual_path}")
+        actual = _sha256_file(actual_path)
+        if actual.lower() != expected:
+            raise RuntimeError(
+                f"Maven bundle verification failed for {group}:{fields[2]}:{fields[3]}: "
+                f"expected SHA-256 {expected}, but {actual_path.resolve()} has {actual}"
+            )
+
+
 def _maven_settings_fingerprint() -> str:
     settings = _settings_path()
     if not settings.exists():
         return ""
     try:
-        return hashlib.sha256(str(settings.parent.resolve()).encode("utf-8") + b"\0" + settings.read_bytes()).hexdigest()
+        contents = settings.read_bytes()
+        digest = hashlib.sha256(str(settings.parent.resolve()).encode("utf-8") + b"\0" + contents)
+        verification = _parse_maven_verification(settings, contents)
+        if verification is not None:
+            digest.update(b"\0")
+            digest.update(verification.contents)
+        return digest.hexdigest()
     except OSError as exc:
         raise RuntimeError(f"Failed reading {settings}: {exc}") from exc
 
@@ -8384,6 +8809,10 @@ def _java_install_stale_reason(project_dir: Path) -> str | None:
     manifests = _required_install_manifests(project_dir)
     if not all(path.exists() for path in manifests):
         return "dependencies are not installed"
+    if _maven_verification() is not None:
+        # The embedded resolver must observe every selected artifact. A later
+        # --no-install invocation still verifies the manifest paths below.
+        return "Maven bundle verification requires dependency validation"
     try:
         recorded = json.loads((_pyronaut_output_dir(project_dir) / _INSTALL_STATE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -8438,6 +8867,13 @@ def _ensure_install_current(
     progress = _progress_console()
     disabled_by = NO_INSTALL_FLAG if no_install else _auto_install_disabled_by()
     if disabled_by is not None:
+        if _maven_verification() is not None:
+            if _install_required(project_dir):
+                raise RuntimeError(
+                    "Maven bundle verification cannot skip installation while dependency manifests are missing"
+                )
+            for manifest in _required_install_manifests(project_dir):
+                _read_manifest_entries(manifest)
         progress.warn(f"{reason}; skipped install ({disabled_by}), run pyronaut install")
         return SUCCESS
     progress.note(f"{reason}; running pyronaut install before {command}")
@@ -9072,6 +9508,7 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
     if not metadata_file.is_file():
         return False
     try:
+        verification = _maven_verification()
         metadata = _read_tool_runtime_properties(metadata_file)
         packaged_metadata = _read_tool_runtime_properties(packaged_tools / "tool-runtime.properties")
         descriptors = sorted(packaged_tools.glob("*/bin/pyronaut-tool-classpath.tsv"))
@@ -9138,6 +9575,8 @@ def _resolved_tools_cache_complete(cache_root: Path, packaged_tools: Path, versi
                         same_file = False
                     if not same_file and not filecmp.cmp(artifact, expected_source, shallow=False):
                         return False
+                if verification is not None and len(fields) == 7 and fields[0] in {"maven", "control-panel"}:
+                    _verify_descriptor_paths([line], [artifact], verification)
         return (
             bool(descriptors)
             and metadata.get("sdk.version") == version
@@ -10033,6 +10472,13 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
         if descriptor_hash != current_hash:
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
+        try:
+            _verify_descriptor_paths(
+                _packaged_native_compile_descriptor_entries(image_name),
+                classpath,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
     return manifest
 
 
@@ -10264,6 +10710,7 @@ def _run_setup(args: Sequence[str], runner: RunnerWithEnv) -> int:
                         raise RuntimeError(f"Incomplete resolved compiler classpath for {image_name}")
                     if not all(Path(path).is_file() for path in resolved):
                         raise RuntimeError(f"Resolved compiler classpath for {image_name} contains missing files")
+                    _verify_descriptor_paths(descriptor_entries[image_name], resolved)
                     image_state[image_name] = {
                         "descriptorSha256": _native_descriptor_hash(descriptor_entries[image_name]),
                         "classpath": resolved,

@@ -121,6 +121,10 @@ final class ResolutionCache {
     }
 
     static boolean cacheHit(Path cacheDir, String hash, List<InstallScope> scopes) throws IOException {
+        // Bundle verification must observe POMs and binaries, including Maven's cached files.
+        if (MavenArtifactVerification.requiresResolution()) {
+            return false;
+        }
         Path hashFile = cacheDir.resolve(HASH_FILE);
         if (!Files.exists(hashFile)) {
             return false;

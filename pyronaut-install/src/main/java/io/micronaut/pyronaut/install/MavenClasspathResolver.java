@@ -24,6 +24,7 @@ import io.micronaut.testresources.buildtools.MavenDependency;
 import io.micronaut.testresources.buildtools.ModuleIdentifier;
 import io.micronaut.testresources.buildtools.TestResourcesClasspath;
 import io.micronaut.testresources.buildtools.VersionInfo;
+import org.eclipse.aether.ConfigurationProperties;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession.CloseableSession;
 import org.eclipse.aether.RepositorySystemSession.SessionBuilder;
@@ -31,6 +32,9 @@ import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.collection.CollectResult;
+import org.eclipse.aether.collection.DependencyCollectionContext;
+import org.eclipse.aether.collection.DependencyManagement;
+import org.eclipse.aether.collection.DependencyManager;
 import org.eclipse.aether.graph.Dependency;
 import org.eclipse.aether.graph.DependencyNode;
 import org.eclipse.aether.graph.DependencyVisitor;
@@ -95,6 +99,7 @@ final class MavenClasspathResolver {
     private static final String NASHORN_MODULE = "org.openjdk.nashorn:nashorn-core";
     private static final String POM_EXTENSION = "pom";
     private static final String MAVEN_CENTRAL = "mavenCentral";
+    private static final String REPOSITORY_ID_PREFIX = "repo-";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MICRONAUT_OPENAPI_PROCESSOR_MODULE = "io.micronaut.openapi:micronaut-openapi";
     private static final String MICRONAUT_OPENAPI_ANNOTATIONS_MODULE = "io.micronaut.openapi:micronaut-openapi-annotations";
@@ -313,7 +318,7 @@ final class MavenClasspathResolver {
         // provenance. The offline session still prohibits every download.
         DependencyLock lock = DependencyLock.current();
         MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load();
-        List<RemoteRepository> requestedRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
+        List<RemoteRepository> requestedRepositories = repositoriesForResolution(model, configuration, forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, configuration)) {
             List<RemoteRepository> repositories = lock.repositories(repositorySystem.newResolutionRepositories(session, requestedRepositories));
@@ -325,7 +330,11 @@ final class MavenClasspathResolver {
                 progressListener.begin();
                 artifacts.forEach(artifact -> progressListener.artifactPlanned(artifact.toString()));
             }
-            List<Path> resolved = repositorySystem.resolveArtifacts(session, requests).stream()
+            List<ArtifactResult> results = repositorySystem.resolveArtifacts(session, requests);
+            for (ArtifactResult result : results) {
+                configuration.verification().verifyArtifact(result.getArtifact());
+            }
+            List<Path> resolved = results.stream()
                 .map(ArtifactResult::getArtifact)
                 .map(Artifact::getPath)
                 .filter(Objects::nonNull)
@@ -333,6 +342,7 @@ final class MavenClasspathResolver {
                 .map(Path::normalize)
                 .toList();
             lock.check();
+            configuration.verification().check();
             return resolved;
         } catch (ArtifactResolutionException e) {
             if (progressListener != null) {
@@ -378,7 +388,7 @@ final class MavenClasspathResolver {
         // artifacts. The offline session still prohibits every download.
         DependencyLock lock = DependencyLock.current();
         MavenRepositoryConfiguration configuration = MavenRepositoryConfiguration.load();
-        List<RemoteRepository> requestedRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
+        List<RemoteRepository> requestedRepositories = repositoriesForResolution(model, configuration, forceUpdates, projectDirectory);
         ProxyConfigurationLoader.ProxyConfiguration proxyConfiguration = proxyConfigurationLoader.load().orElse(null);
         try (CloseableSession session = newSession(localRepositoryPath, offline, proxyConfiguration, forceUpdates, progressListener, lock, configuration)) {
             List<RemoteRepository> repositories = lock.repositories(repositorySystem.newResolutionRepositories(session, requestedRepositories));
@@ -392,6 +402,7 @@ final class MavenClasspathResolver {
                 }
                 managedVersions.putIfAbsent(artifact.getGroupId() + ":" + artifact.getArtifactId(), artifact.getVersion());
             }
+            managedVersions.putAll(configuration.versionOverrides());
             List<String> scopeCoordinates;
             if (scope == InstallScope.TEST_RESOURCES_SERVER) {
                 List<MavenDependency> appDependencies = List.of();
@@ -402,6 +413,7 @@ final class MavenClasspathResolver {
                         repositories,
                         managedDependencies,
                         managedVersions,
+                        configuration.versionOverrides(),
                         session
                     );
                 }
@@ -416,7 +428,9 @@ final class MavenClasspathResolver {
             }
             LinkedHashSet<String> coordinates = new LinkedHashSet<>(scopeCoordinates);
             if (coordinates.isEmpty()) {
-                return new ResolvedScopeDetails(List.of(), null, List.of());
+                lock.check();
+                configuration.verification().check();
+                return new ResolvedScopeDetails(List.of(), null, List.of(), configuration.verification().verifiedArtifacts());
             }
 
             CollectRequest collectRequest = new CollectRequest();
@@ -424,7 +438,7 @@ final class MavenClasspathResolver {
             managedDependencies.forEach(collectRequest::addManagedDependency);
 
             for (String coordinate : coordinates) {
-                collectRequest.addDependency(toDependency(model, scope, coordinate, managedVersions));
+                collectRequest.addDependency(toDependency(model, scope, coordinate, managedVersions, configuration.versionOverrides()));
             }
 
             // Build the complete dependency graph before resolving artifacts. The
@@ -473,7 +487,7 @@ final class MavenClasspathResolver {
                 // the library they inspect, which is known only once the
                 // application graph has been resolved.
                 for (String coordinate : featureCoordinates) {
-                    collectRequest.addDependency(toDependency(model, scope, coordinate, managedVersions));
+                    collectRequest.addDependency(toDependency(model, scope, coordinate, managedVersions, configuration.versionOverrides()));
                 }
                 collected = repositorySystem.collectDependencies(session, collectRequest);
                 if (progressListener != null) {
@@ -513,10 +527,13 @@ final class MavenClasspathResolver {
                 .map(ArtifactResult::getArtifact)
                 .filter(Objects::nonNull)
                 .toList();
+            editorBinaries.forEach(configuration.verification()::verifyArtifact);
             List<ResolvedEditorArtifact> editorArtifacts = resolveEditorArtifacts(editorBinaries, repositories, session);
             validateProductionControlPanelSecurity(model, scope, result);
             lock.check();
-            return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
+            configuration.verification().check();
+            return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts,
+                configuration.verification().verifiedArtifacts());
         } catch (DependencyResolutionException | DependencyCollectionException e) {
             String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage()
                 + missingDescriptorDetails(e, localRepositoryPath, offline);
@@ -798,6 +815,7 @@ final class MavenClasspathResolver {
                                                                     List<RemoteRepository> repositories,
                                                                     List<Dependency> managedDependencies,
                                                                     Map<String, String> managedVersions,
+                                                                    Map<String, String> versionOverrides,
                                                                     CloseableSession session)
         throws DependencyCollectionException {
         if (model.pyronaut() == null || model.pyronaut().dependencies() == null) {
@@ -813,7 +831,7 @@ final class MavenClasspathResolver {
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(coordinate -> !coordinate.isEmpty())
-                .map(coordinate -> toDependency(model, InstallScope.RUNTIME, coordinate, managedVersions))
+                .map(coordinate -> toDependency(model, InstallScope.RUNTIME, coordinate, managedVersions, versionOverrides))
                 .forEach(request::addDependency);
         }
         if (dependencies.test() != null) {
@@ -821,7 +839,7 @@ final class MavenClasspathResolver {
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(coordinate -> !coordinate.isEmpty())
-                .map(coordinate -> toDependency(model, InstallScope.TEST, coordinate, managedVersions))
+                .map(coordinate -> toDependency(model, InstallScope.TEST, coordinate, managedVersions, versionOverrides))
                 .forEach(request::addDependency);
         }
         if (request.getDependencies().isEmpty()) {
@@ -1401,8 +1419,10 @@ final class MavenClasspathResolver {
     private static Dependency toDependency(PyprojectModel model,
                                            InstallScope scope,
                                            String coordinate,
-                                           Map<String, String> managedVersions) {
-        String[] parts = coordinate.split(":");
+                                           Map<String, String> managedVersions,
+                                           Map<String, String> versionOverrides) {
+        String effectiveCoordinate = overrideCoordinate(coordinate, versionOverrides);
+        String[] parts = effectiveCoordinate.split(":");
         List<Exclusion> exclusions = exclusions(model, scope, coordinate);
         if (parts.length == 4 || parts.length == 5) {
             // group:artifact:extension:version, optionally with a classifier as
@@ -1410,7 +1430,7 @@ final class MavenClasspathResolver {
             // understands both, and this is the only way to depend on an
             // artifact that is not published as a jar -- a POM-only aggregator
             // such as org.graalvm.polyglot:js, for example.
-            return new Dependency(new DefaultArtifact(coordinate), JavaScopes.RUNTIME, false, exclusions);
+            return new Dependency(new DefaultArtifact(effectiveCoordinate), JavaScopes.RUNTIME, false, exclusions);
         }
         if (parts.length == 3) {
             return new Dependency(new DefaultArtifact(parts[0], parts[1], "jar", parts[2]), JavaScopes.RUNTIME, false, exclusions);
@@ -1428,6 +1448,22 @@ final class MavenClasspathResolver {
         throw new PyprojectModelException("Invalid dependency coordinate: '" + coordinate
             + "'. Expected group:artifact[:version], group:artifact:extension:version"
             + " or group:artifact:extension:classifier:version");
+    }
+
+    private static String overrideCoordinate(String coordinate, Map<String, String> versionOverrides) {
+        if (versionOverrides.isEmpty()) {
+            return coordinate;
+        }
+        String override = versionOverrides.get(moduleKey(coordinate));
+        if (override == null || override.isBlank()) {
+            return coordinate;
+        }
+        String[] parts = coordinate.split(":");
+        if (parts.length == 3 || parts.length == 4 || parts.length == 5) {
+            parts[parts.length - 1] = override;
+            return String.join(":", parts);
+        }
+        return coordinate;
     }
 
     private static List<Exclusion> exclusions(PyprojectModel model, InstallScope scope, String coordinate) {
@@ -1476,7 +1512,12 @@ final class MavenClasspathResolver {
                                         DependencyProgressListener progressListener,
                                         DependencyLock lock,
                                         MavenRepositoryConfiguration configuration) {
-        SessionBuilder sessionBuilder = new SessionBuilderSupplier(repositorySystem).get();
+        SessionBuilderSupplier sessionSupplier = new SessionBuilderSupplier(repositorySystem);
+        SessionBuilder sessionBuilder = sessionSupplier.get();
+        if (!configuration.versionOverrides().isEmpty()) {
+            sessionBuilder.setDependencyManager(new VersionOverrideDependencyManager(
+                sessionSupplier.getDependencyManager(), configuration.versionOverrides()));
+        }
         sessionBuilder.setOffline(offline);
         if (!offline && lock.repository() == null && !configuration.credentials().isEmpty()) {
             sessionBuilder.setAuthenticationSelector(configuration.authenticationSelector(envReader));
@@ -1491,15 +1532,9 @@ final class MavenClasspathResolver {
             // the session is offline, which is how air-gapped builds run.
             sessionBuilder.setConfigProperty("aether.offline.repositories", DependencyLock.LOCK_REPOSITORY_ID);
         }
-        if (lock.active()) {
-            sessionBuilder.withRepositoryListener(new AbstractRepositoryListener() {
-                @Override
-                public void artifactResolved(RepositoryEvent event) {
-                    if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
-                        lock.artifactResolved(event.getArtifact(), event.getRepository());
-                    }
-                }
-            });
+        addVerificationListener(sessionBuilder, lock, configuration.verification());
+        if (configuration.retryCount() != null) {
+            sessionBuilder.setConfigProperty(ConfigurationProperties.HTTP_RETRY_HANDLER_COUNT, configuration.retryCount());
         }
         // The supplier's default policy treats a missing POM as an empty
         // descriptor, so a JAR cached without its POM (or one whose POM cannot
@@ -1536,6 +1571,23 @@ final class MavenClasspathResolver {
         return sessionBuilder.build();
     }
 
+    private static void addVerificationListener(SessionBuilder sessionBuilder,
+                                                DependencyLock lock,
+                                                MavenArtifactVerification verification) {
+        if (!lock.active() && !verification.active()) {
+            return;
+        }
+        sessionBuilder.withRepositoryListener(new AbstractRepositoryListener() {
+            @Override
+            public void artifactResolved(RepositoryEvent event) {
+                if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
+                    lock.artifactResolved(event.getArtifact(), event.getRepository());
+                    verification.verifyPom(event.getArtifact());
+                }
+            }
+        });
+    }
+
     private static final class ProgressRepositoryListener extends AbstractRepositoryListener {
         private final DependencyProgressListener listener;
 
@@ -1551,6 +1603,29 @@ final class MavenClasspathResolver {
         @Override
         public void artifactResolved(RepositoryEvent event) {
             if (event.getArtifact() != null) listener.artifactCompleted(event.getArtifact().toString());
+        }
+    }
+
+    private record VersionOverrideDependencyManager(DependencyManager delegate,
+                                                    Map<String, String> overrides) implements DependencyManager {
+        @Override
+        public DependencyManagement manageDependency(Dependency dependency) {
+            DependencyManagement management = delegate.manageDependency(dependency);
+            String module = dependency.getArtifact().getGroupId() + ":" + dependency.getArtifact().getArtifactId();
+            String version = overrides.get(module);
+            if (version == null) {
+                return management;
+            }
+            if (management == null) {
+                management = new DependencyManagement();
+            }
+            return management.setVersion(version);
+        }
+
+        @Override
+        public DependencyManager deriveChildManager(DependencyCollectionContext context) {
+            DependencyManager child = delegate.deriveChildManager(context);
+            return child == null ? null : new VersionOverrideDependencyManager(child, overrides);
         }
     }
 
@@ -1656,7 +1731,7 @@ final class MavenClasspathResolver {
                         .build()
                 );
             } else {
-                String id = "repo-" + resolved.size();
+                String id = REPOSITORY_ID_PREFIX + resolved.size();
                 String url = value.contains("://") ? value : repositoryPath(value, projectDirectory).toUri().toString();
                 resolved.put(id, newRemoteRepository(id, url, forceUpdates));
             }
@@ -1693,6 +1768,31 @@ final class MavenClasspathResolver {
         }
         withSnapshots.add(SONATYPE_SNAPSHOTS_REPOSITORY);
         return withSnapshots;
+    }
+
+    private List<RemoteRepository> repositoriesForResolution(PyprojectModel model,
+                                                           MavenRepositoryConfiguration configuration,
+                                                           boolean forceUpdates,
+                                                           Path projectDirectory) {
+        List<RemoteRepository> projectRepositories = toRepositories(repositoriesForModel(model, configuration), forceUpdates, projectDirectory);
+        if (configuration.prependRepositories().isEmpty()) {
+            return projectRepositories;
+        }
+        Map<String, RemoteRepository> byUrl = new LinkedHashMap<>();
+        projectRepositories.forEach(repository -> byUrl.put(repository.getUrl(), repository));
+        Map<String, RemoteRepository> ordered = new LinkedHashMap<>();
+        for (RemoteRepository repository : toRepositories(configuration.prependRepositories(), forceUpdates, null)) {
+            // Preserve project repository IDs: fixture caches record their provenance under repo-0.
+            RemoteRepository effective = byUrl.get(repository.getUrl());
+            if (effective == null) {
+                effective = repository.getId().startsWith(REPOSITORY_ID_PREFIX)
+                    ? new RemoteRepository.Builder(repository).setId("prepend-" + repository.getId().substring(REPOSITORY_ID_PREFIX.length())).build()
+                    : repository;
+            }
+            ordered.putIfAbsent(effective.getUrl(), effective);
+        }
+        projectRepositories.forEach(repository -> ordered.putIfAbsent(repository.getUrl(), repository));
+        return List.copyOf(ordered.values());
     }
 
     private boolean snapshotRepositoryRequired(PyprojectModel model) {
@@ -1790,7 +1890,13 @@ final class MavenClasspathResolver {
         return List.copyOf(resolved);
     }
 
-    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {
+    record ResolvedScopeDetails(List<Path> classpath,
+                                DependencyNode root,
+                                List<ResolvedEditorArtifact> editorArtifacts,
+                                List<MavenArtifactVerification.VerifiedArtifact> verifiedArtifacts) {
+        ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {
+            this(classpath, root, editorArtifacts, List.of());
+        }
     }
 
     record ResolvedEditorArtifact(String groupId, String artifactId, String version, Path binaryJar, Path sourceJar) {
