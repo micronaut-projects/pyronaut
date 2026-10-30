@@ -62,7 +62,11 @@ def run_pytest(test_files: List[str], listener: Any, junit_xml: Optional[str] = 
         # Create the plugin with the Java listener
         plugin = create_plugin(listener)
 
-        pytest_args = ["--assert=plain", "-p", "no:cacheprovider", *test_files]
+        # Pytest's default fd capture calls os.fstat() on its temporary capture
+        # files. That fails with FileNotFoundError in the embedded GraalPy
+        # runtime; sys capture still captures Python stdout/stderr without the
+        # OS-level file-descriptor path.
+        pytest_args = ["--assert=plain", "-p", "no:cacheprovider", "--capture=sys", *test_files]
         if junit_xml:
             junit_path = Path(junit_xml)
             junit_path.parent.mkdir(parents=True, exist_ok=True)
