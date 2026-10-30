@@ -137,9 +137,9 @@ final class MavenArtifactVerification {
         if (!active() || artifact == null || artifact.getPath() == null) {
             return;
         }
-        String file = artifact.getPath().toAbsolutePath().normalize().toString();
+        String artifactFile = artifact.getPath().toAbsolutePath().normalize().toString();
         if (!selected(artifact.getGroupId())) {
-            verified.put(file, new VerifiedArtifact(artifact.toString(), artifact.getGroupId(), DependencyLock.layoutPath(artifact), file));
+            verified.put(artifactFile, new VerifiedArtifact(artifact.toString(), artifact.getGroupId(), DependencyLock.layoutPath(artifact), artifactFile));
             return;
         }
         String path = DependencyLock.layoutPath(artifact);
@@ -160,7 +160,7 @@ final class MavenArtifactVerification {
             if (!entry.sha256().equalsIgnoreCase(actual)) {
                 violations.add(artifact + ": expected SHA-256 " + entry.sha256() + ", but " + artifact.getPath() + " has " + actual);
             } else {
-                verified.put(file, new VerifiedArtifact(entry.coordinates(), artifact.getGroupId(), entry.path(), file));
+                verified.put(artifactFile, new VerifiedArtifact(entry.coordinates(), artifact.getGroupId(), entry.path(), artifactFile));
             }
         } catch (IOException e) {
             violations.add("Cannot verify " + artifact + ": " + e.getMessage());
