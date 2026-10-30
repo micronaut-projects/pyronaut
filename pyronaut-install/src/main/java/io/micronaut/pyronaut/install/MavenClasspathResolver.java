@@ -99,6 +99,7 @@ final class MavenClasspathResolver {
     private static final String NASHORN_MODULE = "org.openjdk.nashorn:nashorn-core";
     private static final String POM_EXTENSION = "pom";
     private static final String MAVEN_CENTRAL = "mavenCentral";
+    private static final String REPOSITORY_ID_PREFIX = "repo-";
     private static final String MICRONAUT_TOML_MODULE = "io.micronaut.toml:micronaut-toml";
     private static final String MICRONAUT_OPENAPI_PROCESSOR_MODULE = "io.micronaut.openapi:micronaut-openapi";
     private static final String MICRONAUT_OPENAPI_ANNOTATIONS_MODULE = "io.micronaut.openapi:micronaut-openapi-annotations";
@@ -429,7 +430,7 @@ final class MavenClasspathResolver {
             if (coordinates.isEmpty()) {
                 lock.check();
                 configuration.verification().check();
-                return new ResolvedScopeDetails(List.of(), null, List.of());
+                return new ResolvedScopeDetails(List.of(), null, List.of(), configuration.verification().verifiedArtifacts());
             }
 
             CollectRequest collectRequest = new CollectRequest();
@@ -531,7 +532,8 @@ final class MavenClasspathResolver {
             validateProductionControlPanelSecurity(model, scope, result);
             lock.check();
             configuration.verification().check();
-            return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts);
+            return new ResolvedScopeDetails(classpath, result.getRoot(), editorArtifacts,
+                configuration.verification().verifiedArtifacts());
         } catch (DependencyResolutionException | DependencyCollectionException e) {
             String message = "Dependency resolution failed for scope '" + scope.cliValue() + "': " + e.getMessage()
                 + missingDescriptorDetails(e, localRepositoryPath, offline);
@@ -1530,26 +1532,7 @@ final class MavenClasspathResolver {
             // the session is offline, which is how air-gapped builds run.
             sessionBuilder.setConfigProperty("aether.offline.repositories", DependencyLock.LOCK_REPOSITORY_ID);
         }
-        if (lock.active()) {
-            sessionBuilder.withRepositoryListener(new AbstractRepositoryListener() {
-                @Override
-                public void artifactResolved(RepositoryEvent event) {
-                    if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
-                        lock.artifactResolved(event.getArtifact(), event.getRepository());
-                    }
-                }
-            });
-        }
-        if (configuration.verification().active()) {
-            sessionBuilder.withRepositoryListener(new AbstractRepositoryListener() {
-                @Override
-                public void artifactResolved(RepositoryEvent event) {
-                    if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
-                        configuration.verification().artifactResolved(event.getArtifact());
-                    }
-                }
-            });
-        }
+        addVerificationListener(sessionBuilder, lock, configuration.verification());
         if (configuration.retryCount() != null) {
             sessionBuilder.setConfigProperty(ConfigurationProperties.HTTP_RETRY_HANDLER_COUNT, configuration.retryCount());
         }
@@ -1586,6 +1569,23 @@ final class MavenClasspathResolver {
             sessionBuilder.withTransferListener(new ProgressTransferListener(progressListener));
         }
         return sessionBuilder.build();
+    }
+
+    private static void addVerificationListener(SessionBuilder sessionBuilder,
+                                                DependencyLock lock,
+                                                MavenArtifactVerification verification) {
+        if (!lock.active() && !verification.active()) {
+            return;
+        }
+        sessionBuilder.withRepositoryListener(new AbstractRepositoryListener() {
+            @Override
+            public void artifactResolved(RepositoryEvent event) {
+                if (event.getExceptions() == null || event.getExceptions().isEmpty()) {
+                    lock.artifactResolved(event.getArtifact(), event.getRepository());
+                    verification.verifyPom(event.getArtifact());
+                }
+            }
+        });
     }
 
     private static final class ProgressRepositoryListener extends AbstractRepositoryListener {
@@ -1731,7 +1731,7 @@ final class MavenClasspathResolver {
                         .build()
                 );
             } else {
-                String id = "repo-" + resolved.size();
+                String id = REPOSITORY_ID_PREFIX + resolved.size();
                 String url = value.contains("://") ? value : repositoryPath(value, projectDirectory).toUri().toString();
                 resolved.put(id, newRemoteRepository(id, url, forceUpdates));
             }
@@ -1785,8 +1785,8 @@ final class MavenClasspathResolver {
             // Preserve project repository IDs: fixture caches record their provenance under repo-0.
             RemoteRepository effective = byUrl.get(repository.getUrl());
             if (effective == null) {
-                effective = repository.getId().startsWith("repo-")
-                    ? new RemoteRepository.Builder(repository).setId("prepend-" + repository.getId().substring("repo-".length())).build()
+                effective = repository.getId().startsWith(REPOSITORY_ID_PREFIX)
+                    ? new RemoteRepository.Builder(repository).setId("prepend-" + repository.getId().substring(REPOSITORY_ID_PREFIX.length())).build()
                     : repository;
             }
             ordered.putIfAbsent(effective.getUrl(), effective);
@@ -1890,7 +1890,13 @@ final class MavenClasspathResolver {
         return List.copyOf(resolved);
     }
 
-    record ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {
+    record ResolvedScopeDetails(List<Path> classpath,
+                                DependencyNode root,
+                                List<ResolvedEditorArtifact> editorArtifacts,
+                                List<MavenArtifactVerification.VerifiedArtifact> verifiedArtifacts) {
+        ResolvedScopeDetails(List<Path> classpath, DependencyNode root, List<ResolvedEditorArtifact> editorArtifacts) {
+            this(classpath, root, editorArtifacts, List.of());
+        }
     }
 
     record ResolvedEditorArtifact(String groupId, String artifactId, String version, Path binaryJar, Path sourceJar) {

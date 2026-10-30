@@ -264,11 +264,8 @@ final class ToolClasspathInstaller {
                 Path expected = entry.controlPanel()
                     ? expectedSource(entry, localRepository)
                     : sharedSources.get(entry.fileName());
-                if (!validArtifactLink(artifact, expected)) {
+                if (!validArtifact(artifact, expected, entry, verification)) {
                     return false;
-                }
-                if (entry.maven()) {
-                    verification.verifyArtifact(entry.artifact().setPath(artifact));
                 }
             }
         }
@@ -326,16 +323,18 @@ final class ToolClasspathInstaller {
             .resolve(repositoryFileName);
     }
 
-    private static boolean validArtifactLink(Path artifact, Path expectedSource) {
+    private static boolean validArtifact(Path artifact, Path expectedSource, ToolEntry entry, MavenArtifactVerification verification) {
         if (!Files.isRegularFile(artifact) || !Files.isRegularFile(expectedSource)) {
             return false;
         }
         try {
-            if (Files.isSymbolicLink(artifact)) {
-                Path target = artifact.getParent().resolve(Files.readSymbolicLink(artifact)).normalize();
-                return target.equals(expectedSource);
+            boolean matches = Files.isSymbolicLink(artifact)
+                ? artifact.getParent().resolve(Files.readSymbolicLink(artifact)).normalize().equals(expectedSource)
+                : Files.mismatch(artifact, expectedSource) == -1L;
+            if (matches && entry.maven()) {
+                verification.verifyArtifact(entry.artifact().setPath(artifact));
             }
-            return Files.mismatch(artifact, expectedSource) == -1L;
+            return matches;
         } catch (IOException e) {
             return false;
         }

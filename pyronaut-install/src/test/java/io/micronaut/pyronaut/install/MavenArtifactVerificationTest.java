@@ -18,6 +18,9 @@ package io.micronaut.pyronaut.install;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.pyronaut.config.model.PyprojectModelException;
 import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.json.JsonMapper;
+import io.micronaut.json.tree.JsonNode;
 import org.eclipse.aether.artifact.Artifact;
 import org.eclipse.aether.artifact.DefaultArtifact;
 import org.junit.jupiter.api.AfterEach;
@@ -66,6 +69,15 @@ final class MavenArtifactVerificationTest {
     }
 
     @Test
+    void acceptsLongGroupSelectorsWithoutRecursiveRegexMatching() throws Exception {
+        configure(List.of());
+        String group = "segment.".repeat(10_000) + "leaf";
+        Files.writeString(settings, Files.readString(settings).replace("org.graalvm.*", group + ".*"));
+        MavenArtifactVerification verification = MavenRepositoryConfiguration.load().verification();
+        assertTrue(verification.active());
+    }
+
+    @Test
     void acceptsMatchingInstalledArtifactsAndRejectsChangedBytesOnEveryInvocation() throws Exception {
         Artifact jar = artifact("jar");
         configure(List.of(entry(jar)));
@@ -99,15 +111,44 @@ final class MavenArtifactVerificationTest {
     }
 
     @Test
-    void skipsUnselectedGroupsAndOptionalEditorArtifacts() throws Exception {
+    void ignoresBinaryEventsUntilTheFinalClasspathIsVerified() throws Exception {
         Artifact jar = artifact("jar");
         configure(List.of());
         MavenArtifactVerification verification = MavenRepositoryConfiguration.load().verification();
-        verification.artifactResolved(new DefaultArtifact("other:library:1.0").setPath(jar.getPath()));
-        verification.artifactResolved(new DefaultArtifact("org.graalvm.example:language:jar:sources:1.0").setPath(jar.getPath()));
+        verification.verifyPom(new DefaultArtifact("other:library:1.0").setPath(jar.getPath()));
+        verification.verifyPom(new DefaultArtifact("org.graalvm.example:language:jar:sources:1.0").setPath(jar.getPath()));
+        verification.verifyPom(jar);
         verification.check();
-        verification.artifactResolved(jar);
+        verification.verifyArtifact(jar);
         assertThrows(PyprojectModelException.class, verification::check);
+    }
+
+    @Test
+    void refreshVerifiesTheReplacementJarAndStillRejectsAnUntrustedDownload() throws Exception {
+        Artifact jar = artifact("jar");
+        Artifact pom = artifact("pom");
+        Path remote = tempDir.resolve("remote");
+        Path remoteJar = remote.resolve(DependencyLock.layoutPath(jar));
+        Path remotePom = remote.resolve(DependencyLock.layoutPath(pom));
+        Files.createDirectories(remoteJar.getParent());
+        Files.copy(jar.getPath(), remoteJar);
+        Files.copy(pom.getPath(), remotePom);
+        Files.delete(jar.getPath());
+        Files.delete(pom.getPath());
+        String repositories = "[maven]\nrepositories = [\"" + remote.toUri() + "\"]\n";
+        Files.writeString(settings, repositories);
+        MavenClasspathResolver resolver = resolver();
+        resolver.resolveScopeDetails(model(), InstallScope.RUNTIME, local, false);
+
+        Files.writeString(remoteJar, "new trusted source-built bundle");
+        configure(List.of(entry(jar.setPath(remoteJar)), entry(pom.setPath(remotePom))));
+        Files.writeString(settings, repositories + Files.readString(settings));
+        resolver.resolveScopeDetails(model(), InstallScope.RUNTIME, local, false, true);
+        assertEquals("new trusted source-built bundle", Files.readString(jar.getPath()));
+
+        Files.writeString(remoteJar, "untrusted remote release");
+        assertThrows(PyprojectModelException.class,
+            () -> resolver.resolveScopeDetails(model(), InstallScope.RUNTIME, local, false, true));
     }
 
     @Test
@@ -116,13 +157,13 @@ final class MavenArtifactVerificationTest {
         Artifact timestamped = normalized.setVersion("1.0-20261030.120000-1");
         configure(List.of(entry(timestamped)));
         MavenArtifactVerification verification = MavenRepositoryConfiguration.load().verification();
-        verification.artifactResolved(normalized);
-        verification.artifactResolved(timestamped);
+        verification.verifyArtifact(normalized);
+        verification.verifyArtifact(timestamped);
         verification.check();
 
         configure(List.of(entry(timestamped), entry(timestamped.setVersion("1.0-20261030.130000-2"))));
         verification = MavenRepositoryConfiguration.load().verification();
-        verification.artifactResolved(normalized);
+        verification.verifyArtifact(normalized);
         assertThrows(PyprojectModelException.class, verification::check);
     }
 
@@ -183,10 +224,61 @@ final class MavenArtifactVerificationTest {
         DirectSourceDependencyResolver resolver = new DirectSourceDependencyResolver(resolver());
         Path cache = tempDir.resolve("direct-source");
         assertFalse(resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()).cacheHit());
+        assertReportContainsPomAndJar(cache, jar, pom);
         assertFalse(resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()).cacheHit());
         Files.writeString(jar.getPath(), "changed");
         assertThrows(PyprojectModelException.class,
             () -> resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()));
+    }
+
+    @Test
+    void projectInstallationRecordsArtifactIdentitiesAndUsedPoms() throws Exception {
+        Artifact jar = artifact("jar");
+        Artifact pom = artifact("pom");
+        configure(List.of(entry(jar), entry(pom)));
+        Path project = Files.createDirectories(tempDir.resolve("project"));
+        Files.writeString(project.resolve("pyproject.toml"), """
+            [project]
+            name = "verification-report"
+            [tool.pyronaut.dependencies]
+            runtime = ["%s:1.0"]
+            build = []
+            test = []
+            [tool.pyronaut.test-resources]
+            enabled = false
+            """.formatted(MODULE));
+        PyronautInstallMain command = new PyronautInstallMain(new PyprojectModelReader(), resolver(),
+            new PyprojectEditorSupport(), new PythonEditorSupport(), new ExternalBuildResolver(),
+            (model, repository, offline, refresh, listener) -> null);
+        command.projectDir = project;
+        command.localRepository = local;
+        command.offline = true;
+        command.scope = "runtime";
+        command.progress = "off";
+        command.setEnvReader(name -> null);
+        assertEquals(InstallExitCode.SUCCESS.code(), command.call());
+        assertReportContainsPomAndJar(project.resolve("__pyronaut__"), jar, pom);
+    }
+
+    private void assertReportContainsPomAndJar(Path cache, Artifact jar, Artifact pom) throws IOException {
+        JsonNode report;
+        try (var input = Files.newInputStream(cache.resolve(MavenArtifactVerification.REPORT_FILE))) {
+            report = JsonMapper.createDefault().readValue(input, JsonNode.class);
+        }
+        assertEquals(1, report.get("version").getIntValue());
+        assertEquals(MavenRepositoryConfiguration.load().fingerprint(), report.get("mavenSettingsSha256").getStringValue());
+        for (Artifact artifact : List.of(jar, pom)) {
+            boolean present = false;
+            for (JsonNode recorded : report.get("artifacts").values()) {
+                if (recorded.get("path").getStringValue().equals(DependencyLock.layoutPath(artifact))) {
+                    assertEquals(artifact.toString(), recorded.get("coordinates").getStringValue());
+                    assertEquals(artifact.getGroupId(), recorded.get("groupId").getStringValue());
+                    assertEquals(artifact.getPath().toAbsolutePath().normalize().toString(), recorded.get("file").getStringValue());
+                    present = true;
+                }
+            }
+            assertTrue(present, artifact.toString());
+        }
     }
 
     @Test

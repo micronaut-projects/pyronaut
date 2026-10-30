@@ -226,6 +226,14 @@ the artifact's original transport origin. Group selectors are exact group IDs
 or prefixes ending in `.*`. A normalized `-SNAPSHOT` cache entry requires a
 single matching timestamp in the trusted lock; ambiguous entries fail verification.
 
+When verification is active, installation records the resolved coordinates and local file paths in
+`__pyronaut__/verified-maven-artifacts.json`. The versioned JSON report includes
+the Maven settings fingerprint and the POMs used to build the dependency graph.
+Cached commands, including `--no-install`, use these identities to recheck the
+selected files against the trusted lock. Run `pyronaut install` if the report is
+missing or the Maven settings changed. The report describes the local resolution;
+the bundle's trusted lock remains the checksum authority.
+
 == Settings, caches, and isolation
 
 The settings file and its directory are part of the Java/Python install and SDK
