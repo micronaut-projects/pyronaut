@@ -99,7 +99,9 @@ Pass `--native-launchers` to download all three during setup, for example when y
 Pyronaut writes validated state atomically below `~/.pyronaut/setup`.
 
 The default remote repository is Maven Central. Snapshot SDK versions also use `https://central.sonatype.com/repository/maven-snapshots/`.
-Configure a replacement list in `~/.pyronaut/settings.toml`:
+Configure a replacement default list in `~/.pyronaut/settings.toml`; use
+`prepend-repositories` when a repository must remain first for projects with
+explicit repository lists:
 
 [source,toml]
 ----
@@ -314,7 +316,8 @@ deterministic and uses plain summary lines without cursor-control sequences.
 Proxy configuration:
 
 `pyronaut setup` and `pyronaut install` use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM, GraalPy, and native-launcher downloads.
-This includes dependencies resolved from the global `[maven].repositories` list and project `tool.pyronaut.repositories`.
+This includes dependencies resolved from global `[maven]` repositories,
+including `prepend-repositories`, and project `tool.pyronaut.repositories`.
 Pyronaut discovers proxy configuration in this order:
 
 . Environment variables: `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy`

@@ -106,7 +106,7 @@ final class ToolClasspathInstaller {
                  FileLock ignored = channel.lock()) {
                 Path current = versionRoot.resolve("current");
                 if (!refresh && completeLayout(current, descriptors, sdkVersion, descriptorHash, localRepository)) {
-                    if (DependencyLock.current().requiresResolution()) {
+                    if (DependencyLock.current().requiresResolution() || MavenArtifactVerification.requiresResolution()) {
                         // Recording or enforcing a dependency lock has to observe
                         // every artifact, also when the layout is already complete.
                         resolver.resolveToolArtifacts(model == null ? defaultModel() : model, mavenArtifacts(descriptors),
@@ -251,6 +251,7 @@ final class ToolClasspathInstaller {
             return false;
         }
         Map<String, Path> sharedSources = preferredSources(descriptors, localRepository);
+        MavenArtifactVerification verification = MavenRepositoryConfiguration.load().verification();
         for (ToolDescriptor descriptor : descriptors) {
             Path bin = layout.resolve(TOOLS_DIR).resolve(descriptor.command()).resolve("bin").resolve(descriptor.command());
             if (!Files.isRegularFile(bin)) {
@@ -266,8 +267,12 @@ final class ToolClasspathInstaller {
                 if (!validArtifactLink(artifact, expected)) {
                     return false;
                 }
+                if (entry.maven()) {
+                    verification.verifyArtifact(entry.artifact().setPath(artifact));
+                }
             }
         }
+        verification.check();
         return true;
     }
 

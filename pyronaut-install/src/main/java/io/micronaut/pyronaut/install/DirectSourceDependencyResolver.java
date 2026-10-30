@@ -110,7 +110,8 @@ public final class DirectSourceDependencyResolver {
         String hash = fingerprint(build, runtime, repositories, localRepository, fingerprintInputs);
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
-        if (!bypassCache && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+        if (!bypassCache && !MavenArtifactVerification.requiresResolution()
+            && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest) && Files.isRegularFile(runtimeManifest)) {
             List<String> cachedBuild = read(buildManifest);
             List<String> cachedRuntime = read(runtimeManifest);
@@ -194,7 +195,8 @@ public final class DirectSourceDependencyResolver {
         Path buildManifest = cacheDirectory.resolve(InstallScope.BUILD.manifestFile());
         Path runtimeManifest = cacheDirectory.resolve(InstallScope.RUNTIME.manifestFile());
         Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
-        if (!bypassCache && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
+        if (!bypassCache && !MavenArtifactVerification.requiresResolution()
+            && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE)) && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest) && Files.isRegularFile(runtimeManifest) && Files.isRegularFile(testManifest)) {
             return new DetailedResult(read(buildManifest), read(runtimeManifest), read(testManifest),
                 artifactsFromClasspath(read(buildManifest)), artifactsFromClasspath(read(runtimeManifest)), true);
@@ -289,7 +291,7 @@ public final class DirectSourceDependencyResolver {
         Path testManifest = cacheDirectory.resolve(InstallScope.TEST.manifestFile());
         Path serverManifest = cacheDirectory.resolve(InstallScope.TEST_RESOURCES_SERVER.manifestFile());
         Path metadata = cacheDirectory.resolve(LAUNCH_METADATA_FILE);
-        if (Files.isRegularFile(cacheDirectory.resolve(HASH_FILE))
+        if (!MavenArtifactVerification.requiresResolution() && Files.isRegularFile(cacheDirectory.resolve(HASH_FILE))
             && hash.equals(Files.readString(cacheDirectory.resolve(HASH_FILE)).trim())
             && Files.isRegularFile(buildManifest)
             && Files.isRegularFile(runtimeManifest)

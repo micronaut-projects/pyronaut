@@ -30,7 +30,8 @@ Supported entries are:
 * relative or absolute file paths: local Maven repository directories
 
 Relative project paths are resolved against the project directory. An explicit
-non-empty project list takes precedence over the global list described below.
+non-empty project list replaces the global default list, but global
+`prepend-repositories` entries are still searched first.
 
 `mavenLocal` is a source repository entry. It is separate from the install
 destination selected by `pyronaut install --local-repository`. By default, that
@@ -42,6 +43,24 @@ If a project omits `repositories` (or leaves it empty), Pyronaut uses the
 non-empty `[maven].repositories` list from the user settings file. If that list
 is also omitted, Pyronaut uses Maven Central. Direct-source declarations use the
 same fallback when they do not declare a `MavenRepository`.
+
+Use `prepend-repositories` when a repository must be available even when a
+project declares its own repositories. Entries are searched in the listed order
+before the project repositories or the global default list. This is useful for
+a source-built repository in CI while retaining a fixture repository declared
+by the project:
+
+[source,toml]
+----
+[maven]
+prepend-repositories = ["build/source-repository"]
+repositories = ["mavenCentral"]
+----
+
+Relative prepend paths are resolved against the directory containing
+`settings.toml`; relative project paths continue to be resolved against the
+project directory. Pyronaut keeps the project repository identities stable so
+cached `_remote.repositories` provenance remains usable in offline mode.
 
 == Global repositories
 
@@ -59,8 +78,8 @@ repositories = [
 ----
 
 `pyronaut setup` uses this list for SDK resolution. Relative paths in this list
-are resolved against the directory containing `settings.toml`, not the project
-directory.
+and in `prepend-repositories` are resolved against the directory containing
+`settings.toml`, not the project directory.
 
 When project, direct-source, or SDK resolution falls back to the automatic
 defaults, snapshot resolution also consults the local Maven repository and the
@@ -145,6 +164,67 @@ resolution. Missing variables produce a configuration error; offline resolution
 of cached artifacts does not require them. Secret environment values are not
 added to cache fingerprints or SDK metadata, so rotating a secret does not
 invalidate already cached artifacts.
+
+== Maven resolution policy
+
+The global Maven table can also control retries and versions for application
+resolution:
+
+[source,toml]
+----
+[maven]
+retry-count = 2
+
+[maven.version-overrides]
+"org.example:example-library" = "1.2.3"
+----
+
+`retry-count` is the maximum number of HTTP retries after the initial attempt;
+zero disables retries. Omitting it retains Maven Resolver's default retry policy.
+Version overrides use exact
+`group:artifact` module keys and apply to managed, explicitly declared, and
+transitive application dependencies. SDK and native compiler descriptors carry
+exact versions by design; rebuild those descriptors from the Gradle version
+catalogs when changing their versions. For Graal build tests, supply overrides
+for every GraalPy, Truffle, and SDK module that must use the pipeline version.
+
+For a CI bundle, a trusted lock can verify selected Maven groups independently
+of the project's `pyronaut.lock`:
+
+[source,toml]
+----
+[maven]
+prepend-repositories = ["/ci/build/source-repository"]
+repositories = ["mavenCentral"]
+retry-count = 2
+
+[[maven.mirrors]]
+id = "ci-central"
+url = "https://maven.example.org/central/"
+mirror-of = "mavenCentral,central"
+
+[maven.version-overrides]
+"org.graalvm.python:python-language" = "25.5.5"
+
+[maven.verification]
+lock-file = "/trusted/bundle/pyronaut.lock"
+groups = ["org.graalvm.*"]
+----
+
+Verification requires every resolved JAR and POM in the selected groups to be
+listed with its SHA-256 in the trusted lock. Sources and Javadoc are optional editor artifacts and are
+not required. When verification is active, warm dependency-graph shortcuts are
+disabled: cached Maven files are checked on every invocation, while matching
+files are reused without downloading them. The bundle pipeline must supply a
+fresh trusted lock generated from its source-built artifacts, using the
+<<dependencyLocking,existing lock file format>>. Include all selected groups
+used by the gate, including SDK and native compiler artifacts. Never promote a
+lock recorded from the test cache to the bundle's checksum authority. Use an isolated local repository
+for bundles that reuse coordinates. The raw trusted lock is part of the cache
+fingerprint. Verification establishes checksum identity; it does not preserve
+the artifact's original transport origin. Group selectors are exact group IDs
+or prefixes ending in `.*`. A normalized `-SNAPSHOT` cache entry requires a
+single matching timestamp in the trusted lock; ambiguous entries fail verification.
 
 == Settings, caches, and isolation
 

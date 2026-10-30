@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,153 @@ from pyronaut_cli_v2.wheel_audit import _validate_native_descriptor
 
 
 class NativeClasspathTest(unittest.TestCase):
+    def test_verification_rejects_unlisted_artifacts_in_an_arbitrary_maven_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = root / "settings.toml"
+            (root / "bundle.lock").write_text("version = 1\n", encoding="utf-8")
+            settings.write_text('[maven.verification]\nlock-file="bundle.lock"\ngroups=["org.graalvm.*"]\n', encoding="utf-8")
+            artifact = root / "custom-cache/org/graalvm/example/unknown/1.0/unknown-1.0.jar"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"unlisted release")
+            manifest = root / "resolved-runtime-dependencies"
+            manifest.write_text(str(artifact) + "\n", encoding="utf-8")
+            with patch.object(cli, "_settings_path", return_value=settings):
+                with self.assertRaisesRegex(RuntimeError, "missing from"):
+                    cli._read_manifest_entries(manifest)
+                artifact.unlink()
+                with self.assertRaisesRegex(RuntimeError, "missing from"):
+                    cli._read_manifest_entries(manifest)
+
+    def test_verification_rejects_invalid_policies_and_format_versions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = root / "settings.toml"
+            lock = root / "bundle.lock"
+            lock.write_text("version = 1\n", encoding="utf-8")
+            with patch.object(cli, "_settings_path", return_value=settings):
+                for policy in ('lock-file="bundle.lock"\ngroups=[]', 'lock-file="bundle.lock"\ngroups=[1]',
+                               'lock-file="bundle.lock"\ngroups=["org.*.invalid"]', 'groups=["org.graalvm.*"]'):
+                    settings.write_text("[maven.verification]\n" + policy, encoding="utf-8")
+                    with self.assertRaises(RuntimeError):
+                        cli._maven_verification()
+                settings.write_text('[maven.verification]\nlock-file="bundle.lock"\ngroups=["org.graalvm.*"]\n', encoding="utf-8")
+                for version in ("true", "1.0", "2"):
+                    lock.write_text(f"version = {version}\n", encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, "format version"):
+                        cli._maven_verification()
+
+    def test_verification_checks_warmed_artifacts_without_using_repository_origin(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = root / "settings.toml"
+            lock = root / "bundle.lock"
+            repository = root / "repository"
+            artifact = repository / "org" / "graalvm" / "example" / "language" / "1.0" / "language-1.0.jar"
+            artifact.parent.mkdir(parents=True)
+            source = root / "source-built.jar"
+            source.write_bytes(b"source-built")
+            artifact.symlink_to(source)
+            checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            lock.write_text(
+                "version = 1\n\n[[artifact]]\n"
+                'coordinates = "org.graalvm.example:language:jar:1.0"\n'
+                'path = "org/graalvm/example/language/1.0/language-1.0.jar"\n'
+                f'sha256 = "{checksum}"\n',
+                encoding="utf-8",
+            )
+            settings.write_text(
+                '[maven.verification]\nlock-file = "bundle.lock"\ngroups = ["org.graalvm.*"]\n',
+                encoding="utf-8",
+            )
+            with patch.object(cli, "_settings_path", return_value=settings), \
+                    patch.object(cli, "_setup_local_repository", return_value=repository):
+                cli._verify_maven_path(artifact)
+                artifact.write_bytes(b"another release with the same coordinate")
+                with self.assertRaisesRegex(RuntimeError, "expected SHA-256"):
+                    cli._verify_maven_path(artifact)
+
+    def test_verification_rejects_mutated_native_descriptor_classpath(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = root / "settings.toml"
+            lock = root / "bundle.lock"
+            artifact = root / "cached.jar"
+            artifact.write_bytes(b"source-built")
+            checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            lock.write_text(
+                "version = 1\n\n[[artifact]]\n"
+                'coordinates = "org.graalvm.example:language:jar:1.0"\n'
+                'path = "org/graalvm/example/language/1.0/language-1.0.jar"\n'
+                f'sha256 = "{checksum}"\n',
+                encoding="utf-8",
+            )
+            settings.write_text(
+                '[maven.verification]\nlock-file = "bundle.lock"\ngroups = ["org.graalvm.*"]\n',
+                encoding="utf-8",
+            )
+            entry = "\t".join(("maven", "org.graalvm.example", "language", "1.0", "jar", "", "language-1.0.jar"))
+            with patch.object(cli, "_settings_path", return_value=settings):
+                cli._verify_descriptor_paths([entry], [artifact])
+                artifact.write_bytes(b"tampered")
+                with self.assertRaisesRegex(RuntimeError, "expected SHA-256"):
+                    cli._verify_descriptor_paths([entry], [artifact])
+
+    def test_verification_manifest_is_part_of_maven_settings_fingerprint(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = root / "settings.toml"
+            lock = root / "bundle.lock"
+            lock_contents = "version = 1\n"
+            lock.write_text(lock_contents, encoding="utf-8")
+            settings_contents = '[maven.verification]\nlock-file = "bundle.lock"\ngroups = ["org.graalvm.*"]\n'
+            settings.write_text(settings_contents, encoding="utf-8")
+            with patch.object(cli, "_settings_path", return_value=settings):
+                expected = hashlib.sha256(
+                    str(settings.parent.resolve()).encode("utf-8")
+                    + b"\0"
+                    + settings_contents.encode("utf-8")
+                    + b"\0"
+                    + lock_contents.encode("utf-8")
+                ).hexdigest()
+                self.assertEqual(expected, cli._maven_settings_fingerprint())
+                lock.write_text(lock_contents + "# changed\n", encoding="utf-8")
+                self.assertNotEqual(expected, cli._maven_settings_fingerprint())
+
+    def test_verification_matches_normalized_snapshot_path_to_trusted_timestamp(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = root / "settings.toml"
+            lock = root / "bundle.lock"
+            artifact = root / "cached.jar"
+            artifact.write_bytes(b"source-built snapshot")
+            checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            lock.write_text(
+                "version = 1\n\n[[artifact]]\n"
+                'coordinates = "org.graalvm.example:language:jar:1.2-20261029.120000-1"\n'
+                'path = "org/graalvm/example/language/1.2-SNAPSHOT/language-1.2-20261029.120000-1.jar"\n'
+                f'sha256 = "{checksum}"\n',
+                encoding="utf-8",
+            )
+            settings.write_text(
+                '[maven.verification]\nlock-file = "bundle.lock"\ngroups = ["org.graalvm.*"]\n',
+                encoding="utf-8",
+            )
+            entry = "\t".join(("maven", "org.graalvm.example", "language", "1.2-SNAPSHOT", "jar", "", "language-1.2-SNAPSHOT.jar"))
+            with patch.object(cli, "_settings_path", return_value=settings):
+                cli._verify_descriptor_paths([entry], [artifact])
+                normalized = root / "repository/org/graalvm/example/language/1.2-SNAPSHOT/language-1.2-SNAPSHOT.jar"
+                normalized.parent.mkdir(parents=True)
+                normalized.write_bytes(artifact.read_bytes())
+                cli._verify_maven_path(normalized)
+                with lock.open("a", encoding="utf-8") as output:
+                    output.write(
+                        '\n[[artifact]]\ncoordinates="org.graalvm.example:language:jar:1.2-SNAPSHOT"\n'
+                        'path="org/graalvm/example/language/1.2-SNAPSHOT/language-1.2-SNAPSHOT.jar"\n'
+                        f'sha256="{checksum}"\n'
+                    )
+                cli._verify_maven_path(normalized)
+
     def test_checkout_resolves_timestamped_descriptors_from_normalized_maven_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

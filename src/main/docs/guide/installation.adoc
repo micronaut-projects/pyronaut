@@ -86,7 +86,9 @@ Failing rows include a suggested command or action when Pyronaut can identify on
 See <<pyronautCliV2,Pyronaut CLI Reference>> for the full list of checks.
 
 By default, setup resolves SDK dependencies from Maven Central. When the installed SDK is a snapshot build, setup also checks Sonatype Central's snapshots repository for pre-release artifacts.
-Override the setup repositories globally in `~/.pyronaut/settings.toml`; an explicit list replaces these defaults:
+Override the setup defaults globally in `~/.pyronaut/settings.toml`. An explicit
+`repositories` list replaces the defaults; `prepend-repositories` remains first
+even when a project supplies its own repository list:
 
 [source,toml]
 ----
