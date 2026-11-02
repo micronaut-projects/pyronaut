@@ -364,14 +364,18 @@ final class DependencyLock {
     }
 
     static List<Entry> read(Path file) throws IOException {
+        return read(file, Files.readAllBytes(file));
+    }
+
+    static List<Entry> read(Path file, byte[] contents) throws IOException {
         JsonNode parsed;
-        try (InputStream input = Files.newInputStream(file)) {
-            parsed = Parser.parse(new String(input.readAllBytes(), StandardCharsets.UTF_8));
+        try {
+            parsed = Parser.parse(new String(contents, StandardCharsets.UTF_8));
         } catch (TomlStreamReadException e) {
             throw new IllegalArgumentException("Invalid " + file + ": " + e.getMessage(), e);
         }
         JsonNode version = parsed.get("version");
-        if (version == null || !version.isNumber() || version.getIntValue() != FORMAT_VERSION) {
+        if (version == null || !version.isNumber() || !Integer.toString(FORMAT_VERSION).equals(version.getNumberValue().toString())) {
             throw new IllegalArgumentException("Unsupported " + file + " format version; expected version = "
                 + FORMAT_VERSION + ". Run `pyronaut lock` to regenerate it.");
         }

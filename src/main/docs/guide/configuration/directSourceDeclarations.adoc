@@ -88,6 +88,8 @@ AppConfig(name="datasources.default.dialect", value="Oracle")
 == Repositories and cache
 
 Declare a repository with `MavenRepository("https://repository.example.com/maven/")` in Java or Python.
-Pyronaut uses Maven Central when you declare no repository; once you declare a repository, Pyronaut uses only the repositories you declare.
+Pyronaut uses Maven Central when you declare no repository. Once you declare a
+repository, Pyronaut uses the repositories you declare plus any global
+`[maven].prepend-repositories` entries, which remain first.
 
 Pyronaut records resolved direct-source dependencies and the declaration fingerprint in `__pyronaut__` under the project directory (the current working directory unless you give `--project-dir`). The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.
