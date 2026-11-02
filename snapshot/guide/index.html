@@ -516,7 +516,9 @@ See <a href="#pyronautCliV2">Pyronaut CLI Reference</a> for the full list of che
 </div>
 <div class="paragraph">
 <p>By default, setup resolves SDK dependencies from Maven Central. When the installed SDK is a snapshot build, setup also checks Sonatype Central&#8217;s snapshots repository for pre-release artifacts.
-Override the setup repositories globally in <code>~/.pyronaut/settings.toml</code>; an explicit list replaces these defaults:</p>
+Override the setup defaults globally in <code>~/.pyronaut/settings.toml</code>. An explicit
+<code>repositories</code> list replaces the defaults; <code>prepend-repositories</code> remains first
+even when a project supplies its own repository list:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -5751,7 +5753,9 @@ AppConfig(name="datasources.default.dialect", value="Oracle")</code></pre>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Declare a repository with <code>MavenRepository("https://repository.example.com/maven/")</code> in Java or Python.
-Pyronaut uses Maven Central when you declare no repository; once you declare a repository, Pyronaut uses only the repositories you declare.</p>
+Pyronaut uses Maven Central when you declare no repository. Once you declare a
+repository, Pyronaut uses the repositories you declare plus any global
+<code>[maven].prepend-repositories</code> entries, which remain first.</p>
 </div>
 <div class="paragraph">
 <p>Pyronaut records resolved direct-source dependencies and the declaration fingerprint in <code><em>pyronaut</em></code> under the project directory (the current working directory unless you give <code>--project-dir</code>). The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.</p>
@@ -5819,7 +5823,8 @@ repositories = [
 </div>
 <div class="paragraph">
 <p>Relative project paths are resolved against the project directory. An explicit
-non-empty project list takes precedence over the global list described below.</p>
+non-empty project list replaces the global default list, but global
+<code>prepend-repositories</code> entries are still searched first.</p>
 </div>
 <div class="paragraph">
 <p><code>mavenLocal</code> is a source repository entry. It is separate from the install
@@ -5833,6 +5838,26 @@ and no other configured repository provides it.</p>
 non-empty <code>[maven].repositories</code> list from the user settings file. If that list
 is also omitted, Pyronaut uses Maven Central. Direct-source declarations use the
 same fallback when they do not declare a <code>MavenRepository</code>.</p>
+</div>
+<div class="paragraph">
+<p>Use <code>prepend-repositories</code> when a repository must be available even when a
+project declares its own repositories. Entries are searched in the listed order
+before the project repositories or the global default list. This is useful for
+a source-built repository in CI while retaining a fixture repository declared
+by the project:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+prepend-repositories = ["build/source-repository"]
+repositories = ["mavenCentral"]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Relative prepend paths are resolved against the directory containing
+<code>settings.toml</code>; relative project paths continue to be resolved against the
+project directory. Pyronaut keeps the project repository identities stable so
+cached <code>_remote.repositories</code> provenance remains usable in offline mode.</p>
 </div>
 </div>
 </div>
@@ -5855,8 +5880,8 @@ repositories = [
 </div>
 <div class="paragraph">
 <p><code>pyronaut setup</code> uses this list for SDK resolution. Relative paths in this list
-are resolved against the directory containing <code>settings.toml</code>, not the project
-directory.</p>
+and in <code>prepend-repositories</code> are resolved against the directory containing
+<code>settings.toml</code>, not the project directory.</p>
 </div>
 <div class="paragraph">
 <p>When project, direct-source, or SDK resolution falls back to the automatic
@@ -5957,6 +5982,83 @@ resolution. Missing variables produce a configuration error; offline resolution
 of cached artifacts does not require them. Secret environment values are not
 added to cache fingerprints or SDK metadata, so rotating a secret does not
 invalidate already cached artifacts.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_maven_resolution_policy">Maven resolution policy</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The global Maven table can also control retries and versions for application
+resolution:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+retry-count = 2
+
+[maven.version-overrides]
+"org.example:example-library" = "1.2.3"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>retry-count</code> is the maximum number of HTTP retries after the initial attempt;
+zero disables retries. Omitting it retains Maven Resolver&#8217;s default retry policy.
+Version overrides use exact
+<code>group:artifact</code> module keys and apply to managed, explicitly declared, and
+transitive application dependencies. SDK and native compiler descriptors carry
+exact versions by design; rebuild those descriptors from the Gradle version
+catalogs when changing their versions. For Graal build tests, supply overrides
+for every GraalPy, Truffle, and SDK module that must use the pipeline version.</p>
+</div>
+<div class="paragraph">
+<p>For a CI bundle, a trusted lock can verify selected Maven groups independently
+of the project&#8217;s <code>pyronaut.lock</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+prepend-repositories = ["/ci/build/source-repository"]
+repositories = ["mavenCentral"]
+retry-count = 2
+
+[[maven.mirrors]]
+id = "ci-central"
+url = "https://maven.example.org/central/"
+mirror-of = "mavenCentral,central"
+
+[maven.version-overrides]
+"org.graalvm.python:python-language" = "25.5.5"
+
+[maven.verification]
+lock-file = "/trusted/bundle/pyronaut.lock"
+groups = ["org.graalvm.*"]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Verification requires every resolved JAR and POM in the selected groups to be
+listed with its SHA-256 in the trusted lock. Sources and Javadoc are optional editor artifacts and are
+not required. When verification is active, warm dependency-graph shortcuts are
+disabled: cached Maven files are checked on every invocation, while matching
+files are reused without downloading them. The bundle pipeline must supply a
+fresh trusted lock generated from its source-built artifacts, using the
+<a href="#dependencyLocking">existing lock file format</a>. Include all selected groups
+used by the gate, including SDK and native compiler artifacts. Never promote a
+lock recorded from the test cache to the bundle&#8217;s checksum authority. Use an isolated local repository
+for bundles that reuse coordinates. The raw trusted lock is part of the cache
+fingerprint. Verification establishes checksum identity; it does not preserve
+the artifact&#8217;s original transport origin. Group selectors are exact group IDs
+or prefixes ending in <code>.*</code>. A normalized <code>-SNAPSHOT</code> cache entry requires a
+single matching timestamp in the trusted lock; ambiguous entries fail verification.</p>
+</div>
+<div class="paragraph">
+<p>When verification is active, installation records the resolved coordinates and local file paths in
+<code><em>pyronaut</em>/verified-maven-artifacts.json</code>. The versioned JSON report includes
+the Maven settings fingerprint and the POMs used to build the dependency graph.
+Cached commands, including <code>--no-install</code>, use these identities to recheck the
+selected files against the trusted lock. Run <code>pyronaut install</code> if the report is
+missing or the Maven settings changed. The report describes the local resolution;
+the bundle&#8217;s trusted lock remains the checksum authority.</p>
 </div>
 </div>
 </div>
@@ -8626,7 +8728,9 @@ Pyronaut writes validated state atomically below <code>~/.pyronaut/setup</code>.
 </div>
 <div class="paragraph">
 <p>The default remote repository is Maven Central. Snapshot SDK versions also use <code><a href="https://central.sonatype.com/repository/maven-snapshots/" class="bare">https://central.sonatype.com/repository/maven-snapshots/</a></code>.
-Configure a replacement list in <code>~/.pyronaut/settings.toml</code>:</p>
+Configure a replacement default list in <code>~/.pyronaut/settings.toml</code>; use
+<code>prepend-repositories</code> when a repository must remain first for projects with
+explicit repository lists:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -8978,7 +9082,8 @@ deterministic and uses plain summary lines without cursor-control sequences.</p>
 </div>
 <div class="paragraph">
 <p><code>pyronaut setup</code> and <code>pyronaut install</code> use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM, GraalPy, and native-launcher downloads.
-This includes dependencies resolved from the global <code>[maven].repositories</code> list and project <code>tool.pyronaut.repositories</code>.
+This includes dependencies resolved from global <code>[maven]</code> repositories,
+including <code>prepend-repositories</code>, and project <code>tool.pyronaut.repositories</code>.
 Pyronaut discovers proxy configuration in this order:</p>
 </div>
 <div class="olist arabic">
