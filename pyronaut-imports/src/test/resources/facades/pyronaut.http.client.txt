@@ -2,7 +2,10 @@
 
 ## members
 AsyncHttpClient	INTERFACE	io.micronaut.http.client.AsyncHttpClient
+AsyncLoadBalancer	INTERFACE	io.micronaut.http.client.AsyncLoadBalancer
+AsyncProxyHttpClient	INTERFACE	io.micronaut.http.client.AsyncProxyHttpClient
 AsyncRawHttpClient	INTERFACE	io.micronaut.http.client.AsyncRawHttpClient
+AsyncStreamingHttpClient	INTERFACE	io.micronaut.http.client.AsyncStreamingHttpClient
 BlockingHttpClient	INTERFACE	io.micronaut.http.client.BlockingHttpClient
 Client	ANNOTATION	io.micronaut.http.client.annotation.Client
 ClientAttributes	CLASS	io.micronaut.http.client.ClientAttributes
@@ -47,4 +50,5 @@ StreamingHttpClient	INTERFACE	io.micronaut.http.client.StreamingHttpClient
 StreamingHttpClientFactory	INTERFACE	io.micronaut.http.client.StreamingHttpClientFactory
 StreamingHttpClientRegistry	INTERFACE	io.micronaut.http.client.StreamingHttpClientRegistry
 UnprocessedRequestException	CLASS	io.micronaut.http.client.exceptions.UnprocessedRequestException
+client	ANNOTATION	io.micronaut.http.client.annotation.Client
 create	STATIC_METHOD	io.micronaut.http.HttpRequest#create

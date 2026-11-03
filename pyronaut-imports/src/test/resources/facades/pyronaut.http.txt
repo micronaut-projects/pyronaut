@@ -1,5 +1,8 @@
 # pyronaut.http
 
+## clashes
+status: pyronaut.http.status (a member wins over a snake_case alias) over io.micronaut.http.annotation.Status
+
 ## members
 APPLICATION_ATOM_XML	CONSTANT	io.micronaut.http.MediaType#APPLICATION_ATOM_XML
 APPLICATION_FORM_URLENCODED	CONSTANT	io.micronaut.http.MediaType#APPLICATION_FORM_URLENCODED
@@ -166,7 +169,11 @@ RequestFilter	ANNOTATION	io.micronaut.http.annotation.RequestFilter
 RequestLocaleResolver	CLASS	io.micronaut.http.server.util.locale.RequestLocaleResolver
 Resource	INTERFACE	io.micronaut.http.hateoas.Resource
 ResponseFilter	ANNOTATION	io.micronaut.http.annotation.ResponseFilter
+RouteCaptures	INTERFACE	io.micronaut.http.uri.RouteCaptures
 RouteCondition	ANNOTATION	io.micronaut.http.annotation.RouteCondition
+RouteTemplate	INTERFACE	io.micronaut.http.uri.RouteTemplate
+RouteTemplateParser	INTERFACE	io.micronaut.http.uri.RouteTemplateParser
+RouteTemplateVariable	INTERFACE	io.micronaut.http.uri.RouteTemplateVariable
 SameSite	ENUM	io.micronaut.http.cookie.SameSite
 SecFetch	CLASS	io.micronaut.http.SecFetch
 ServerCookieDecoder	INTERFACE	io.micronaut.http.cookie.ServerCookieDecoder
@@ -179,6 +186,8 @@ ServerShutdownEvent	CLASS	io.micronaut.runtime.server.event.ServerShutdownEvent
 ServerStartupEvent	CLASS	io.micronaut.runtime.server.event.ServerStartupEvent
 ServerStartupException	CLASS	io.micronaut.http.server.exceptions.ServerStartupException
 Site	ENUM	io.micronaut.http.Site
+SseEmitter	INTERFACE	io.micronaut.http.sse.SseEmitter
+SseEmitterExtensionsKt	CLASS	io.micronaut.http.sse.SseEmitterExtensionsKt
 Status	ANNOTATION	io.micronaut.http.annotation.Status
 StreamedFile	CLASS	io.micronaut.http.server.types.files.StreamedFile
 StreamingFileUpload	CLASS	io.micronaut.http.multipart.StreamingFileUpload
@@ -205,25 +214,59 @@ UriMatchInfo	INTERFACE	io.micronaut.http.uri.UriMatchInfo
 UriMatchTemplate	CLASS	io.micronaut.http.uri.UriMatchTemplate
 UriMatchVariable	CLASS	io.micronaut.http.uri.UriMatchVariable
 UriMatcher	INTERFACE	io.micronaut.http.uri.UriMatcher
+UriRouteTemplate	CLASS	io.micronaut.http.uri.UriRouteTemplate
 UriTemplate	CLASS	io.micronaut.http.uri.UriTemplate
 UriTypeMatchTemplate	CLASS	io.micronaut.http.uri.UriTypeMatchTemplate
 VndError	CLASS	io.micronaut.http.hateoas.VndError
 accepted	STATIC_METHOD	io.micronaut.http.HttpResponse#accepted
 badRequest	STATIC_METHOD	io.micronaut.http.HttpResponse#badRequest
+body	ANNOTATION	io.micronaut.http.annotation.Body
 client	MODULE	pyronaut.http.client
+client_filter	ANNOTATION	io.micronaut.http.annotation.ClientFilter
+consumes	ANNOTATION	io.micronaut.http.annotation.Consumes
+content_disposition	ANNOTATION	io.micronaut.http.annotation.ContentDisposition
+controller	ANNOTATION	io.micronaut.http.annotation.Controller
+cookie_value	ANNOTATION	io.micronaut.http.annotation.CookieValue
 created	STATIC_METHOD	io.micronaut.http.HttpResponse#created
+custom_http_method	ANNOTATION	io.micronaut.http.annotation.CustomHttpMethod
+delete	ANNOTATION	io.micronaut.http.annotation.Delete
+error	ANNOTATION	io.micronaut.http.annotation.Error
+filter_matcher	ANNOTATION	io.micronaut.http.annotation.FilterMatcher
+get	ANNOTATION	io.micronaut.http.annotation.Get
+head	ANNOTATION	io.micronaut.http.annotation.Head
+header	ANNOTATION	io.micronaut.http.annotation.Header
+headers	ANNOTATION	io.micronaut.http.annotation.Headers
+http_method_mapping	ANNOTATION	io.micronaut.http.annotation.HttpMethodMapping
 noContent	STATIC_METHOD	io.micronaut.http.HttpResponse#noContent
 notAllowed	STATIC_METHOD	io.micronaut.http.HttpResponse#notAllowed
 notAllowedGeneric	STATIC_METHOD	io.micronaut.http.HttpResponse#notAllowedGeneric
 notFound	STATIC_METHOD	io.micronaut.http.HttpResponse#notFound
 notModified	STATIC_METHOD	io.micronaut.http.HttpResponse#notModified
 ok	STATIC_METHOD	io.micronaut.http.HttpResponse#ok
+options	ANNOTATION	io.micronaut.http.annotation.Options
+part	ANNOTATION	io.micronaut.http.annotation.Part
+patch	ANNOTATION	io.micronaut.http.annotation.Patch
+path_variable	ANNOTATION	io.micronaut.http.annotation.PathVariable
 permanentRedirect	STATIC_METHOD	io.micronaut.http.HttpResponse#permanentRedirect
+post	ANNOTATION	io.micronaut.http.annotation.Post
+produces	ANNOTATION	io.micronaut.http.annotation.Produces
+put	ANNOTATION	io.micronaut.http.annotation.Put
+query	ANNOTATION	io.micronaut.http.annotation.Query
+query_value	ANNOTATION	io.micronaut.http.annotation.QueryValue
 redirect	STATIC_METHOD	io.micronaut.http.HttpResponse#redirect
+request_attribute	ANNOTATION	io.micronaut.http.annotation.RequestAttribute
+request_attributes	ANNOTATION	io.micronaut.http.annotation.RequestAttributes
+request_bean	ANNOTATION	io.micronaut.http.annotation.RequestBean
+request_filter	ANNOTATION	io.micronaut.http.annotation.RequestFilter
+response_filter	ANNOTATION	io.micronaut.http.annotation.ResponseFilter
+route_condition	ANNOTATION	io.micronaut.http.annotation.RouteCondition
 seeOther	STATIC_METHOD	io.micronaut.http.HttpResponse#seeOther
 serverError	STATIC_METHOD	io.micronaut.http.HttpResponse#serverError
+server_filter	ANNOTATION	io.micronaut.http.annotation.ServerFilter
 status	MODULE	pyronaut.http.status
 temporaryRedirect	STATIC_METHOD	io.micronaut.http.HttpResponse#temporaryRedirect
+trace	ANNOTATION	io.micronaut.http.annotation.Trace
 unauthorized	STATIC_METHOD	io.micronaut.http.HttpResponse#unauthorized
 unprocessableEntity	STATIC_METHOD	io.micronaut.http.HttpResponse#unprocessableEntity
 uri	STATIC_METHOD	io.micronaut.http.HttpResponse#uri
+uri_mapping	ANNOTATION	io.micronaut.http.annotation.UriMapping

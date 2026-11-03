@@ -19,3 +19,9 @@ DynamicCacheManager	INTERFACE	io.micronaut.cache.DynamicCacheManager
 InvalidateOperations	ANNOTATION	io.micronaut.cache.annotation.InvalidateOperations
 PutOperations	ANNOTATION	io.micronaut.cache.annotation.PutOperations
 SyncCache	INTERFACE	io.micronaut.cache.SyncCache
+cache_config	ANNOTATION	io.micronaut.cache.annotation.CacheConfig
+cache_invalidate	ANNOTATION	io.micronaut.cache.annotation.CacheInvalidate
+cache_put	ANNOTATION	io.micronaut.cache.annotation.CachePut
+cacheable	ANNOTATION	io.micronaut.cache.annotation.Cacheable
+invalidate_operations	ANNOTATION	io.micronaut.cache.annotation.InvalidateOperations
+put_operations	ANNOTATION	io.micronaut.cache.annotation.PutOperations

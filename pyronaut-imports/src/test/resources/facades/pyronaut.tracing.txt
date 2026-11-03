@@ -7,3 +7,9 @@ NewSpan	ANNOTATION	io.micronaut.tracing.annotation.NewSpan
 SpanAttribute	ANNOTATION	io.opentelemetry.instrumentation.annotations.SpanAttribute
 SpanTag	ANNOTATION	io.micronaut.tracing.annotation.SpanTag
 WithSpan	ANNOTATION	io.opentelemetry.instrumentation.annotations.WithSpan
+adding_span_attributes	ANNOTATION	io.opentelemetry.instrumentation.annotations.AddingSpanAttributes
+continue_span	ANNOTATION	io.micronaut.tracing.annotation.ContinueSpan
+new_span	ANNOTATION	io.micronaut.tracing.annotation.NewSpan
+span_attribute	ANNOTATION	io.opentelemetry.instrumentation.annotations.SpanAttribute
+span_tag	ANNOTATION	io.micronaut.tracing.annotation.SpanTag
+with_span	ANNOTATION	io.opentelemetry.instrumentation.annotations.WithSpan

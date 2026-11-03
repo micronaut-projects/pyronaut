@@ -1,6 +1,7 @@
 # pyronaut.websocket
 
 ## members
+AsyncWebSocketClient	INTERFACE	io.micronaut.websocket.AsyncWebSocketClient
 ClientWebSocket	ANNOTATION	io.micronaut.websocket.annotation.ClientWebSocket
 CloseReason	CLASS	io.micronaut.websocket.CloseReason
 OnClose	ANNOTATION	io.micronaut.websocket.annotation.OnClose
@@ -14,6 +15,15 @@ WebSocketClientFactory	INTERFACE	io.micronaut.websocket.WebSocketClientFactory
 WebSocketClientRegistry	INTERFACE	io.micronaut.websocket.WebSocketClientRegistry
 WebSocketComponent	ANNOTATION	io.micronaut.websocket.annotation.WebSocketComponent
 WebSocketMapping	ANNOTATION	io.micronaut.websocket.annotation.WebSocketMapping
+WebSocketPingMessage	CLASS	io.micronaut.websocket.WebSocketPingMessage
 WebSocketPongMessage	CLASS	io.micronaut.websocket.WebSocketPongMessage
 WebSocketSession	INTERFACE	io.micronaut.websocket.WebSocketSession
 WebSocketVersion	ENUM	io.micronaut.websocket.WebSocketVersion
+client_web_socket	ANNOTATION	io.micronaut.websocket.annotation.ClientWebSocket
+on_close	ANNOTATION	io.micronaut.websocket.annotation.OnClose
+on_error	ANNOTATION	io.micronaut.websocket.annotation.OnError
+on_message	ANNOTATION	io.micronaut.websocket.annotation.OnMessage
+on_open	ANNOTATION	io.micronaut.websocket.annotation.OnOpen
+server_web_socket	ANNOTATION	io.micronaut.websocket.annotation.ServerWebSocket
+web_socket_component	ANNOTATION	io.micronaut.websocket.annotation.WebSocketComponent
+web_socket_mapping	ANNOTATION	io.micronaut.websocket.annotation.WebSocketMapping

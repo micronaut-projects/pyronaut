@@ -120,8 +120,12 @@ X509AuthenticationArgumentBinder	CLASS	io.micronaut.security.x509.X509Authentica
 X509AuthenticationFetcher	CLASS	io.micronaut.security.x509.X509AuthenticationFetcher
 X509Configuration	INTERFACE	io.micronaut.security.x509.X509Configuration
 X509ConfigurationProperties	CLASS	io.micronaut.security.x509.X509ConfigurationProperties
+created_by	ANNOTATION	io.micronaut.security.annotation.CreatedBy
 exception	STATIC_METHOD	io.micronaut.security.authentication.AuthenticationResponse#exception
 failure	STATIC_METHOD	io.micronaut.security.authentication.AuthenticationResponse#failure
 jwt	MODULE	pyronaut.security.jwt
 oauth2	MODULE	pyronaut.security.oauth2
+run_as	ANNOTATION	io.micronaut.security.annotation.RunAs
+secured	ANNOTATION	io.micronaut.security.annotation.Secured
 success	STATIC_METHOD	io.micronaut.security.authentication.AuthenticationResponse#success
+updated_by	ANNOTATION	io.micronaut.security.annotation.UpdatedBy

@@ -17,3 +17,6 @@ TaskExceptionHandler	INTERFACE	io.micronaut.scheduling.TaskExceptionHandler
 TaskExecutors	INTERFACE	io.micronaut.scheduling.TaskExecutors
 TaskScheduler	INTERFACE	io.micronaut.scheduling.TaskScheduler
 VIRTUAL	CONSTANT	io.micronaut.scheduling.TaskExecutors#VIRTUAL
+execute_on	ANNOTATION	io.micronaut.scheduling.annotation.ExecuteOn
+scheduled	ANNOTATION	io.micronaut.scheduling.annotation.Scheduled
+schedules	ANNOTATION	io.micronaut.scheduling.annotation.Schedules

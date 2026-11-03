@@ -33,3 +33,8 @@ TransactionScoped	ANNOTATION	jakarta.transaction.TransactionScoped
 TransactionStatus	INTERFACE	io.micronaut.transaction.TransactionStatus
 Transactional	ANNOTATION	io.micronaut.transaction.annotation.Transactional
 TransactionalEventListener	ANNOTATION	io.micronaut.transaction.annotation.TransactionalEventListener
+oracle_transactional	ANNOTATION	io.micronaut.transaction.annotation.OracleTransactional
+read_only	ANNOTATION	io.micronaut.transaction.annotation.ReadOnly
+transaction_scoped	ANNOTATION	jakarta.transaction.TransactionScoped
+transactional	ANNOTATION	io.micronaut.transaction.annotation.Transactional
+transactional_event_listener	ANNOTATION	io.micronaut.transaction.annotation.TransactionalEventListener

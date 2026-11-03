@@ -11,3 +11,4 @@ Publishers	CLASS	io.micronaut.core.async.publisher.Publishers
 SingleResult	ANNOTATION	io.micronaut.core.async.annotation.SingleResult
 Subscriber	INTERFACE	org.reactivestreams.Subscriber
 Subscription	INTERFACE	org.reactivestreams.Subscription
+single_result	ANNOTATION	io.micronaut.core.async.annotation.SingleResult

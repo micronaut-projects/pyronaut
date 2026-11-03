@@ -16,3 +16,9 @@ Read	ANNOTATION	io.micronaut.management.endpoint.annotation.Read
 Selector	ANNOTATION	io.micronaut.management.endpoint.annotation.Selector
 Sensitive	ANNOTATION	io.micronaut.management.endpoint.annotation.Sensitive
 Write	ANNOTATION	io.micronaut.management.endpoint.annotation.Write
+delete	ANNOTATION	io.micronaut.management.endpoint.annotation.Delete
+endpoint	ANNOTATION	io.micronaut.management.endpoint.annotation.Endpoint
+read	ANNOTATION	io.micronaut.management.endpoint.annotation.Read
+selector	ANNOTATION	io.micronaut.management.endpoint.annotation.Selector
+sensitive	ANNOTATION	io.micronaut.management.endpoint.annotation.Sensitive
+write	ANNOTATION	io.micronaut.management.endpoint.annotation.Write
