@@ -1,7 +1,6 @@
 import io.micronaut.pyronaut.gradle.PyenvVersions
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
-import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import java.nio.file.Files
 import java.util.regex.Pattern
 
@@ -363,8 +362,9 @@ tasks.register("prepareWheelSources", Sync) {
                             )
                         }
                         def artifact = matches.first()
-                        def component = artifact.id.componentIdentifier
-                        if (component instanceof ProjectComponentIdentifier || artifact.moduleVersion.id.group == projectGroup) {
+                        // only Pyronaut's own modules: the projects of an included Micronaut core build are
+                        // resolved from Maven like any other Micronaut module
+                        if (artifact.moduleVersion.id.group == projectGroup) {
                             return "bundled\t${fileName}"
                         }
                         def classifier = artifact.classifier ?: ""
