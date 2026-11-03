@@ -47,6 +47,8 @@ jobs:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
           fetch-depth: 0
 
       - name: "🔧 Setup GraalVM CE"
@@ -152,6 +154,8 @@ jobs:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
           fetch-depth: 0
 
       - name: "🔧 Setup GraalVM CE"

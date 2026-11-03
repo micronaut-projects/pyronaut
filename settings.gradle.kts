@@ -91,3 +91,23 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
+
+if (micronautVersion.endsWith("-SNAPSHOT")) {
+    // An unreleased core is built from source: the micronaut-core submodule tracks the core branch of the
+    // snapshot, and including its build substitutes its projects for every io.micronaut core module the
+    // build resolves. pyronaut.micronaut.core.checkout points the build at another core checkout instead.
+    val micronautCoreCheckout = providers.gradleProperty("pyronaut.micronaut.core.checkout").orNull.takeIfNotBlank()
+        ?.let { file(it) }
+        ?: file("micronaut-core")
+    if (!micronautCoreCheckout.resolve("settings.gradle").isFile) {
+        throw GradleException(
+            "Micronaut core $micronautVersion is built from source, but ${micronautCoreCheckout.absolutePath} " +
+                "is not a core checkout: run 'git submodule update --init micronaut-core', or set " +
+                "pyronaut.micronaut.core.checkout to a core checkout"
+        )
+    }
+    gradle.extra["pyronaut.micronaut.core.checkout"] = micronautCoreCheckout
+    includeBuild(micronautCoreCheckout) {
+        name = "micronaut-core"
+    }
+}

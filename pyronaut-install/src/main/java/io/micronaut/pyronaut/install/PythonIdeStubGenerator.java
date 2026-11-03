@@ -1045,20 +1045,29 @@ final class PythonIdeStubGenerator {
             ? documentation.constructorParameterNames(ownerName, method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method))
             : documentation.methodParameterNames(
                 method.methodName().stringValue(), method.methodTypeSymbol().parameterCount(), parameterTypeSignature(method));
+        // the generic signature omits the synthetic and implicit parameters the descriptor leads with (the
+        // enclosing instance of an inner class constructor, for one), so it lines up with the descriptor's tail
+        int signatureOffset = signature == null ? 0 : method.methodTypeSymbol().parameterCount() - signature.arguments().size();
         StringBuilder parameters = new StringBuilder();
         for (int index = 0; index < method.methodTypeSymbol().parameterCount(); index++) {
             if (!parameters.isEmpty()) {
                 parameters.append(", ");
             }
-            String name = index < compiledNames.size() ? compiledNames.get(index) : null;
-            if (name == null && index < documentationNames.size()) {
-                name = documentationNames.get(index);
-            }
-            String type = signature == null ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
-                : renderSignature(signature.arguments().get(index), typeVariables);
+            // an implicit parameter (this$0, the enclosing instance) has no name Python can use
+            String name = index < signatureOffset ? null : parameterName(index, compiledNames, documentationNames);
+            String type = signature == null || index < signatureOffset ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
+                : renderSignature(signature.arguments().get(index - signatureOffset), typeVariables);
             parameters.append(sanitizeParameterName(name, index)).append(": ").append(type);
         }
         return parameters.toString();
+    }
+
+    private static String parameterName(int index, List<String> compiledNames, List<String> documentationNames) {
+        String name = index < compiledNames.size() ? compiledNames.get(index) : null;
+        if (name == null && index < documentationNames.size()) {
+            name = documentationNames.get(index);
+        }
+        return name;
     }
 
     /**
