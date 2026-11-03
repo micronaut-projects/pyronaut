@@ -1053,8 +1053,9 @@ final class PythonIdeStubGenerator {
             if (!parameters.isEmpty()) {
                 parameters.append(", ");
             }
-            String name = index < compiledNames.size() ? compiledNames.get(index) : null;
-            if (name == null && index < documentationNames.size()) {
+            // an implicit parameter (this$0, the enclosing instance) has no name Python can use
+            String name = index < signatureOffset ? null : index < compiledNames.size() ? compiledNames.get(index) : null;
+            if (name == null && index >= signatureOffset && index < documentationNames.size()) {
                 name = documentationNames.get(index);
             }
             String type = signature == null || index < signatureOffset ? renderClassDesc(method.methodTypeSymbol().parameterType(index))

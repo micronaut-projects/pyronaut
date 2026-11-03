@@ -2852,7 +2852,7 @@ class PyronautInstallMainTest {
 
         assertEquals(InstallExitCode.SUCCESS.code(), command.call());
         String httpStub = Files.readString(project.resolve("__pyronaut__/ide-stubs/micronaut/http/__init__.pyi"), StandardCharsets.UTF_8);
-        assertTrue(httpStub.contains("def __init__(self, arg0: Outer, arg1: list[_Inner_T], arg2: _Inner_T) -> None"), httpStub);
+        assertTrue(httpStub.contains("def __init__(self, arg0: Outer, items: list[_Inner_T], first: _Inner_T) -> None"), httpStub);
     }
 
     @Test
