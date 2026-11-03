@@ -6234,6 +6234,7 @@ def _run_test_cycle(
         java_home_provider=java_home_provider,
         local_repository=local_repository,
         external_install_done=external_install_done,
+        no_install=no_install,
     )
     if prepare_code != SUCCESS:
         return prepare_code, test_resources_env_overrides
@@ -6264,6 +6265,7 @@ def _prepare_test_cycle(
     local_repository: str | None,
     external_install_done: bool = False,
     process_pass: str = "all",
+    no_install: bool = False,
 ) -> tuple[int, dict[str, str] | None]:
     """
     What a test run needs before its tests run: the processing of the project
@@ -6372,6 +6374,7 @@ def _run_test_continuously(
             local_repository=local_repository,
             # without a terminal no key can end the session: run the tests once
             once=input_reader is None and not _stdin_is_terminal(),
+            no_install=no_install,
         )
     snapshot = snapshotter(project_root)
     watch_mode = False
@@ -6555,6 +6558,7 @@ def _run_tests_in_process(
     java_home_provider: JavaHomeProvider | None,
     local_repository: str | None,
     once: bool = False,
+    no_install: bool = False,
 ) -> int:
     """
     Continuous testing in one JVM: validate and process the project once, then
@@ -6576,6 +6580,7 @@ def _run_tests_in_process(
         java_home_provider=java_home_provider,
         local_repository=local_repository,
         process_pass="main",
+        no_install=no_install,
     )
     if prepare_code != SUCCESS:
         return prepare_code
