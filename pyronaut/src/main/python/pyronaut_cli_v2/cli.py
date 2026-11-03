@@ -7900,7 +7900,6 @@ def _github_release_asset(
         if release_tag is not None
         else (version if version.startswith("v") else f"v{version}")
     )
-    token = _github_token()
     headers = _github_api_headers()
 
     def get_json(url: str) -> object | None:
@@ -7910,7 +7909,7 @@ def _github_release_asset(
     try:
         release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
     except _GitHubRateLimitError:
-        if token or allow_draft:
+        if _github_token() or allow_draft:
             raise
         # Published assets are served from a predictable public URL that
         # anonymous rate limits do not apply to.
@@ -7935,7 +7934,7 @@ def _github_release_asset(
     if not isinstance(release, dict):
         token_hint = (
             "; check GH_TOKEN, GITHUB_TOKEN, GITHUB_API_TOKEN, or PYRONAUT_RELEASE_TOKEN read access"
-            if not token
+            if not _github_token()
             else ""
         )
         raise RuntimeError(f"GitHub release '{tag}' was not found at {base_url}{token_hint}")
@@ -7950,7 +7949,7 @@ def _github_release_asset(
     public_url = _github_public_asset_url(asset, release)
     if public_url is not None:
         return public_url, {}
-    download_headers = dict(headers)
+    download_headers = _github_api_headers()
     download_headers["Accept"] = "application/octet-stream"
     return asset["url"], download_headers
 
@@ -7969,11 +7968,20 @@ def _github_public_asset_url(asset: dict, release: dict) -> str | None:
     return url
 
 
+_GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN")
+# A token GitHub answered with 401. Public releases do not need one, so the
+# rest of the run continues anonymously instead of failing on a stale token.
+_github_rejected_token: str | None = None
+
+
+def _github_token_variable() -> str | None:
+    return next((name for name in _GITHUB_TOKEN_VARIABLES if os.environ.get(name)), None)
+
+
 def _github_token() -> str | None:
-    return next(
-        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN") if os.environ.get(name)),
-        None,
-    )
+    name = _github_token_variable()
+    token = os.environ.get(name) if name else None
+    return None if token is None or token == _github_rejected_token else token
 
 
 def _github_api_headers() -> dict[str, str]:
@@ -8009,12 +8017,23 @@ def _github_opener(url: str) -> urllib.request.OpenerDirector:
 
 def _github_api_json(url: str, headers: dict[str, str]) -> object | None:
     """Read a GitHub REST API document through the configured proxy; ``None`` on 404."""
+    global _github_rejected_token
     try:
         with _github_opener(url).open(urllib.request.Request(url, headers=headers)) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
+        token = _github_token()
+        if exc.code == 401 and token is not None and headers.get("Authorization") == f"Bearer {token}":
+            _github_rejected_token = token
+            print(
+                f"GitHub rejected the token in {_github_token_variable()} (HTTP 401); "
+                "continuing without it. Unset or renew it to silence this warning.",
+                file=sys.stderr,
+            )
+            anonymous = {key: value for key, value in headers.items() if key != "Authorization"}
+            return _github_api_json(url, anonymous)
         if exc.code == 429 or (exc.code == 403 and exc.headers.get("X-RateLimit-Remaining") == "0"):
             reset = exc.headers.get("X-RateLimit-Reset")
             when = (
@@ -8258,7 +8277,7 @@ def _ensure_native_image(
                 ):
                     _extract_native_image_archive(archive, extracted, image_name)
             except Exception as exc:
-                raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc
+                raise RuntimeError(f"Failed downloading {image_name} from {url or base_url}: {exc}") from exc
             bundle_files: list[str] = []
             for item in extracted.parent.iterdir():
                 # Several native bundles contain identically named manifests

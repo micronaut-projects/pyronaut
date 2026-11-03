@@ -164,6 +164,55 @@ class ReleaseSelectionTest(unittest.TestCase):
         )
         self.assertEqual({}, headers)
 
+    def test_rejected_token_falls_back_to_anonymous_public_downloads(self):
+        import email.message
+        import urllib.error
+
+        release = {
+            "tag_name": "v0.1.1",
+            "draft": False,
+            "assets": [{
+                "name": "pyronaut-dev-macos-aarch64-0.1.1.tar.gz",
+                "url": "https://api.github.com/assets/7",
+                "browser_download_url": "https://github.com/micronaut-projects/pyronaut/releases/download/v0.1.1/dev.tar.gz",
+            }],
+        }
+        requests = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def open_request(request):
+            requests.append(request.get_header("Authorization"))
+            if request.get_header("Authorization"):
+                raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", email.message.Message(), None)
+            return Response(cli.json.dumps(release).encode("utf-8"))
+
+        opener = types.SimpleNamespace(open=open_request)
+        stderr = io.StringIO()
+        environment = {name: "" for name in cli._GITHUB_TOKEN_VARIABLES}
+        environment["GITHUB_TOKEN"] = "stale"
+        with patch.dict(os.environ, environment), \
+                patch.object(cli, "_github_rejected_token", None), \
+                patch.object(cli, "_github_opener", return_value=opener), \
+                redirect_stderr(stderr):
+            url, headers = cli._github_release_asset(
+                "https://github.com/micronaut-projects/pyronaut/releases",
+                "0.1.1",
+                "pyronaut-dev-macos-aarch64-0.1.1.tar.gz",
+            )
+            self.assertIsNone(cli._github_token())
+            self.assertNotIn("Authorization", cli._github_api_headers())
+
+        self.assertEqual(["Bearer stale", None], requests)
+        self.assertEqual(release["assets"][0]["browser_download_url"], url)
+        self.assertEqual({}, headers)
+        self.assertIn("GitHub rejected the token in GITHUB_TOKEN", stderr.getvalue())
+
     def test_api_rate_limit_responses_raise_a_rate_limit_error(self):
         import email.message
         import urllib.error
