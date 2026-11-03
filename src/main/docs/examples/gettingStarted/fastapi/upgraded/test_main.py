@@ -16,10 +16,10 @@ Dependency(
 
 MicronautTest()
 
-context: Annotated[context.ApplicationContext, context.Inject]
+application_context: Annotated[context.ApplicationContext, context.Inject]
 
 def client():
-    return requests.with_context(context)
+    return requests.with_context(application_context)
 
 def test_root():
     response = client().get("/")
