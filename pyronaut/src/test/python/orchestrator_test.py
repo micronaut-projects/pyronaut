@@ -4301,6 +4301,10 @@ enabled = false
             "/repo/io/micronaut/serde/micronaut-serde-processor/3.2.2/micronaut-serde-processor-3.2.2.jar\n",
             encoding="utf-8",
         )
+        # the tests cover the continuous run, not the automatic install before it
+        auto_install = patch.dict(os.environ, {"PYRONAUT_AUTO_INSTALL": "false"})
+        auto_install.start()
+        self.addCleanup(auto_install.stop)
         return project_dir.resolve()
 
     def _continuous_test_resolver(self, temp_dir: str):
