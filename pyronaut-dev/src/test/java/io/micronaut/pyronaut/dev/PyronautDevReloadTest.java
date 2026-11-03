@@ -5,6 +5,7 @@ import io.micronaut.dev.manifest.DevManifest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -62,6 +63,33 @@ class PyronautDevReloadTest {
                 System.clearProperty("pyronaut.dev.native.provided.artifacts");
             } else {
                 System.setProperty("pyronaut.dev.native.provided.artifacts", previous);
+            }
+        }
+    }
+
+    @Test
+    void aNativeLaunchCompilesAgainstTheCompilerJarsOfTheImageAfterTheProjectsOwn() {
+        Path repository = project.resolve("repository");
+        List<Path> runtime = List.of(
+            repository.resolve("micronaut-sourcegen-annotations-2.1.0.jar"),
+            repository.resolve("micronaut-runtime-5.1.0.jar"));
+        Path annotations = project.resolve("lib").resolve("micronaut-sourcegen-annotations-2.2.4.jar");
+        // outside a native launch the CLI names no compiler jar
+        assertEquals(runtime, DevReloadFiles.withCompilerClasspath(runtime, ""));
+        // the image's sourcegen annotations hold @GeneratedSource, which the project's 2.1.0 does not
+        String compiler = String.join(File.pathSeparator, annotations.toString(), runtime.get(1).toString(), "");
+        assertEquals(
+            List.of(runtime.get(0), runtime.get(1), annotations),
+            DevReloadFiles.withCompilerClasspath(runtime, compiler));
+        String previous = System.getProperty("pyronaut.dev.compiler.class.path");
+        try {
+            System.setProperty("pyronaut.dev.compiler.class.path", compiler);
+            assertEquals(List.of(runtime.get(0), runtime.get(1), annotations), DevReloadFiles.withNativeCompilerClasspath(runtime));
+        } finally {
+            if (previous == null) {
+                System.clearProperty("pyronaut.dev.compiler.class.path");
+            } else {
+                System.setProperty("pyronaut.dev.compiler.class.path", previous);
             }
         }
     }

@@ -19,6 +19,7 @@ import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
 import io.micronaut.pyronaut.config.model.PyprojectModel;
 import io.micronaut.python.processing.PythonAnnotationProcessor;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URISyntaxException;
@@ -28,9 +29,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * The files the launchers of the development runtime share: the project's paths, the classpath
@@ -44,6 +47,10 @@ final class DevReloadFiles {
     static final String DEV_DIR = "micronaut-dev";
     static final String BUILD_DEPENDENCIES_MANIFEST = "resolved-build-dependencies";
     static final String PROCESSOR_OPTIONS = "resolved-processor-options";
+    /**
+     * The jars of the compiler APIs of a native launcher, which the CLI names, as for a direct source launch.
+     */
+    static final String COMPILER_CLASSPATH_PROPERTY = "pyronaut.dev.compiler.class.path";
     /**
      * The compiler option that sets whether the Python compiler writes a bytecode cache for every module.
      */
@@ -197,6 +204,30 @@ final class DevReloadFiles {
      */
     static List<Path> withoutNativeProvidedArtifacts(List<Path> paths) {
         return withoutNativeProvidedArtifacts(NativeProvidedJarResolver.providedArtifactCoordinates(), paths);
+    }
+
+    /**
+     * A compile classpath with the jars of the compiler APIs the native image was built with after it, as
+     * {@code pyronaut process} compiles with them in a native launch: the image cannot hand its own classes to javac,
+     * and what the processors it holds generate refers to their versions, such as sourcegen's
+     * {@code @GeneratedSource}, which the project's versions may not have. The classpath's entries come first, so the
+     * project's versions win where both have a class. Outside a native launch the CLI names none, and the classpath is kept as it is.
+     *
+     * @param classpath The compile classpath
+     * @return The classpath, then the compiler jars it does not hold
+     */
+    static List<Path> withNativeCompilerClasspath(List<Path> classpath) {
+        return withCompilerClasspath(classpath, System.getProperty(COMPILER_CLASSPATH_PROPERTY, ""));
+    }
+
+    static List<Path> withCompilerClasspath(List<Path> classpath, String compilerClasspath) {
+        Set<Path> entries = new LinkedHashSet<>(classpath);
+        for (String entry : compilerClasspath.split(Pattern.quote(File.pathSeparator))) {
+            if (!entry.isBlank()) {
+                entries.add(Path.of(entry));
+            }
+        }
+        return List.copyOf(entries);
     }
 
     /**
