@@ -26,3 +26,7 @@ RetryRegistry	INTERFACE	io.micronaut.retry.RetryRegistry
 RetryState	INTERFACE	io.micronaut.retry.RetryState
 RetryStateBuilder	INTERFACE	io.micronaut.retry.RetryStateBuilder
 Retryable	ANNOTATION	io.micronaut.retry.annotation.Retryable
+circuit_breaker	ANNOTATION	io.micronaut.retry.annotation.CircuitBreaker
+fallback	ANNOTATION	io.micronaut.retry.annotation.Fallback
+recoverable	ANNOTATION	io.micronaut.retry.annotation.Recoverable
+retryable	ANNOTATION	io.micronaut.retry.annotation.Retryable

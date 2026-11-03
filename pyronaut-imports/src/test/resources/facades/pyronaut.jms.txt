@@ -15,3 +15,17 @@ MessageTTL	ANNOTATION	io.micronaut.jms.annotations.MessageTTL
 Queue	ANNOTATION	io.micronaut.jms.annotations.Queue
 SendTo	ANNOTATION	io.micronaut.messaging.annotation.SendTo
 Topic	ANNOTATION	io.micronaut.jms.annotations.Topic
+jms_connection_factory	ANNOTATION	io.micronaut.jms.annotations.JMSConnectionFactory
+jms_listener	ANNOTATION	io.micronaut.jms.annotations.JMSListener
+jms_producer	ANNOTATION	io.micronaut.jms.annotations.JMSProducer
+message	ANNOTATION	io.micronaut.jms.annotations.Message
+message_body	ANNOTATION	io.micronaut.messaging.annotation.MessageBody
+message_header	ANNOTATION	io.micronaut.messaging.annotation.MessageHeader
+message_headers	ANNOTATION	io.micronaut.messaging.annotation.MessageHeaders
+message_listener	ANNOTATION	io.micronaut.messaging.annotation.MessageListener
+message_mapping	ANNOTATION	io.micronaut.messaging.annotation.MessageMapping
+message_producer	ANNOTATION	io.micronaut.messaging.annotation.MessageProducer
+message_ttl	ANNOTATION	io.micronaut.jms.annotations.MessageTTL
+queue	ANNOTATION	io.micronaut.jms.annotations.Queue
+send_to	ANNOTATION	io.micronaut.messaging.annotation.SendTo
+topic	ANNOTATION	io.micronaut.jms.annotations.Topic

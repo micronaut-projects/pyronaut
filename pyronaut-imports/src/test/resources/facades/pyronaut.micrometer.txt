@@ -28,3 +28,7 @@ TimeGauge	INTERFACE	io.micrometer.core.instrument.TimeGauge
 Timed	ANNOTATION	io.micrometer.core.annotation.Timed
 TimedSet	ANNOTATION	io.micrometer.core.annotation.TimedSet
 Timer	INTERFACE	io.micrometer.core.instrument.Timer
+counted	ANNOTATION	io.micrometer.core.annotation.Counted
+incubating	ANNOTATION	io.micrometer.core.annotation.Incubating
+timed	ANNOTATION	io.micrometer.core.annotation.Timed
+timed_set	ANNOTATION	io.micrometer.core.annotation.TimedSet
