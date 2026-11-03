@@ -3904,7 +3904,8 @@ Context pooling, including the <code>@ContextPooled</code> scope, is experimenta
 <pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[micronaut.python.pool]
 enabled = true
 size = 8
-warn-wait = "2s"</code></pre>
+warn-wait = "2s"
+prestart = 1</code></pre>
 </div>
 </div>
 <div class="dlist">
@@ -3921,6 +3922,10 @@ warn-wait = "2s"</code></pre>
 <dd>
 <p>Log a warning when a request waits longer than this for a free context. Use it as the signal for tuning <code>size</code>.</p>
 </dd>
+<dt class="hdlist1"><code>prestart</code></dt>
+<dd>
+<p>The number of contexts to create on a background thread as soon as the application has started, at most <code>size</code>. Defaults to <code>1</code>, and to <code>0</code> when the <code>test</code> environment is active (for example under <code>pyronaut test</code>) unless you set it. <code>0</code> creates every context on demand.</p>
+</dd>
 </dl>
 </div>
 <div class="paragraph">
@@ -3934,6 +3939,17 @@ warn-wait = "2s"</code></pre>
 <pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[micronaut.python.pool]
 enabled = false</code></pre>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_the_first_request">The first request</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Preparing a GraalPy context takes far longer than serving a request: the interpreter starts and imports the runtime module every Python call goes through, which loads <code>asyncio</code> among others. Without pre-starting, the first request that needs a pooled context pays for that, about two seconds on the JVM for a small application. With the default <code>prestart = 1</code>, Pyronaut creates and warms up that context in the background right after startup, so a request that arrives a moment later finds it ready. A request that arrives while the context is still being created waits for it instead of creating a second one, and stopping the application during pre-start closes the context once it is built.</p>
+</div>
+<div class="paragraph">
+<p>Raise <code>prestart</code> up to <code>size</code> to have the whole pool ready before load arrives, at the cost of the memory those contexts hold whether or not traffic needs them. Set it to <code>0</code> to create every context on demand.</p>
 </div>
 </div>
 </div>
