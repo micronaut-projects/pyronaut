@@ -1,7 +1,7 @@
 package io.micronaut.pyronaut.dev;
 
 import io.micronaut.dev.compile.SourceKind;
-import io.micronaut.dev.livereload.LiveReloadServer;
+import io.micronaut.dev.livereload.LiveReloadScript;
 import io.micronaut.dev.loader.DevClassLoader;
 import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.dev.manifest.DevMode;
@@ -176,7 +176,7 @@ class PyronautTestReloadTest {
             List.of(), List.of(), List.of(), List.of(), List.of()));
 
         // pyronaut dev keeps the default port; the report of pyronaut test -t is served beside it
-        assertEquals(LiveReloadServer.DEFAULT_PORT, dev.liveReload().port());
+        assertEquals(LiveReloadScript.DEFAULT_PORT, dev.liveReload().port());
         assertEquals(PyronautTestReload.LIVERELOAD_PORT, tests.liveReload().port());
         assertNotEquals(dev.liveReload().port(), tests.liveReload().port());
         // and both compile into the processed classes, under the same lock, each with generations of its own
