@@ -213,6 +213,45 @@ class ReleaseSelectionTest(unittest.TestCase):
         self.assertEqual({}, headers)
         self.assertIn("GitHub rejected the token in GITHUB_TOKEN", stderr.getvalue())
 
+    def test_rejected_token_is_not_resent_on_later_pages(self):
+        import email.message
+        import urllib.error
+
+        pages = {
+            1: [_github_release(f"v0.{index}.0") for index in range(100)],
+            2: [_github_release("v1.0.0")],
+        }
+        requests = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def open_request(request):
+            authorization = request.get_header("Authorization")
+            requests.append((int(request.full_url.rsplit("page=", 1)[1]), authorization))
+            if authorization:
+                raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", email.message.Message(), None)
+            return Response(cli.json.dumps(pages.get(requests[-1][0], [])).encode("utf-8"))
+
+        stderr = io.StringIO()
+        environment = {name: "" for name in cli._GITHUB_TOKEN_VARIABLES}
+        environment["GITHUB_TOKEN"] = "stale"
+        with patch.dict(os.environ, environment), \
+                patch.object(cli, "_github_rejected_token", None), \
+                patch.object(cli, "_read_pyronaut_user_settings", return_value={}), \
+                patch.object(cli, "_github_opener", return_value=types.SimpleNamespace(open=open_request)), \
+                redirect_stderr(stderr):
+            releases = cli._sdk_releases()
+
+        self.assertEqual([(1, "Bearer stale"), (1, None), (2, None)], requests)
+        self.assertIn("v1.0.0", {release.tag for release in releases})
+        self.assertEqual(101, len(releases))
+        self.assertEqual(1, stderr.getvalue().count("GitHub rejected the token"))
+
     def test_api_rate_limit_responses_raise_a_rate_limit_error(self):
         import email.message
         import urllib.error

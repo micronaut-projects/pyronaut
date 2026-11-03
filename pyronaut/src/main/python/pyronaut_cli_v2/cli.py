@@ -8018,6 +8018,9 @@ def _github_opener(url: str) -> urllib.request.OpenerDirector:
 def _github_api_json(url: str, headers: dict[str, str]) -> object | None:
     """Read a GitHub REST API document through the configured proxy; ``None`` on 404."""
     global _github_rejected_token
+    # Callers may hold headers built before the token was rejected.
+    if _github_rejected_token is not None and headers.get("Authorization") == f"Bearer {_github_rejected_token}":
+        headers = {key: value for key, value in headers.items() if key != "Authorization"}
     try:
         with _github_opener(url).open(urllib.request.Request(url, headers=headers)) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -8032,8 +8035,7 @@ def _github_api_json(url: str, headers: dict[str, str]) -> object | None:
                 "continuing without it. Unset or renew it to silence this warning.",
                 file=sys.stderr,
             )
-            anonymous = {key: value for key, value in headers.items() if key != "Authorization"}
-            return _github_api_json(url, anonymous)
+            return _github_api_json(url, headers)
         if exc.code == 429 or (exc.code == 403 and exc.headers.get("X-RateLimit-Remaining") == "0"):
             reset = exc.headers.get("X-RateLimit-Reset")
             when = (
