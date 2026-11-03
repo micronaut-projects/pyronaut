@@ -124,7 +124,7 @@ public final class DirectSourceDependencyResolver {
                 true
             );
         }
-        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(null, PyronautManagedVersions.micronautPlatformVersion(),
+        PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(PyronautManagedVersions.micronautCoreVersion(), PyronautManagedVersions.micronautPlatformVersion(),
             repositories, null, new PyprojectModel.Dependencies(runtime, List.of(), build, List.of()), null, null, null, null, null, null, null, null, null, null, false);
         PyprojectModel model = new PyprojectModel(null, null, pyronaut);
         MavenClasspathResolver.ResolvedScopeDetails buildDetails =
@@ -403,8 +403,9 @@ public final class DirectSourceDependencyResolver {
                                         Map<String, List<String>> exclusions,
                                         List<String> repositories,
                                         PyprojectModel.TestResources testResources) {
+        // Pin Micronaut Core to the tool's version, as for the inferred launch model.
         PyprojectModel.Pyronaut pyronaut = new PyprojectModel.Pyronaut(
-            null,
+            PyronautManagedVersions.micronautCoreVersion(),
             PyronautManagedVersions.micronautPlatformVersion(),
             repositories,
             null,
