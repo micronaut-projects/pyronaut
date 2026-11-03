@@ -138,24 +138,6 @@ class ReleaseSelectionTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "GH_TOKEN"):
                 cli._sdk_releases()
 
-    def test_rate_limited_anonymous_listing_falls_back_to_the_public_latest_release(self):
-        limited = cli._GitHubRateLimitError("rate limited")
-        with patch.object(cli, "_github_api_json", side_effect=limited), \
-                patch.object(cli, "_read_pyronaut_user_settings", return_value={}), \
-                patch.object(cli, "_github_token", return_value=None), \
-                patch.object(cli, "_github_latest_release_tag", return_value="v0.1.1") as latest:
-            releases = cli._sdk_releases()
-            requested = cli._sdk_releases(requested="0.1.0")
-
-        latest.assert_called_once_with("https://github.com/micronaut-projects/pyronaut/releases")
-        self.assertEqual(["v0.1.1"], [release.tag for release in releases])
-        self.assertEqual(
-            "https://github.com/micronaut-projects/pyronaut/releases/download/v0.1.1/pyronaut-0.1.1-py3-none-any.whl",
-            releases[0].wheel_url,
-        )
-        self.assertEqual("0.1.1", releases[0].display_version)
-        self.assertEqual(["v0.1.0"], [release.tag for release in requested])
-
     def test_rate_limited_listing_is_reported_with_a_token_or_for_prereleases(self):
         limited = cli._GitHubRateLimitError("rate limited")
         with patch.object(cli, "_github_api_json", side_effect=limited), \
@@ -250,6 +232,57 @@ class UpdateArgumentsTest(unittest.TestCase):
         with redirect_stdout(stdout):
             self.assertEqual(cli.SUCCESS, cli.run(["update", "--help"], platform_name="linux"))
         self.assertIn("Usage: pyronaut update [<version>]", stdout.getvalue())
+
+
+class RateLimitedUpdateTest(unittest.TestCase):
+    """``pyronaut update`` when anonymous GitHub API requests are rate limited."""
+
+    BASE = "https://github.com/micronaut-projects/pyronaut/releases"
+
+    def _check(self, args, *, latest=None, published=(), installed="0.1.0"):
+        checked = []
+
+        def exists(url):
+            checked.append(url)
+            return url in {f"{self.BASE}/download/{path}" for path in published}
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(cli, "_setup_is_required", return_value=True), \
+                patch.object(cli, "_read_pyronaut_user_settings", return_value={}), \
+                patch.object(cli, "_installed_pyronaut_version", return_value=installed), \
+                patch.object(cli, "_github_token", return_value=None), \
+                patch.object(cli, "_github_api_json", side_effect=cli._GitHubRateLimitError("rate limited")), \
+                patch.object(cli, "_github_latest_release_tag", return_value=latest), \
+                patch.object(cli, "_github_public_download_exists", side_effect=exists), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli._run_update([*args, "--check", "--progress", "off"], lambda command, env: 0)
+        return code, stdout.getvalue(), stderr.getvalue(), checked
+
+    def test_offers_the_latest_release_once_its_wheel_is_published(self):
+        code, stdout, stderr, checked = self._check(
+            [], latest="v0.1.1", published=["v0.1.1/pyronaut-0.1.1-py3-none-any.whl"]
+        )
+        self.assertEqual(cli.SUCCESS, code, stderr)
+        self.assertIn("Pyronaut 0.1.1 is available", stdout)
+        self.assertEqual([f"{self.BASE}/download/v0.1.1/pyronaut-0.1.1-py3-none-any.whl"], checked)
+
+    def test_keeps_a_bare_release_tag(self):
+        code, stdout, stderr, _ = self._check(
+            ["1.2.3"], published=["1.2.3/pyronaut-1.2.3-py3-none-any.whl"]
+        )
+        self.assertEqual(cli.SUCCESS, code, stderr)
+        self.assertIn("Pyronaut 1.2.3 is available", stdout)
+
+        code, stdout, stderr, _ = self._check([], latest="1.2.3", published=["1.2.3/pyronaut-1.2.3-py3-none-any.whl"])
+        self.assertEqual(cli.SUCCESS, code, stderr)
+        self.assertIn("Pyronaut 1.2.3 is available", stdout)
+
+    def test_reports_the_rate_limit_for_a_missing_release_or_wheel(self):
+        for args, latest in ((["9.9.9"], None), ([], "v0.1.1"), ([], None)):
+            code, stdout, stderr, _ = self._check(args, latest=latest)
+            self.assertEqual(cli.PRECONDITION_FAILED, code, (args, latest))
+            self.assertNotIn("is available", stdout)
+            self.assertIn("rate limit exceeded", stderr)
 
 
 class RunUpdateTest(unittest.TestCase):

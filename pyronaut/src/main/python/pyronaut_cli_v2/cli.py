@@ -11162,26 +11162,49 @@ def _public_sdk_releases(base_url: str, requested: str | None) -> list[_SdkRelea
 
     Used when anonymous API requests are rate limited. Without release
     metadata only final versions can be offered, because their wheel name is
-    predictable from the tag: ``v1.2.3`` ships ``pyronaut-1.2.3-py3-none-any.whl``.
+    predictable from the tag: ``v1.2.3`` or ``1.2.3`` ships
+    ``pyronaut-1.2.3-py3-none-any.whl``. A release is only returned once its
+    wheel is confirmed to be downloadable; otherwise the rate limit is reported.
     """
     if requested is not None:
-        tag = requested if requested.startswith("v") else f"v{requested}"
+        bare = requested.removeprefix("v")
+        tags = list(dict.fromkeys([requested, f"v{bare}", bare]))
     else:
-        tag = _github_latest_release_tag(base_url)
-    version = _parse_sdk_version(tag) if tag else None
-    if tag is None or version is None or version.prerelease:
-        raise _GitHubRateLimitError(
-            f"GitHub API rate limit exceeded while listing Pyronaut releases at {base_url}; "
-            "retry later or set GH_TOKEN to raise the limit"
-        )
-    wheel_name = f"pyronaut-{tag.removeprefix('v')}-py3-none-any.whl"
-    return [_SdkRelease(
-        tag=tag,
-        version=version,
-        prerelease=False,
-        wheel_name=wheel_name,
-        wheel_url=f"{base_url.rstrip('/')}/download/{urllib.parse.quote(tag)}/{wheel_name}",
-    )]
+        latest = _github_latest_release_tag(base_url)
+        tags = [latest] if latest else []
+    for tag in tags:
+        version = _parse_sdk_version(tag)
+        if version is None or version.prerelease:
+            continue
+        wheel_name = f"pyronaut-{tag.removeprefix('v')}-py3-none-any.whl"
+        wheel_url = f"{base_url.rstrip('/')}/download/{urllib.parse.quote(tag)}/{wheel_name}"
+        if _github_public_download_exists(wheel_url):
+            return [_SdkRelease(
+                tag=tag,
+                version=version,
+                prerelease=False,
+                wheel_name=wheel_name,
+                wheel_url=wheel_url,
+            )]
+    subject = f"Pyronaut release {requested}" if requested is not None else "the latest Pyronaut release"
+    raise _GitHubRateLimitError(
+        f"GitHub API rate limit exceeded while listing Pyronaut releases at {base_url}, "
+        f"and {subject} has no downloadable wheel at a public URL; "
+        "retry later or set GH_TOKEN to raise the limit"
+    )
+
+
+def _github_public_download_exists(url: str) -> bool:
+    """Whether a public ``releases/download`` URL serves a file."""
+    try:
+        with _github_opener(url).open(urllib.request.Request(url, method="HEAD")):
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise RuntimeError(f"Unable to check {url}: HTTP {exc.code}") from exc
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Unable to check {url}: {exc}") from exc
 
 
 def _installed_sdk_is_prerelease(installed: _SdkVersion, releases: Sequence[_SdkRelease]) -> bool:
