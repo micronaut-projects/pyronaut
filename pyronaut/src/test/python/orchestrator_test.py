@@ -588,9 +588,10 @@ class OrchestratorTest(unittest.TestCase):
 
             self.assertEqual(0, exit_code)
             self.assertEqual(3, len(executed))
+            # processing comes first: the validator reads the configuration metadata it generates
             self.assertEqual(
                 ["/tmp/pyronaut-processor", "--project-dir", str(project_dir), "--pass", "main", "--type-check", "--no-compile-static"],
-                executed[1],
+                executed[0],
             )
             self._assert_run_delegate(executed[2], str(project_dir), ["--main-class", "example.Main"])
 
