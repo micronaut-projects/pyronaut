@@ -137,7 +137,23 @@ def graalVmJavaVersionForTag = { String tag ->
     matcher.find() ? matcher.group(1) : "25"
 }
 
+// A core snapshot is built from the checkout settings.gradle.kts includes. The applications the SDK runs resolve
+// core from Maven local, so the published core projects of that build are published there too: every project of
+// the checkout but its test suites, benchmarks and test helpers.
+def micronautCoreCheckout = gradle.ext.has("pyronaut.micronaut.core.checkout") ? gradle.ext.get("pyronaut.micronaut.core.checkout") as File : null
+def micronautCorePublishedProjects = micronautCoreCheckout == null ? [] : (new File(micronautCoreCheckout, "settings.gradle").text =~ /(?m)^include\s+['"]([^'"]+)['"]/)
+    .collect { it[1] }
+    .findAll { !(it ==~ /test-suite.*|benchmarks|.*-helper\d*|.*test-utils/) }
+tasks.register("publishMicronautCoreToMavenLocal") {
+    group = "build setup"
+    description = "Publishes the Micronaut core build included from source to the Maven local repository."
+    dependsOn(micronautCorePublishedProjects.collect {
+        gradle.includedBuild("micronaut-core").task(":micronaut-${it}:publishToMavenLocal")
+    })
+}
+
 tasks.register("prepareSdkMavenLocalEnvironment") {
+    dependsOn("publishMicronautCoreToMavenLocal")
     group = "build setup"
     description = "Publishes local Pyronaut artifacts to the Maven local repository used by demo applications."
     dependsOn({
@@ -167,6 +183,14 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
                         from(sourceDir)
                         into(new File(targetRepository, relativePath))
                     }
+                }
+            }
+            if (micronautCoreCheckout != null) {
+                copy {
+                    from(new File(sourceRepository, "io/micronaut")) {
+                        include("micronaut-*/${micronautCoreVersion}/**")
+                    }
+                    into(new File(targetRepository, "io/micronaut"))
                 }
             }
         }

@@ -25,6 +25,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
           token: ${{ secrets.GH_TOKEN }}
       - uses: gradle/actions/wrapper-validation@v5
       - name: Set up JDK
@@ -175,6 +177,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
       - name: Download artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:

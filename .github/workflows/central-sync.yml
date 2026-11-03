@@ -22,6 +22,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
           ref: v${{ github.event.inputs.release_version }}
       - uses: gradle/actions/wrapper-validation@v5
       - name: Set up JDK

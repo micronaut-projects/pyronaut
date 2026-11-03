@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout release
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
       - name: Set up JDK
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
@@ -70,6 +73,9 @@ jobs:
     steps:
       - name: Checkout release
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
       - name: Prepare image context
         id: release
         env:
