@@ -1631,6 +1631,9 @@ val installApp by tasks.registering {
     group = "verification"
     description = "Resolves functional-test app dependencies into __pyronaut__."
     dependsOn(publishFixtureArtifactsToMavenLocal, installFixtureLaunchers, installPytest)
+    // the app resolves through ~/.m2: wait for a core snapshot built from source to be published there, and
+    // for the download markers that would hide it to be dropped
+    mustRunAfter(":micronaut-pyronaut:prepareSdkMavenLocalEnvironment")
     inputs.files(
         fixtureAppDir.file("pyproject.toml"),
         fixtureAppDir.file("setup.py"),
