@@ -138,6 +138,68 @@ class ReleaseSelectionTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "GH_TOKEN"):
                 cli._sdk_releases()
 
+    def test_rate_limited_anonymous_listing_falls_back_to_the_public_latest_release(self):
+        limited = cli._GitHubRateLimitError("rate limited")
+        with patch.object(cli, "_github_api_json", side_effect=limited), \
+                patch.object(cli, "_read_pyronaut_user_settings", return_value={}), \
+                patch.object(cli, "_github_token", return_value=None), \
+                patch.object(cli, "_github_latest_release_tag", return_value="v0.1.1") as latest:
+            releases = cli._sdk_releases()
+            requested = cli._sdk_releases(requested="0.1.0")
+
+        latest.assert_called_once_with("https://github.com/micronaut-projects/pyronaut/releases")
+        self.assertEqual(["v0.1.1"], [release.tag for release in releases])
+        self.assertEqual(
+            "https://github.com/micronaut-projects/pyronaut/releases/download/v0.1.1/pyronaut-0.1.1-py3-none-any.whl",
+            releases[0].wheel_url,
+        )
+        self.assertEqual("0.1.1", releases[0].display_version)
+        self.assertEqual(["v0.1.0"], [release.tag for release in requested])
+
+    def test_rate_limited_listing_is_reported_with_a_token_or_for_prereleases(self):
+        limited = cli._GitHubRateLimitError("rate limited")
+        with patch.object(cli, "_github_api_json", side_effect=limited), \
+                patch.object(cli, "_read_pyronaut_user_settings", return_value={}):
+            with patch.object(cli, "_github_token", return_value="token"):
+                with self.assertRaisesRegex(RuntimeError, "rate limited"):
+                    cli._sdk_releases()
+            with patch.object(cli, "_github_token", return_value=None):
+                with self.assertRaisesRegex(RuntimeError, "rate limit exceeded"):
+                    cli._sdk_releases(requested="1.0.0-M1")
+
+    def test_rate_limited_anonymous_asset_lookup_uses_the_public_download_url(self):
+        limited = cli._GitHubRateLimitError("rate limited")
+        with patch.object(cli, "_github_api_json", side_effect=limited), \
+                patch.object(cli, "_github_token", return_value=None):
+            url, headers = cli._github_release_asset(
+                "https://github.com/micronaut-projects/pyronaut/releases",
+                "0.1.1",
+                "pyronaut-dev-macos-aarch64-0.1.1.tar.gz",
+            )
+        self.assertEqual(
+            "https://github.com/micronaut-projects/pyronaut/releases/download/v0.1.1/pyronaut-dev-macos-aarch64-0.1.1.tar.gz",
+            url,
+        )
+        self.assertEqual({}, headers)
+
+    def test_api_rate_limit_responses_raise_a_rate_limit_error(self):
+        import email.message
+        import urllib.error
+
+        headers = email.message.Message()
+        headers["X-RateLimit-Remaining"] = "0"
+        headers["X-RateLimit-Reset"] = "1800000000"
+        error = urllib.error.HTTPError("https://api.github.com/x", 403, "Forbidden", headers, None)
+        opener = types.SimpleNamespace(open=lambda request: (_ for _ in ()).throw(error))
+        with patch.object(cli, "_github_opener", return_value=opener):
+            with self.assertRaisesRegex(cli._GitHubRateLimitError, "rate limit exceeded.*resets at"):
+                cli._github_api_json("https://api.github.com/x", {})
+            forbidden = urllib.error.HTTPError("https://api.github.com/x", 403, "Forbidden", email.message.Message(), None)
+            opener.open = lambda request: (_ for _ in ()).throw(forbidden)
+            with self.assertRaises(RuntimeError) as raised:
+                cli._github_api_json("https://api.github.com/x", {})
+            self.assertNotIsInstance(raised.exception, cli._GitHubRateLimitError)
+
     def test_anonymous_clients_download_published_wheels_from_the_public_url(self):
         published = _github_release("v1.0.0")
         draft = _github_release("v2.0.0", draft=True)
