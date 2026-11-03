@@ -41,5 +41,10 @@ tasks {
     startScripts {
         applicationName = "pyronaut-install"
     }
+    test {
+        // A core snapshot makes the resolver look in Central snapshots as well, and the tests resolve their
+        // fixtures from the repositories they create
+        systemProperty("pyronaut.sonatype.snapshots.enabled", "false")
+    }
 
 }

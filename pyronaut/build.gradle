@@ -188,7 +188,7 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
             if (micronautCoreCheckout != null) {
                 copy {
                     from(new File(sourceRepository, "io/micronaut")) {
-                        include("micronaut-*/${micronautCoreVersion}/**")
+                        include("micronaut-*/${micronautCoreVersion.get()}/**")
                     }
                     into(new File(targetRepository, "io/micronaut"))
                 }
@@ -205,6 +205,15 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
                 include("**/_remote.repositories")
             }.files
                 .findAll { it.parentFile.name == project.version.toString() }
+                .each { it.delete() }
+        }
+        // The same holds for the core snapshot built from source, which Central snapshots publishes too
+        def micronautGroupDirectory = new File(targetRepository, "io/micronaut")
+        if (micronautCoreCheckout != null && micronautGroupDirectory.isDirectory()) {
+            micronautGroupDirectory.listFiles()
+                .findAll { it.name.startsWith("micronaut-") }
+                .collect { new File(it, "${micronautCoreVersion.get()}/_remote.repositories") }
+                .findAll { it.isFile() }
                 .each { it.delete() }
         }
 
