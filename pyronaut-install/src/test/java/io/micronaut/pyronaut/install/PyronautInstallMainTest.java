@@ -3057,7 +3057,8 @@ class PyronautInstallMainTest {
 
         // the facades re-export the Java types and alias the static methods and constants of their declaring types
         String httpFacade = Files.readString(stubsRoot.resolve("pyronaut/http/__init__.pyi"), StandardCharsets.UTF_8);
-        assertTrue(httpFacade.contains("from micronaut.http.annotation import Body as Body, Get as Get, Post as Post\n"), httpFacade);
+        // with the snake_case aliases core gives the annotations
+        assertTrue(httpFacade.contains("from micronaut.http.annotation import Body as Body, Get as Get, Post as Post, Body as body, Get as get, Post as post\n"), httpFacade);
         assertTrue(httpFacade.contains("from micronaut.http import HttpMethod as HttpMethod, HttpRequest as HttpRequest, HttpResponse as HttpResponse\n"), httpFacade);
         assertTrue(httpFacade.contains("\nok = HttpResponse.ok\n"), httpFacade);
         assertTrue(httpFacade.contains("\nGET = HttpMethod.GET\n\"\"\"See https://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.3.\"\"\"\n"), httpFacade);
@@ -3065,7 +3066,7 @@ class PyronautInstallMainTest {
         assertTrue(httpFacade.contains("    ok (function, io.micronaut.http.HttpResponse#ok)\n"), httpFacade);
         assertTrue(httpFacade.contains("    \"ok\",\n"), httpFacade);
         String contextFacade = Files.readString(stubsRoot.resolve("pyronaut/context/__init__.pyi"), StandardCharsets.UTF_8);
-        assertTrue(contextFacade.contains("from jakarta.inject import Inject as Inject, Singleton as Singleton\n"), contextFacade);
+        assertTrue(contextFacade.contains("from jakarta.inject import Inject as Inject, Singleton as Singleton, Inject as inject, Singleton as singleton\n"), contextFacade);
         // a facade whose first package is missing has no stub
         assertFalse(Files.exists(stubsRoot.resolve("pyronaut/http/client/__init__.pyi")));
         assertTrue(Files.exists(stubsRoot.resolve("pyronaut/__init__.pyi")));
