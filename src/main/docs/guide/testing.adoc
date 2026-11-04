@@ -51,21 +51,20 @@ The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest
 ----
 from typing import Annotated
 
-from jakarta.inject import Inject
-from micronaut.context import ApplicationContext
 from micronaut.test.extensions.junit5.annotation import MicronautTest
 from org.junit.jupiter.api import BeforeEach
+from pyronaut import context
 
 MicronautTest()
 
-context: Annotated[ApplicationContext, Inject]
+application_context: Annotated[context.ApplicationContext, context.Inject]
 
 @BeforeEach
 def verify_context():
-    assert context.isRunning()
+    assert application_context.isRunning()
 
 def test_context():
-    assert context.isRunning()
+    assert application_context.isRunning()
 ----
 
 JUnit module tests can run in direct-source mode. They do not use pytest fixtures or require a Python virtual environment.
