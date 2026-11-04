@@ -22,6 +22,7 @@ import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.pyronaut.config.terminal.TerminalInfo;
 import io.micronaut.pyronaut.config.model.ExternalProjectLayout;
 import io.micronaut.pyronaut.config.model.NativeProvidedJarResolver;
+import io.micronaut.pyronaut.config.output.ProcessedOutputLock;
 import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.python.compiler.PythonIncrementalMode;
 import picocli.CommandLine;
@@ -174,6 +175,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         Path mergedTestRoot = null;
         Path mergedExternalMainRoot = null;
         Path mergedExternalTestRoot = null;
+        ProcessedOutputLock.Hold outputHold = null;
         try {
             ExternalProjectLayout externalLayout = ExternalProjectLayout.isExternal(root)
                 ? ExternalProjectLayout.read(root) : null;
@@ -201,6 +203,11 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 } catch (CompilerDaemon.UnavailableException e) {
                     System.err.println("Compiler daemon unavailable; processing in the current process: " + e.getMessage());
                 }
+            }
+            if (externalLayout == null) {
+                // pyronaut dev and pyronaut test -t compile into the processed classes in process, and one of them may
+                // run while the other processes the project before its launch: write them under the lock they take
+                outputHold = lockOutputs(root, root.resolve(targetDir));
             }
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
@@ -544,7 +551,48 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             return PyronautProcessorExitCode.INTERNAL_ERROR.code();
         } finally {
             cleanupTemporaryDirectory(mergedTestRoot);
+            if (outputHold != null) {
+                outputHold.close();
+            }
         }
+    }
+
+    /**
+     * Takes the lock of the processed classes, which the development runtime holds while it compiles into them: that of
+     * {@code __pyronaut__/classes}, which also guards the processor's state beside it, the fingerprints, incremental
+     * state and resolved options, and that of a {@code --target-dir} elsewhere too.
+     *
+     * @param root The project directory
+     * @param target The main pass's output
+     * @return The hold of both
+     * @throws IOException if a lock cannot be taken
+     */
+    static ProcessedOutputLock.Hold lockOutputs(Path root, Path target) throws IOException {
+        Path standard = root.resolve(DEFAULT_TARGET_DIR).toAbsolutePath().normalize();
+        Path output = target.toAbsolutePath().normalize();
+        ProcessedOutputLock.Hold project = lockOutput(standard);
+        if (output.equals(standard)) {
+            return project;
+        }
+        try {
+            ProcessedOutputLock.Hold custom = lockOutput(output);
+            return () -> {
+                try {
+                    custom.close();
+                } finally {
+                    project.close();
+                }
+            };
+        } catch (IOException | RuntimeException e) {
+            project.close();
+            throw e;
+        }
+    }
+
+    private static ProcessedOutputLock.Hold lockOutput(Path output) throws IOException {
+        return ProcessedOutputLock.lock(output, () -> System.err.println(
+            "Another Pyronaut process of the project, pyronaut dev or pyronaut test -t, is compiling into "
+                + output + ": waiting for it"));
     }
 
     static List<Path> filterNativeProvidedArtifacts(List<Path> paths) {
