@@ -117,6 +117,49 @@ class StaticCompilationReportPageTest {
         assertFalse(html.contains("What keeps functions in Python"));
     }
 
+    @Test
+    void showsTheCandidatesOfACompilationThatIsOff() {
+        String none = render("off", List.of());
+        assertTrue(none.contains("aria-label=\"Candidate: 0\""), "a compilation that is off always has the candidate stat");
+
+        String html = render("off", List.of(decision("first", "CANDIDATE"), decision("second", "CANDIDATE")));
+        assertTrue(html.contains("<div class=\"verdict candidate\"><span class=\"dot\"></span>2 functions would compile</div>"));
+        assertTrue(html.contains("aria-label=\"Candidate: 2\""));
+        assertTrue(html.contains("data-filter=\"candidate\" aria-pressed=\"false\">Candidate<span class=\"count\">2</span>"));
+        assertTrue(html.contains("<span class=\"candidate\" style=\"flex:2\"></span>"));
+        assertTrue(html.contains("100%<small>compile rate</small>"));
+        assertTrue(html.contains(": the body would compile"));
+
+        String one = render("annotated", List.of(decision("only", "CANDIDATE")));
+        assertTrue(one.contains("1 function would compile</div>"));
+    }
+
+    @Test
+    void saysWhetherEveryCandidateCompiled() {
+        assertTrue(render("all", List.of(decision("only", "COMPILED"))).contains("<div class=\"verdict passed\"><span class=\"dot\"></span>The candidate was compiled</div>"));
+        assertTrue(render("all", List.of(decision("first", "COMPILED"), decision("second", "COMPILED"))).contains("All 2 candidates compiled</div>"));
+    }
+
+    @Test
+    void showsAnOutcomeItDoesNotKnowAsSkippedWithoutCountingIt() {
+        String html = render("all", List.of(decision("strange", "SOMETHING_NEW")));
+
+        assertTrue(html.contains("<details class=\"test skipped\" data-status=\"skipped\" data-search=\"strange\">"), "the entry looks skipped, but is not opened");
+        assertTrue(html.contains("<span class=\"status-badge\">SKIPPED</span>"));
+        assertTrue(html.contains("aria-label=\"Total: 1\""));
+        assertTrue(html.contains("aria-label=\"Skipped: 0\""));
+        assertFalse(html.contains("<span class=\"pill skipped\">"));
+    }
+
+    private static String render(String mode, List<StaticCompilationDecisions.Decision> decisions) {
+        StaticCompilationDecisions.Plan plan = new StaticCompilationDecisions.Plan(mode, "full", Instant.parse("2026-09-28T09:15:30Z"));
+        return StaticCompilationReportPage.render(new StaticCompilationDecisions(plan, decisions));
+    }
+
+    private static StaticCompilationDecisions.Decision decision(String name, String outcome) {
+        return new StaticCompilationDecisions.Decision(name, null, 0, 0, outcome, "MODE", List.of(), StaticCompilationDecisions.Stats.NONE);
+    }
+
     private static Path reportDirectory() throws Exception {
         Path directory = Files.createTempDirectory("static-compilation");
         try (InputStream in = StaticCompilationReportPageTest.class.getResourceAsStream("decisions.jsonl")) {
