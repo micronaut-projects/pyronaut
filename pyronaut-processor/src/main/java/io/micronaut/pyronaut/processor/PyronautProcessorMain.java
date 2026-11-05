@@ -214,6 +214,12 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         return new ProcessorOptions.ProcessorSettings(typeCheckMode, staticMode, report.toAbsolutePath().normalize(), strict);
     }
 
+    private static void noteTheSilentTypeChecker(ProcessorOptions.ProcessorSettings settings) {
+        if (settings.compilesStatically() && !settings.typeChecks()) {
+            System.out.println("Static compilation runs the type checker silently; add --type-check to see why a method is not compiled.");
+        }
+    }
+
     private void requireNoContradictingFlags() {
         if (noTypeCheck && typeCheck != null) {
             throw new IllegalArgumentException("--type-check and --no-type-check cannot both be given");
@@ -294,16 +300,8 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             }
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
-            ProcessorOptions.ProcessorSettings settings;
-            try {
-                settings = resolveSettings(root, externalLayout, model);
-            } catch (IllegalArgumentException e) {
-                System.err.println(e.getMessage());
-                return PyronautProcessorExitCode.USAGE_ERROR.code();
-            }
-            if (settings.compilesStatically() && !settings.typeChecks()) {
-                System.out.println("Static compilation runs the type checker silently; add --type-check to see why a method is not compiled.");
-            }
+            ProcessorOptions.ProcessorSettings settings = resolveSettings(root, externalLayout, model);
+            noteTheSilentTypeChecker(settings);
             List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false, settings);
             if (externalLayout == null) {
                 // development mode compiles in process with the options the main pass uses
