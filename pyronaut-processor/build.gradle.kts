@@ -20,6 +20,9 @@ dependencies {
     implementation(project(":micronaut-pyronaut-imports"))
 
     implementation(project(":micronaut-pyronaut-logback"))
+    // the static compilation report page, rendered from the compiler's JSON decisions
+    implementation(project(":micronaut-pyronaut-report"))
+    implementation(mn.micronaut.jackson.core)
 
     testImplementation(mnTest.junit.jupiter.api)
     testImplementation(mnTest.junit.jupiter.engine)

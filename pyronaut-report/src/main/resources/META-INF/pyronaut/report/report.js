@@ -17,7 +17,10 @@
       }
     });
     groups.forEach(function (g) {
-      g.classList.toggle('hidden', !g.querySelector('.test:not(.hidden)'));
+      // a group without rows, such as the blockers of the static compilation report, is not filtered
+      if (g.querySelector('.test')) {
+        g.classList.toggle('hidden', !g.querySelector('.test:not(.hidden)'));
+      }
     });
     if (empty) {
       empty.classList.toggle('hidden', visibleTotal !== 0);
