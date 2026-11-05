@@ -53,4 +53,16 @@ class ProcessorOptionsTest {
         assertEquals("type-check error · static all (strict)", settings.describe());
         assertNull(ProcessorOptions.ProcessorSettings.DEFAULT.describe());
     }
+
+    @Test
+    void passesOnExplicitOptionsWithoutAValueAndDropsOpenApiOptionsNoVisitorSupports() throws Exception {
+        Path root = Files.createTempDirectory("processor-options");
+        Path cache = Files.createDirectories(root.resolve("__pyronaut__"));
+        Files.writeString(cache.resolve("annotation-processor-options.properties"), "options=micronaut.openapi.views.spec\n");
+
+        List<String> options = ProcessorOptions.resolve(root, null, List.of(
+            "-Araw", "plain", "=novalue", "name=first", "-Aname=last", "micronaut.openapi.target.file=dropped", "micronaut.openapi.views.spec=kept"), false);
+
+        assertEquals(List.of("-Araw", "plain", "=novalue", "-Amicronaut.openapi.views.spec=kept", "-Aname=last"), options);
+    }
 }
