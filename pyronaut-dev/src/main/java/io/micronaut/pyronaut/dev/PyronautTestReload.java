@@ -271,9 +271,9 @@ public final class PyronautTestReload extends MicronautDevMain {
         properties.setProperty(prefix + "compile-classpath", "@compile.argfile");
         properties.setProperty(prefix + "processor-path", "@processor.argfile");
         properties.setProperty(prefix + "generations", devDir.resolve("generations").toString());
-        sources(properties, prefix, layout.python(), layout.java(), layout.classes(), "@options.argfile");
+        sources(properties, prefix, layout.python(), layout.java(), layout.classes(), "@options.argfile", layout.pythonIncrementalMode());
         // the tests compile into an output of their own, as the test pass does, against the processed classes
-        sources(properties, prefix + "test.", layout.pythonTests(), layout.javaTests(), layout.testClasses(), "@test-options.argfile");
+        sources(properties, prefix + "test.", layout.pythonTests(), layout.javaTests(), layout.testClasses(), "@test-options.argfile", layout.pythonIncrementalMode());
         properties.setProperty(prefix + "test.compile-classpath", "@test-compile.argfile");
         roots(properties, prefix + "resources.config", layout.config());
         roots(properties, prefix + "resources.other", layout.additional());
@@ -305,11 +305,12 @@ public final class PyronautTestReload extends MicronautDevMain {
         return manifest;
     }
 
-    private static void sources(Properties properties, String prefix, Path python, Path java, Path output, String options) {
+    private static void sources(Properties properties, String prefix, Path python, Path java, Path output, String options, String pythonIncrementalMode) {
         if (Files.isDirectory(python)) {
             properties.setProperty(prefix + "sources.python", python.toString());
             properties.setProperty(prefix + "compile.python.output", output.toString());
             properties.setProperty(prefix + "compile.python.options", options);
+            properties.setProperty(prefix + "compile.python.incremental-mode", pythonIncrementalMode);
         }
         if (Files.isDirectory(java)) {
             // compiled with the Python sources, into the same output
@@ -394,6 +395,7 @@ public final class PyronautTestReload extends MicronautDevMain {
      * @param reports The test reports
      * @param reportPath The path the LiveReload server serves the live HTML report at
      * @param pythonBytecode Whether the build compiles Python modules to bytecode
+     * @param pythonIncrementalMode What a reload recompiles, the setting of the project
      */
     record Layout(Path root,
                   Path classes,
@@ -407,7 +409,8 @@ public final class PyronautTestReload extends MicronautDevMain {
                   List<Path> testResources,
                   Path reports,
                   String reportPath,
-                  boolean pythonBytecode) {
+                  boolean pythonBytecode,
+                  String pythonIncrementalMode) {
 
         static Layout of(Path root, PyprojectModel model) {
             PyprojectModel.Sources sources = model.pyronaut().sources();
@@ -433,7 +436,8 @@ public final class PyronautTestReload extends MicronautDevMain {
                 List.copyOf(testResources),
                 pyronautDir.resolve(REPORTS_DIR),
                 model.pyronaut().test().reportPathOrDefault(),
-                Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled()));
+                Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled()),
+                model.pyronaut().processor().pythonIncrementalMode());
         }
     }
 

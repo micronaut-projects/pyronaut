@@ -94,6 +94,8 @@ Choose how those cases affect recompilation with `python-incremental-mode`:
 `conservative`:: This is the default. When a dynamic or unresolved relationship affects a Python change, Pyronaut reprocesses all Python sources. This avoids stale generated output at the cost of broader compilation.
 `optimistic`:: Pyronaut reprocesses only sources selected by the statically discovered graph. This can make dynamic projects faster, but the developer is responsible for ensuring an undiscovered relationship cannot change generated output.
 
+`pyronaut dev` and `pyronaut test -t` recompile with the same setting after an edit.
+
 Both modes still reprocess aggregating visitors over all contributors.
 Deleting a Python source also expands processing so shared Python outputs cannot retain deleted-source data.
 An unrelated Java-only change does not trigger the conservative all-Python fallback unless it reaches Python through the dependency graph.

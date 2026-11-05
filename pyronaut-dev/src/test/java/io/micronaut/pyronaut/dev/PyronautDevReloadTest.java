@@ -7,9 +7,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -124,7 +126,7 @@ class PyronautDevReloadTest {
         Path processor = project.resolve("lib/micronaut-inject-python.jar");
 
         Path file = PyronautDevReload.writeManifest(project, devDir, classes, python, java, List.of(config), List.of(views),
-            List.of(jar), List.of(processor), List.of("-Amicronaut.openapi.enabled=true"));
+            List.of(jar), List.of(processor), List.of("-Amicronaut.openapi.enabled=true"), "optimistic");
         DevManifest manifest = DevManifest.load(file);
 
         assertEquals("pyronaut_application.PyronautMain", manifest.mainClass());
@@ -139,7 +141,17 @@ class PyronautDevReloadTest {
         // one output: the Python compiler compiles the Java sources with the module
         assertEquals(manifest.classOutput(SourceKind.PYTHON), manifest.classOutput(SourceKind.JAVA));
         assertEquals(List.of("-Amicronaut.openapi.enabled=true"), manifest.compileOptions(SourceKind.PYTHON));
+        // the setting of the project, which the runtime of the same version reads
+        assertEquals("optimistic", properties(file).getProperty("micronaut.dev.compile.python.incremental-mode"));
         assertTrue(manifest.resourceRoots().stream().anyMatch(root -> root.path().equals(config)));
         assertTrue(manifest.resourceRoots().stream().anyMatch(root -> root.path().equals(views)));
+    }
+
+    private static Properties properties(Path file) throws Exception {
+        Properties properties = new Properties();
+        try (InputStream in = Files.newInputStream(file)) {
+            properties.load(in);
+        }
+        return properties;
     }
 }

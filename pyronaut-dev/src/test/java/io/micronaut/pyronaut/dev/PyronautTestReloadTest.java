@@ -12,10 +12,12 @@ import io.micronaut.pyronaut.config.output.ProcessedOutputLock;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -103,6 +105,29 @@ class PyronautTestReloadTest {
     }
 
     @Test
+    void theApplicationAndTheTestsAreCompiledWithThePythonIncrementalModeOfTheProject() throws Exception {
+        Path devDir = Files.createDirectories(project.resolve("__pyronaut__/micronaut-dev/test"));
+        assertEquals("conservative", incrementalModes(layout(""), devDir).getProperty("micronaut.dev.compile.python.incremental-mode"));
+
+        Properties optimistic = incrementalModes(layout("""
+
+            [tool.pyronaut.processor]
+            python-incremental-mode = "optimistic"
+            """), devDir);
+        assertEquals("optimistic", optimistic.getProperty("micronaut.dev.compile.python.incremental-mode"));
+        assertEquals("optimistic", optimistic.getProperty("micronaut.dev.test.compile.python.incremental-mode"));
+    }
+
+    private static Properties incrementalModes(PyronautTestReload.Layout layout, Path devDir) throws Exception {
+        Path file = PyronautTestReload.writeManifest(layout, devDir, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        Properties properties = new Properties();
+        try (InputStream in = Files.newInputStream(file)) {
+            properties.load(in);
+        }
+        return properties;
+    }
+
+    @Test
     void theLiveReportIsServedAtTheConfiguredPath() throws Exception {
         PyronautTestReload.Layout layout = layout("""
 
@@ -173,7 +198,7 @@ class PyronautTestReloadTest {
 
         DevManifest tests = DevManifest.load(PyronautTestReload.writeManifest(layout, testDir, List.of(), List.of(), List.of(), List.of(), List.of(), List.of()));
         DevManifest dev = DevManifest.load(PyronautDevReload.writeManifest(project, devDir, layout.classes(), layout.python(), layout.java(),
-            List.of(), List.of(), List.of(), List.of(), List.of()));
+            List.of(), List.of(), List.of(), List.of(), List.of(), "conservative"));
 
         // pyronaut dev keeps the default port; the report of pyronaut test -t is served beside it
         assertEquals(LiveReloadScript.DEFAULT_PORT, dev.liveReload().port());
