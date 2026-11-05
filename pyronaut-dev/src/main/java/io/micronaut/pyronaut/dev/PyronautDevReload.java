@@ -153,7 +153,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         List<Path> processorPath = DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies);
         // and javac compiles what they generate against the compiler jars the image was built with, as pyronaut process
         List<Path> compileClasspath = DevReloadFiles.withNativeCompilerClasspath(runtime);
-        Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, compileClasspath, processorPath, options);
+        Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, compileClasspath, processorPath, options, model.pyronaut().processor().pythonIncrementalMode());
 
         DevRuntime devRuntime = launch(DevManifest.load(manifestFile), appArgs.toArray(String[]::new));
         Runtime.getRuntime().addShutdownHook(new Thread(devRuntime::close, "pyronaut-dev-shutdown"));
@@ -172,7 +172,8 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
                               List<Path> additional,
                               List<Path> compileClasspath,
                               List<Path> processorPath,
-                              List<String> options) throws IOException {
+                              List<String> options,
+                              String pythonIncrementalMode) throws IOException {
         DevReloadFiles.writeLines(devDir.resolve("compile.argfile"), compileClasspath.stream().map(Path::toString).toList());
         DevReloadFiles.writeLines(devDir.resolve("processor.argfile"), processorPath.stream().map(Path::toString).toList());
         DevReloadFiles.writeLines(devDir.resolve("options.argfile"), options);
@@ -187,6 +188,8 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
             properties.setProperty("micronaut.dev.sources.python", python.toString());
             properties.setProperty("micronaut.dev.compile.python.output", classes.toString());
             properties.setProperty("micronaut.dev.compile.python.options", "@options.argfile");
+            // what a reload recompiles, as pyronaut process decides it for the same setting
+            properties.setProperty("micronaut.dev.compile.python.incremental-mode", pythonIncrementalMode);
         }
         if (Files.isDirectory(java)) {
             // compiled with the Python sources, into the same output
