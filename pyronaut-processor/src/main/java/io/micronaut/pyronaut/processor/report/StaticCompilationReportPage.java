@@ -27,6 +27,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,7 +51,8 @@ public final class StaticCompilationReportPage {
     public static final String PAGE_FILE = "index.html";
 
     private static final String DEFAULT_GROUP = "Functions";
-    private static final List<String> OUTCOMES = List.of("COMPILED", "CANDIDATE", "SKIPPED", "EXCLUDED", "NOT_CANDIDATE");
+    private static final String SECTION_END = "</section>\n";
+    private static final String SPAN_END = "</span>";
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("EEE d MMM yyyy, HH:mm:ss z", Locale.ENGLISH);
     private static final String ICON_COMPILED = "<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg>";
     private static final String ICON_SKIPPED = "<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\"><path d=\"M6 6l12 12M18 6L6 18\"/></svg>";
@@ -94,114 +96,30 @@ public final class StaticCompilationReportPage {
         String mode = report.plan().mode();
         boolean incremental = "incremental".equals(report.plan().coverage());
         Instant written = report.plan().written() == null ? Instant.now() : report.plan().written();
-
-        long bridgeCalls = 0;
-        for (Decision decision : decisions) {
-            if ("COMPILED".equals(decision.outcome())) {
-                bridgeCalls += decision.stats().bridgeCalls();
-            }
-        }
-        long total = decisions.size();
-        long compiled = count(decisions, "COMPILED");
-        long skipped = count(decisions, "SKIPPED");
-        long candidates = count(decisions, "CANDIDATE");
-        long excluded = count(decisions, "EXCLUDED");
-        long ineligible = count(decisions, "NOT_CANDIDATE");
-        boolean showCandidates = candidates > 0 || "off".equals(mode);
-
-        Map<String, List<Decision>> groups = new LinkedHashMap<>();
-        for (Decision decision : decisions) {
-            groups.computeIfAbsent(decision.source() == null ? DEFAULT_GROUP : decision.source(), k -> new ArrayList<>()).add(decision);
-        }
-        Map<String, List<Decision>> byRule = new LinkedHashMap<>();
-        Map<String, Map<String, Integer>> hintsByRule = new HashMap<>();
-        for (Decision decision : decisions) {
-            for (Reason reason : decision.reasons()) {
-                List<Decision> affected = byRule.computeIfAbsent(reason.rule(), k -> new ArrayList<>());
-                if (affected.isEmpty() || affected.get(affected.size() - 1) != decision) {
-                    affected.add(decision);
-                }
-                if (reason.hint() != null) {
-                    hintsByRule.computeIfAbsent(reason.rule(), k -> new LinkedHashMap<>()).merge(reason.hint(), 1, Integer::sum);
-                }
-            }
-        }
+        Summary summary = Summary.of(decisions, mode);
 
         StringBuilder html = new StringBuilder(32768);
+        appendHead(html);
+        appendHero(html, mode, incremental, written, summary);
+        html.append("<main class=\"wrap\">\n");
+        appendSummary(html, summary);
+        appendToolbar(html, summary);
+        appendBlockers(html, decisions);
+        appendGroups(html, decisions);
+        appendFoot(html, summary.total());
+        return html.toString();
+    }
+
+    private static void appendHead(StringBuilder html) {
         html.append("<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n")
             .append("<title>Pyronaut Static Compilation Report</title>\n")
             .append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
             .append("<link rel=\"icon\" href=\"").append(ReportAssets.FAVICON).append("\">\n")
             .append("<style>\n").append(ReportAssets.stylesheet()).append("</style>\n")
             .append("</head><body>\n");
-
-        appendHero(html, mode, incremental, written, compiled, skipped, candidates);
-
-        html.append("<main class=\"wrap\">\n<section class=\"summary\">\n<div class=\"stats\">\n");
-        appendStat(html, "all", "total", "Total", total);
-        appendStat(html, "compiled", "compiled", "Compiled", compiled);
-        appendStat(html, "skipped", skipped > 0 ? "skipped nonzero" : "skipped", "Skipped", skipped);
-        if (showCandidates) {
-            appendStat(html, "candidate", "candidate", "Candidate", candidates);
-        }
-        appendStat(html, "excluded", "excluded", "Excluded", excluded);
-        appendStat(html, "ineligible", "ineligible", "Not candidate", ineligible);
-        html.append("<div class=\"stat static bridge\"><span class=\"label\">Bridge calls</span><span class=\"value\">")
-            .append(bridgeCalls).append("</span></div>\n");
-        html.append("</div>\n<div class=\"progress\"><div class=\"bar\" role=\"img\" aria-label=\"")
-            .append(compiled).append(" compiled, ").append(skipped).append(" skipped, ").append(candidates).append(" candidates, ")
-            .append(excluded).append(" excluded, ").append(ineligible).append(" not candidates\">");
-        appendBarSegment(html, "compiled", compiled);
-        appendBarSegment(html, "candidate", candidates);
-        appendBarSegment(html, "skipped", skipped);
-        appendBarSegment(html, "excluded", excluded);
-        appendBarSegment(html, "ineligible", ineligible);
-        long attempted = compiled + candidates + skipped;
-        String rate = attempted == 0 ? "&ndash;" : Math.round((compiled + candidates) * 100.0 / attempted) + "%";
-        html.append("</div><span class=\"rate\">").append(rate).append("<small>compile rate</small></span></div>\n")
-            .append("</section>\n");
-
-        html.append("<div class=\"toolbar\">\n<div class=\"filters\" role=\"group\" aria-label=\"Filter by outcome\">");
-        appendFilter(html, "all", "All", total);
-        appendFilter(html, "compiled", "Compiled", compiled);
-        appendFilter(html, "skipped", "Skipped", skipped);
-        if (showCandidates) {
-            appendFilter(html, "candidate", "Candidate", candidates);
-        }
-        appendFilter(html, "excluded", "Excluded", excluded);
-        appendFilter(html, "ineligible", "Not candidate", ineligible);
-        html.append("</div>\n<label class=\"search\">").append(ICON_SEARCH)
-            .append("<input id=\"search\" type=\"search\" placeholder=\"Filter functions  (press /)\" aria-label=\"Filter functions\"></label>\n")
-            .append("<button type=\"button\" class=\"ghost\" id=\"toggle-all\">Expand all</button>\n</div>\n");
-
-        if (!byRule.isEmpty()) {
-            appendBlockers(html, byRule, hintsByRule);
-        }
-
-        for (var group : groups.entrySet()) {
-            List<Decision> groupDecisions = group.getValue();
-            html.append("<section class=\"group\">\n<div class=\"group-head\"><span class=\"file\">").append(ICON_FILE)
-                .append(escapeHtml(group.getKey())).append("</span><span class=\"pills\">");
-            for (String outcome : OUTCOMES) {
-                appendPill(html, outcome, groupDecisions);
-            }
-            html.append("</span></div>\n");
-            for (Decision decision : groupDecisions) {
-                appendEntry(html, decision);
-            }
-            html.append("</section>\n");
-        }
-        html.append("<div id=\"empty\" class=\"empty-state").append(total == 0 ? "" : " hidden").append("\">")
-            .append(total == 0 ? "No candidate functions were found." : "No functions match the current filter.")
-            .append("</div>\n");
-
-        html.append("</main>\n<footer>Generated by <strong>Pyronaut</strong> &middot; Powered by Micronaut &amp; GraalPy &middot; Static compilation is experimental</footer>\n")
-            .append("<script>\n").append(ReportAssets.script()).append("</script>\n")
-            .append("</body></html>\n");
-        return html.toString();
     }
 
-    private static void appendHero(StringBuilder html, String mode, boolean incremental, Instant written, long compiled, long skipped, long candidates) {
+    private static void appendHero(StringBuilder html, String mode, boolean incremental, Instant written, Summary summary) {
         html.append("<header class=\"hero\"><div class=\"wrap\">\n<div class=\"hero-text\">\n");
         String wordmark = ReportAssets.wordmark();
         if (wordmark != null) {
@@ -216,23 +134,7 @@ public final class StaticCompilationReportPage {
             .append(" &middot; ").append(incremental ? "incremental build" : "full build")
             .append(" &middot; experimental")
             .append("</div>\n");
-        String verdictClass;
-        String verdictText;
-        if (skipped > 0) {
-            verdictClass = "skipped";
-            verdictText = compiled + " compiled, " + skipped + " skipped";
-        } else if (compiled > 0) {
-            verdictClass = "passed";
-            verdictText = compiled == 1 ? "The candidate was compiled" : "All " + compiled + " candidates compiled";
-        } else if (candidates > 0) {
-            verdictClass = "candidate";
-            verdictText = candidates + (candidates == 1 ? " function would compile" : " functions would compile");
-        } else {
-            verdictClass = "empty";
-            verdictText = "Nothing was compiled";
-        }
-        html.append("<div class=\"verdict ").append(verdictClass).append("\"><span class=\"dot\"></span>")
-            .append(verdictText).append("</div>\n</div>\n");
+        appendVerdict(html, summary);
         String mascot = ReportAssets.mascot();
         if (mascot != null) {
             html.append("<img class=\"mascot\" src=\"").append(mascot).append("\" alt=\"\" aria-hidden=\"true\">\n");
@@ -240,11 +142,93 @@ public final class StaticCompilationReportPage {
         html.append("</div></header>\n");
     }
 
+    private static void appendVerdict(StringBuilder html, Summary summary) {
+        long compiled = summary.count(Outcome.COMPILED);
+        long skipped = summary.count(Outcome.SKIPPED);
+        long candidates = summary.count(Outcome.CANDIDATE);
+        String verdictClass;
+        String verdictText;
+        if (skipped > 0) {
+            verdictClass = Outcome.SKIPPED.key;
+            verdictText = compiled + " compiled, " + skipped + " skipped";
+        } else if (compiled > 0) {
+            verdictClass = "passed";
+            verdictText = compiled == 1 ? "The candidate was compiled" : "All " + compiled + " candidates compiled";
+        } else if (candidates > 0) {
+            verdictClass = Outcome.CANDIDATE.key;
+            verdictText = candidates + (candidates == 1 ? " function would compile" : " functions would compile");
+        } else {
+            verdictClass = "empty";
+            verdictText = "Nothing was compiled";
+        }
+        html.append("<div class=\"verdict ").append(verdictClass).append("\"><span class=\"dot\"></span>")
+            .append(verdictText).append("</div>\n</div>\n");
+    }
+
+    private static void appendSummary(StringBuilder html, Summary summary) {
+        html.append("<section class=\"summary\">\n<div class=\"stats\">\n");
+        appendStat(html, "all", "total", "Total", summary.total());
+        for (Outcome outcome : summary.shownOutcomes()) {
+            long count = summary.count(outcome);
+            appendStat(html, outcome.key, outcome == Outcome.SKIPPED && count > 0 ? outcome.key + " nonzero" : outcome.key, outcome.label, count);
+        }
+        html.append("<div class=\"stat static bridge\"><span class=\"label\">Bridge calls</span><span class=\"value\">")
+            .append(summary.bridgeCalls()).append("</span></div>\n");
+        html.append("</div>\n<div class=\"progress\"><div class=\"bar\" role=\"img\" aria-label=\"")
+            .append(summary.count(Outcome.COMPILED)).append(" compiled, ")
+            .append(summary.count(Outcome.SKIPPED)).append(" skipped, ")
+            .append(summary.count(Outcome.CANDIDATE)).append(" candidates, ")
+            .append(summary.count(Outcome.EXCLUDED)).append(" excluded, ")
+            .append(summary.count(Outcome.NOT_CANDIDATE)).append(" not candidates\">");
+        for (Outcome outcome : Outcome.values()) {
+            appendBarSegment(html, outcome.key, summary.count(outcome));
+        }
+        html.append("</div><span class=\"rate\">").append(summary.compileRate()).append("<small>compile rate</small></span></div>\n")
+            .append(SECTION_END);
+    }
+
+    private static void appendToolbar(StringBuilder html, Summary summary) {
+        html.append("<div class=\"toolbar\">\n<div class=\"filters\" role=\"group\" aria-label=\"Filter by outcome\">");
+        appendFilter(html, "all", "All", summary.total());
+        for (Outcome outcome : summary.shownOutcomes()) {
+            appendFilter(html, outcome.key, outcome.label, summary.count(outcome));
+        }
+        html.append("</div>\n<label class=\"search\">").append(ICON_SEARCH)
+            .append("<input id=\"search\" type=\"search\" placeholder=\"Filter functions  (press /)\" aria-label=\"Filter functions\"></label>\n")
+            .append("<button type=\"button\" class=\"ghost\" id=\"toggle-all\">Expand all</button>\n</div>\n");
+    }
+
+    /**
+     * Gathers the functions and the fixes of each reason given and lists them, when any reason was given.
+     */
+    private static void appendBlockers(StringBuilder html, List<Decision> decisions) {
+        Map<String, List<Decision>> byRule = new LinkedHashMap<>();
+        Map<String, Map<String, Integer>> hintsByRule = new HashMap<>();
+        for (Decision decision : decisions) {
+            for (Reason reason : decision.reasons()) {
+                addBlocker(decision, reason, byRule, hintsByRule);
+            }
+        }
+        if (!byRule.isEmpty()) {
+            appendRules(html, byRule, hintsByRule);
+        }
+    }
+
+    private static void addBlocker(Decision decision, Reason reason, Map<String, List<Decision>> byRule, Map<String, Map<String, Integer>> hintsByRule) {
+        List<Decision> affected = byRule.computeIfAbsent(reason.rule(), k -> new ArrayList<>());
+        if (affected.isEmpty() || affected.get(affected.size() - 1) != decision) {
+            affected.add(decision);
+        }
+        if (reason.hint() != null) {
+            hintsByRule.computeIfAbsent(reason.rule(), k -> new LinkedHashMap<>()).merge(reason.hint(), 1, Integer::sum);
+        }
+    }
+
     /**
      * The reasons given, most frequent first, each with the fix the processor gives most often for it
      * and the functions it applies to.
      */
-    private static void appendBlockers(StringBuilder html, Map<String, List<Decision>> byRule, Map<String, Map<String, Integer>> hintsByRule) {
+    private static void appendRules(StringBuilder html, Map<String, List<Decision>> byRule, Map<String, Map<String, Integer>> hintsByRule) {
         List<Map.Entry<String, List<Decision>>> rules = new ArrayList<>(byRule.entrySet());
         rules.sort((a, b) -> Integer.compare(b.getValue().size(), a.getValue().size()));
         html.append("<section class=\"group blockers\">\n<div class=\"group-head\"><span class=\"file\">").append(ICON_WRENCH)
@@ -253,24 +237,24 @@ public final class StaticCompilationReportPage {
         for (var rule : rules) {
             List<Decision> affected = rule.getValue();
             String hint = commonHint(hintsByRule.get(rule.getKey()));
-            html.append("<details class=\"rule\"><summary><span class=\"icon\">").append(ICON_RULE).append("</span>")
-                .append("<span class=\"name\">").append(escapeHtml(rule.getKey())).append("</span>")
-                .append("<span class=\"time\">").append(affected.size()).append(affected.size() == 1 ? " function" : " functions").append("</span>")
+            html.append("<details class=\"rule\"><summary><span class=\"icon\">").append(ICON_RULE).append(SPAN_END)
+                .append("<span class=\"name\">").append(escapeHtml(rule.getKey())).append(SPAN_END)
+                .append("<span class=\"time\">").append(affected.size()).append(affected.size() == 1 ? " function" : " functions").append(SPAN_END)
                 .append(ICON_CHEVRON).append("</summary>\n<div class=\"detail\">\n");
             if (hint != null) {
                 html.append("<p class=\"hint\">").append(escapeHtml(hint)).append("</p>\n");
             }
             html.append("<ul class=\"affected\">\n");
             for (Decision decision : affected) {
-                html.append("<li><span class=\"name\">").append(escapeHtml(decision.name())).append("</span>");
+                html.append("<li><span class=\"name\">").append(escapeHtml(decision.name())).append(SPAN_END);
                 if (decision.location() != null) {
-                    html.append(" <span class=\"where\">").append(escapeHtml(decision.location())).append("</span>");
+                    html.append(" <span class=\"where\">").append(escapeHtml(decision.location())).append(SPAN_END);
                 }
                 html.append("</li>\n");
             }
             html.append("</ul>\n</div></details>\n");
         }
-        html.append("</section>\n");
+        html.append(SECTION_END);
     }
 
     private static String commonHint(Map<String, Integer> hints) {
@@ -288,8 +272,40 @@ public final class StaticCompilationReportPage {
         return common;
     }
 
+    /**
+     * Every decision, grouped by the source it was taken for, in the order the sources first appear.
+     */
+    private static void appendGroups(StringBuilder html, List<Decision> decisions) {
+        Map<String, List<Decision>> groups = new LinkedHashMap<>();
+        for (Decision decision : decisions) {
+            groups.computeIfAbsent(decision.source() == null ? DEFAULT_GROUP : decision.source(), k -> new ArrayList<>()).add(decision);
+        }
+        for (var group : groups.entrySet()) {
+            List<Decision> groupDecisions = group.getValue();
+            html.append("<section class=\"group\">\n<div class=\"group-head\"><span class=\"file\">").append(ICON_FILE)
+                .append(escapeHtml(group.getKey())).append("</span><span class=\"pills\">");
+            for (Outcome outcome : Outcome.values()) {
+                appendPill(html, outcome, groupDecisions);
+            }
+            html.append("</span></div>\n");
+            for (Decision decision : groupDecisions) {
+                appendEntry(html, decision);
+            }
+            html.append(SECTION_END);
+        }
+    }
+
+    private static void appendFoot(StringBuilder html, long total) {
+        html.append("<div id=\"empty\" class=\"empty-state").append(total == 0 ? "" : " hidden").append("\">")
+            .append(total == 0 ? "No candidate functions were found." : "No functions match the current filter.")
+            .append("</div>\n");
+        html.append("</main>\n<footer>Generated by <strong>Pyronaut</strong> &middot; Powered by Micronaut &amp; GraalPy &middot; Static compilation is experimental</footer>\n")
+            .append("<script>\n").append(ReportAssets.script()).append("</script>\n")
+            .append("</body></html>\n");
+    }
+
     private static void appendEntry(StringBuilder html, Decision decision) {
-        String key = key(decision.outcome());
+        Outcome outcome = Outcome.shownFor(decision);
         StringBuilder search = new StringBuilder(decision.name().toLowerCase(Locale.ROOT));
         if (decision.source() != null) {
             search.append(' ').append(decision.source().toLowerCase(Locale.ROOT));
@@ -297,29 +313,29 @@ public final class StaticCompilationReportPage {
         for (Reason reason : decision.reasons()) {
             search.append(' ').append(reason.rule());
         }
-        html.append("<details class=\"test ").append(key).append("\" data-status=\"").append(key)
+        html.append("<details class=\"test ").append(outcome.key).append("\" data-status=\"").append(outcome.key)
             .append("\" data-search=\"").append(escapeHtml(search.toString())).append("\"")
-            .append("SKIPPED".equals(decision.outcome()) ? " open" : "").append(">\n")
-            .append("<summary><span class=\"icon\">").append(icon(decision.outcome())).append("</span>")
+            .append(Outcome.SKIPPED.matches(decision) ? " open" : "").append(">\n")
+            .append("<summary><span class=\"icon\">").append(outcome.icon).append(SPAN_END)
             .append("<span class=\"name\" title=\"").append(escapeHtml(decision.name())).append("\">")
-            .append(escapeHtml(decision.name())).append("</span>");
+            .append(escapeHtml(decision.name())).append(SPAN_END);
         if (decision.location() != null) {
-            html.append("<span class=\"time\">").append(escapeHtml(decision.location())).append("</span>");
+            html.append("<span class=\"time\">").append(escapeHtml(decision.location())).append(SPAN_END);
         }
-        html.append("<span class=\"status-badge\">").append(label(decision.outcome()).toUpperCase(Locale.ROOT)).append("</span>")
+        html.append("<span class=\"status-badge\">").append(outcome.label.toUpperCase(Locale.ROOT)).append(SPAN_END)
             .append(ICON_CHEVRON).append("</summary>\n<div class=\"detail\">\n");
 
         html.append("<p class=\"facts\">").append(escapeHtml(facts(decision))).append("</p>\n");
         if (!decision.reasons().isEmpty()) {
             html.append("<section class=\"section reasons\">\n<div class=\"section-head\"><h2>")
-                .append("NOT_CANDIDATE".equals(decision.outcome()) ? "Why it is not a candidate" : "Why it is not compiled")
+                .append(Outcome.NOT_CANDIDATE.matches(decision) ? "Why it is not a candidate" : "Why it is not compiled")
                 .append("</h2></div>\n<ol class=\"reasons\">\n");
             for (Reason reason : decision.reasons()) {
                 html.append("<li><code class=\"rule-id\">").append(escapeHtml(reason.rule())).append("</code> ");
                 if (reason.location() != null) {
                     html.append("<span class=\"where\">").append(escapeHtml(reason.location())).append("</span> ");
                 }
-                html.append("<span class=\"message\">").append(escapeHtml(reason.message())).append("</span>");
+                html.append("<span class=\"message\">").append(escapeHtml(reason.message())).append(SPAN_END);
                 if (reason.hint() != null) {
                     html.append("\n<p class=\"hint\">").append(escapeHtml(reason.hint())).append("</p>");
                 }
@@ -335,7 +351,7 @@ public final class StaticCompilationReportPage {
      */
     private static String facts(Decision decision) {
         StringBuilder facts = new StringBuilder();
-        if ("COMPILED".equals(decision.outcome()) || "CANDIDATE".equals(decision.outcome())) {
+        if (Outcome.COMPILED.matches(decision) || Outcome.CANDIDATE.matches(decision)) {
             facts.append(decision.stats().statements()).append(" statements · ")
                 .append(decision.stats().javaCalls()).append(" Java calls · ")
                 .append(decision.stats().bridgeCalls()).append(" bridge calls · ")
@@ -347,9 +363,9 @@ public final class StaticCompilationReportPage {
             case "FUNCTION" -> "decided by the switch on the function";
             default -> "decided by the mode of the compilation";
         });
-        if ("CANDIDATE".equals(decision.outcome())) {
+        if (Outcome.CANDIDATE.matches(decision)) {
             facts.append(": the body would compile");
-        } else if ("EXCLUDED".equals(decision.outcome())) {
+        } else if (Outcome.EXCLUDED.matches(decision)) {
             facts.append(": switched off");
         }
         return facts.toString();
@@ -373,48 +389,99 @@ public final class StaticCompilationReportPage {
         }
     }
 
-    private static long count(List<Decision> decisions, String outcome) {
-        return decisions.stream().filter(decision -> outcome.equals(decision.outcome())).count();
-    }
-
-    private static void appendPill(StringBuilder html, String outcome, List<Decision> decisions) {
-        long count = count(decisions, outcome);
+    private static void appendPill(StringBuilder html, Outcome outcome, List<Decision> decisions) {
+        long count = outcome.count(decisions);
         if (count > 0) {
-            html.append("<span class=\"pill ").append(key(outcome)).append("\">").append(count).append(' ')
-                .append(label(outcome).toLowerCase(Locale.ROOT)).append("</span>");
+            html.append("<span class=\"pill ").append(outcome.key).append("\">").append(count).append(' ')
+                .append(outcome.label.toLowerCase(Locale.ROOT)).append(SPAN_END);
         }
     }
 
     /**
-     * The key of an outcome in the page: its CSS tone, its filter and its {@code data-status}.
+     * The outcomes of a decision, named as the processor writes them, in the order of the bar and the pills.
      */
-    static String key(String outcome) {
-        return switch (outcome) {
-            case "COMPILED" -> "compiled";
-            case "CANDIDATE" -> "candidate";
-            case "EXCLUDED" -> "excluded";
-            case "NOT_CANDIDATE" -> "ineligible";
-            default -> "skipped";
-        };
+    private enum Outcome {
+        COMPILED("compiled", "Compiled", ICON_COMPILED),
+        CANDIDATE("candidate", "Candidate", ICON_CANDIDATE),
+        SKIPPED("skipped", "Skipped", ICON_SKIPPED),
+        EXCLUDED("excluded", "Excluded", ICON_EXCLUDED),
+        NOT_CANDIDATE("ineligible", "Not candidate", ICON_INELIGIBLE);
+
+        /**
+         * The key of the outcome in the page: its CSS tone, its filter and its {@code data-status}.
+         */
+        private final String key;
+        private final String label;
+        private final String icon;
+
+        Outcome(String key, String label, String icon) {
+            this.key = key;
+            this.label = label;
+            this.icon = icon;
+        }
+
+        /**
+         * The outcome an entry is shown with. One the page does not know looks skipped, without
+         * counting as skipped: the counts and the open entries take only the outcomes named here.
+         */
+        static Outcome shownFor(Decision decision) {
+            for (Outcome outcome : values()) {
+                if (outcome.matches(decision)) {
+                    return outcome;
+                }
+            }
+            return SKIPPED;
+        }
+
+        boolean matches(Decision decision) {
+            return name().equals(decision.outcome());
+        }
+
+        long count(List<Decision> decisions) {
+            return decisions.stream().filter(this::matches).count();
+        }
     }
 
-    private static String label(String outcome) {
-        return switch (outcome) {
-            case "COMPILED" -> "Compiled";
-            case "CANDIDATE" -> "Candidate";
-            case "EXCLUDED" -> "Excluded";
-            case "NOT_CANDIDATE" -> "Not candidate";
-            default -> "Skipped";
-        };
-    }
+    /**
+     * What the summary, the toolbar and the verdict of the page say about the decisions.
+     *
+     * @param total          The number of decisions
+     * @param counts         The number of decisions with each outcome
+     * @param bridgeCalls    The bridge calls of the compiled functions
+     * @param showCandidates Whether candidates have a stat and a filter: there are some, or the compilation is off
+     */
+    private record Summary(long total, Map<Outcome, Long> counts, long bridgeCalls, boolean showCandidates) {
 
-    private static String icon(String outcome) {
-        return switch (outcome) {
-            case "COMPILED" -> ICON_COMPILED;
-            case "CANDIDATE" -> ICON_CANDIDATE;
-            case "EXCLUDED" -> ICON_EXCLUDED;
-            case "NOT_CANDIDATE" -> ICON_INELIGIBLE;
-            default -> ICON_SKIPPED;
-        };
+        static Summary of(List<Decision> decisions, String mode) {
+            Map<Outcome, Long> counts = new EnumMap<>(Outcome.class);
+            for (Outcome outcome : Outcome.values()) {
+                counts.put(outcome, outcome.count(decisions));
+            }
+            long bridgeCalls = decisions.stream()
+                .filter(Outcome.COMPILED::matches)
+                .mapToLong(decision -> decision.stats().bridgeCalls())
+                .sum();
+            return new Summary(decisions.size(), counts, bridgeCalls, counts.get(Outcome.CANDIDATE) > 0 || "off".equals(mode));
+        }
+
+        long count(Outcome outcome) {
+            return counts.get(outcome);
+        }
+
+        /**
+         * @return The outcomes with a stat and a filter, in the order they are shown
+         */
+        List<Outcome> shownOutcomes() {
+            return showCandidates
+                ? List.of(Outcome.COMPILED, Outcome.SKIPPED, Outcome.CANDIDATE, Outcome.EXCLUDED, Outcome.NOT_CANDIDATE)
+                : List.of(Outcome.COMPILED, Outcome.SKIPPED, Outcome.EXCLUDED, Outcome.NOT_CANDIDATE);
+        }
+
+        String compileRate() {
+            long compiled = count(Outcome.COMPILED);
+            long candidates = count(Outcome.CANDIDATE);
+            long attempted = compiled + candidates + count(Outcome.SKIPPED);
+            return attempted == 0 ? "&ndash;" : Math.round((compiled + candidates) * 100.0 / attempted) + "%";
+        }
     }
 }
