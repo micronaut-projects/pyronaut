@@ -197,34 +197,48 @@ public final class PyronautProcessorMain implements Callable<Integer> {
      * project model, else the defaults, as {@code --incremental} resolves.
      */
     ProcessorOptions.ProcessorSettings resolveSettings(Path root, ExternalProjectLayout externalLayout, PyprojectModel model) {
+        requireNoContradictingFlags();
+        PyprojectModel.Processor processor = model == null ? null : model.pyronaut().processor();
+        PyprojectModel.TypeCheck configuredTypeCheck = processor == null || processor.typeCheck() == null ? PyprojectModel.TypeCheck.DEFAULT : processor.typeCheck();
+        PyprojectModel.StaticCompilation configuredStatic = processor == null || processor.staticCompilation() == null ? PyprojectModel.StaticCompilation.DEFAULT : processor.staticCompilation();
+        String typeCheckMode = selectMode(noTypeCheck, typeCheck, configuredTypeCheck.mode());
+        if (!List.of("off", "warn", "error").contains(typeCheckMode)) {
+            throw new IllegalArgumentException("Unknown --type-check mode [" + typeCheckMode + "]; expected off, warn or error");
+        }
+        String staticMode = selectMode(noCompileStatic, compileStatic, configuredStatic.mode());
+        if (!List.of("off", "annotated", "all").contains(staticMode)) {
+            throw new IllegalArgumentException("Unknown --compile-static mode [" + staticMode + "]; expected off, annotated or all");
+        }
+        Path report = staticCompilationReport(root, externalLayout, configuredStatic);
+        boolean strict = compileStaticStrict || Boolean.TRUE.equals(configuredStatic.strict());
+        return new ProcessorOptions.ProcessorSettings(typeCheckMode, staticMode, report.toAbsolutePath().normalize(), strict);
+    }
+
+    private void requireNoContradictingFlags() {
         if (noTypeCheck && typeCheck != null) {
             throw new IllegalArgumentException("--type-check and --no-type-check cannot both be given");
         }
         if (noCompileStatic && compileStatic != null) {
             throw new IllegalArgumentException("--compile-static and --no-compile-static cannot both be given");
         }
-        PyprojectModel.Processor processor = model == null ? null : model.pyronaut().processor();
-        PyprojectModel.TypeCheck configuredTypeCheck = processor == null || processor.typeCheck() == null ? PyprojectModel.TypeCheck.DEFAULT : processor.typeCheck();
-        PyprojectModel.StaticCompilation configuredStatic = processor == null || processor.staticCompilation() == null ? PyprojectModel.StaticCompilation.DEFAULT : processor.staticCompilation();
-        String typeCheckMode = noTypeCheck ? "off" : typeCheck != null ? typeCheck : configuredTypeCheck.mode();
-        if (!List.of("off", "warn", "error").contains(typeCheckMode)) {
-            throw new IllegalArgumentException("Unknown --type-check mode [" + typeCheckMode + "]; expected off, warn or error");
+    }
+
+    private static String selectMode(boolean switchedOff, String flag, String configured) {
+        if (switchedOff) {
+            return "off";
         }
-        String staticMode = noCompileStatic ? "off" : compileStatic != null ? compileStatic : configuredStatic.mode();
-        if (!List.of("off", "annotated", "all").contains(staticMode)) {
-            throw new IllegalArgumentException("Unknown --compile-static mode [" + staticMode + "]; expected off, annotated or all");
-        }
-        Path report;
+        return flag != null ? flag : configured;
+    }
+
+    private Path staticCompilationReport(Path root, ExternalProjectLayout externalLayout, PyprojectModel.StaticCompilation configuredStatic) {
         if (compileStaticReport != null && !compileStaticReport.isBlank()) {
-            report = root.resolve(compileStaticReport);
-        } else if (externalLayout != null && PyprojectModel.StaticCompilation.DEFAULT.report().equals(configuredStatic.report())) {
-            // a Maven or Gradle project keeps the report with its other outputs, like the incremental cache
-            report = ExternalProjectLayout.outputDirectory(root).resolve("reports/static-compilation");
-        } else {
-            report = root.resolve(configuredStatic.report());
+            return root.resolve(compileStaticReport);
         }
-        boolean strict = compileStaticStrict || Boolean.TRUE.equals(configuredStatic.strict());
-        return new ProcessorOptions.ProcessorSettings(typeCheckMode, staticMode, report.toAbsolutePath().normalize(), strict);
+        if (externalLayout != null && PyprojectModel.StaticCompilation.DEFAULT.report().equals(configuredStatic.report())) {
+            // a Maven or Gradle project keeps the report with its other outputs, like the incremental cache
+            return ExternalProjectLayout.outputDirectory(root).resolve("reports/static-compilation");
+        }
+        return root.resolve(configuredStatic.report());
     }
 
     @Override
