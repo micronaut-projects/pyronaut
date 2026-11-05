@@ -1715,7 +1715,7 @@ val verifyEditorSupport by tasks.registering {
         )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
-            "def Inject() -> Callable[[_T], _T]:",
+            "def Inject() -> _M:",
             "Jakarta inject stubs"
         )
         requireFixtureFileContains(

@@ -47,6 +47,10 @@ tasks {
         // A core snapshot makes the resolver look in Central snapshots as well, and the tests resolve their
         // fixtures from the repositories they create
         systemProperty("pyronaut.sonatype.snapshots.enabled", "false")
+        if (gradle.extra.has("pyronaut.micronaut.core.checkout")) {
+            // direct sources resolve the tool's core, built from source and published to Maven local
+            dependsOn(":micronaut-pyronaut:prepareSdkMavenLocalEnvironment")
+        }
     }
 
 }
