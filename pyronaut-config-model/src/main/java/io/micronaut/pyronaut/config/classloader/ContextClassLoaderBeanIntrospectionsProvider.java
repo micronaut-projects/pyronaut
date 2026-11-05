@@ -21,19 +21,16 @@ import io.micronaut.core.annotation.Nullable;
 import io.micronaut.core.reflect.ClassUtils;
 
 import java.io.IOException;
-import java.lang.ref.WeakReference;
 import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Stream;
@@ -46,39 +43,20 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
     private static final String MEMORY_CLASS_OUTPUT_PREFIX = "mem:/CLASS_OUTPUT/";
 
     /**
-     * The discovered references, per class loader. Weakly keyed, so a class loader that goes away
-     * takes its entry with it rather than being retained by this provider.
-     */
-    private final Map<ClassLoader, Discovered> cache = Collections.synchronizedMap(new WeakHashMap<>());
-
-    /**
      * Discovery is a classpath walk: every {@code META-INF/micronaut} service resource of every jar
      * on the class loader, every entry of each of those jars, and a reflective instantiation of each
-     * reference class found. It answers from static metadata, so the result cannot change while the
-     * class loaders do not, and repeating it is pure cost.
-     *
-     * <p>It was being repeated per call. {@code DefaultBeanIntrospector} caches introspections only
-     * for its own class loader — a lookup against the thread's context class loader, which is what a
-     * Pyronaut application runs with, takes an uncached path and arrives here. Anything that resolves
-     * an introspection per request therefore walked the whole classpath per request: validating a
-     * request body did it twice, once for the parameters and once for the return value, because
-     * resolving a validation group's introspection misses and a miss is not remembered. Measured on
-     * a create endpoint with a validated body, 32 concurrent clients: 769 req/s, of which about a
-     * fifth of request time was in this class.
+     * reference class found. It is not cached here: since Micronaut core 5.3 {@code DefaultBeanIntrospector}
+     * keeps what this returns, per class loader, and forgets it when a development launcher retires
+     * the loader. A cache here could not let go of a loader: a reference's class holds the loader that
+     * defined it, so a value that holds its references keeps its own weak key, and every retired
+     * generation of {@code pyronaut dev} stayed reachable.
      *
      * @param classLoader The class loader to discover from
-     * @return The references, discovered once per class loader
+     * @return The references
      */
     @Override
     public List<BeanIntrospectionReference<Object>> provide(ClassLoader classLoader) {
-        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
-        Discovered discovered = cache.get(classLoader);
-        if (discovered != null && discovered.matches(contextClassLoader)) {
-            return discovered.references();
-        }
-        List<BeanIntrospectionReference<Object>> references = discover(classLoader, contextClassLoader);
-        cache.put(classLoader, new Discovered(new WeakReference<>(contextClassLoader), references));
-        return references;
+        return discover(classLoader, Thread.currentThread().getContextClassLoader());
     }
 
     private static List<BeanIntrospectionReference<Object>> discover(ClassLoader classLoader, @Nullable ClassLoader contextClassLoader) {
@@ -214,21 +192,6 @@ public final class ContextClassLoaderBeanIntrospectionsProvider implements BeanI
             return type == null ? null : type.getDeclaredConstructor().newInstance();
         } catch (Throwable e) {
             return null;
-        }
-    }
-
-    /**
-     * A discovery result, valid while the context class loader it was made with is still the current
-     * one. The context class loader is part of what was walked, so a different one means a different
-     * answer; it is held weakly so that caching a result does not keep a class loader alive.
-     *
-     * @param contextClassLoader The context class loader the walk used, weakly
-     * @param references The references found
-     */
-    private record Discovered(WeakReference<ClassLoader> contextClassLoader,
-                              List<BeanIntrospectionReference<Object>> references) {
-        boolean matches(@Nullable ClassLoader current) {
-            return contextClassLoader.get() == current;
         }
     }
 }

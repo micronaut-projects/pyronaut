@@ -20,16 +20,19 @@ import io.micronaut.core.beans.BeanIntrospectionReference;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -97,29 +100,63 @@ class ContextClassLoaderBeanIntrospectionsProviderTest {
     }
 
     @Test
-    void discoversOncePerClassLoaderRatherThanPerCall() throws Exception {
-        // Discovery is a classpath walk. Repeating it per call cost a fifth of request time on an
-        // application whose validated routes resolve an introspection per request.
-        AtomicInteger resourceLookups = new AtomicInteger();
-        ClassLoader counting = new ClassLoader(getClass().getClassLoader()) {
+    void keepsNoClassLoaderItDiscoveredFrom() throws Exception {
+        // A reference's class holds the loader that defined it. What development mode retires has to
+        // be collected, and DefaultBeanIntrospector, which keeps what this returns, forgets it then.
+        ContextClassLoaderBeanIntrospectionsProvider provider = new ContextClassLoaderBeanIntrospectionsProvider();
+
+        WeakReference<ClassLoader> generation = discoverFromGeneration(provider);
+
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (generation.get() != null && System.nanoTime() < deadline) {
+            System.gc();
+            Thread.sleep(100);
+        }
+        assertNull(generation.get(), "the provider keeps the class loader it discovered from");
+        // the provider is still in use, as it is for the whole life of a launcher
+        assertFalse(provider.provide(getClass().getClassLoader()).stream().anyMatch(r -> TestBean.class.getName().equals(r.getName())));
+    }
+
+    /**
+     * In a frame of its own, so that no local keeps the loader.
+     */
+    private WeakReference<ClassLoader> discoverFromGeneration(ContextClassLoaderBeanIntrospectionsProvider provider) throws Exception {
+        URL memoryResource = memoryResource();
+        ClassLoader generation = new ClassLoader(getClass().getClassLoader()) {
             @Override
             public Enumeration<URL> getResources(String name) throws IOException {
                 if (SERVICE_PATH.equals(name)) {
-                    resourceLookups.incrementAndGet();
+                    return Collections.enumeration(List.of(memoryResource));
                 }
                 return super.getResources(name);
             }
+
+            // defines the reference itself, as the loader of a generation does the references of the application
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (!name.equals(TestIntrospectionReference.class.getName()) && !name.equals(TestBean.class.getName())) {
+                    return super.loadClass(name, resolve);
+                }
+                synchronized (getClassLoadingLock(name)) {
+                    Class<?> loaded = findLoadedClass(name);
+                    if (loaded != null) {
+                        return loaded;
+                    }
+                    try (InputStream bytes = getParent().getResourceAsStream(name.replace('.', '/') + ".class")) {
+                        byte[] code = bytes.readAllBytes();
+                        return defineClass(name, code, 0, code.length);
+                    } catch (IOException e) {
+                        throw new ClassNotFoundException(name, e);
+                    }
+                }
+            }
         };
-        ContextClassLoaderBeanIntrospectionsProvider provider = new ContextClassLoaderBeanIntrospectionsProvider();
-
-        List<BeanIntrospectionReference<Object>> first = provider.provide(counting);
-        int afterFirst = resourceLookups.get();
-        for (int i = 0; i < 20; i++) {
-            provider.provide(counting);
-        }
-
-        assertEquals(afterFirst, resourceLookups.get(), "discovery repeated after the first call");
-        assertSame(first, provider.provide(counting), "the same result is not returned");
+        BeanIntrospectionReference<Object> reference = provider.provide(generation).stream()
+            .filter(r -> TestBean.class.getName().equals(r.getName()))
+            .findFirst()
+            .orElseThrow();
+        assertSame(generation, reference.getClass().getClassLoader(), "the reference is not defined by the loader");
+        return new WeakReference<>(generation);
     }
 
     @Test
@@ -148,7 +185,7 @@ class ContextClassLoaderBeanIntrospectionsProviderTest {
 
             assertFalse(without.stream().anyMatch(r -> TestBean.class.getName().equals(r.getName())));
             assertTrue(with.stream().anyMatch(r -> TestBean.class.getName().equals(r.getName())),
-                "a cached result was returned for a different context class loader");
+                "the references of the context class loader are missing");
         } finally {
             thread.setContextClassLoader(previous);
         }
