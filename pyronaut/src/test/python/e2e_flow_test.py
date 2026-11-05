@@ -460,6 +460,7 @@ class E2EFlowTest(unittest.TestCase):
                 "App.java",
                 "--port",
                 str(port),
+                extra_env={"PYTHONUNBUFFERED": "1"},
                 output=output,
                 cwd=project_dir,
             )
@@ -484,9 +485,10 @@ class E2EFlowTest(unittest.TestCase):
                     self._wait_for_http(f"http://localhost:{port}/books/count"),
                 )
             except AssertionError as error:
+                logs = self._test_resources_logs(project_dir)
                 self._stop_process(process)
                 output.seek(0)
-                raise AssertionError(f"{error}\n{output.read()}") from error
+                raise AssertionError(f"{error}\n{output.read()}{logs}") from error
             finally:
                 self._stop_process(process)
             deadline = time.time() + 30
@@ -571,6 +573,11 @@ class E2EFlowTest(unittest.TestCase):
     @staticmethod
     def _test_resources_settings_file(project_dir: Path) -> Path:
         return project_dir / ".micronaut" / "test-resources" / "test-resources.properties"
+
+    @staticmethod
+    def _test_resources_logs(project_dir: Path) -> str:
+        logs = sorted((project_dir / ".micronaut" / "test-resources").rglob("*.log"))
+        return "".join(f"\n--- {log.name}\n{log.read_text(encoding='utf-8', errors='replace')}" for log in logs)
 
     def _wait_for_test_resources_server(self, project_dir: Path) -> tuple[str, str]:
         deadline = time.time() + 30
