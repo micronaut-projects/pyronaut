@@ -54,59 +54,6 @@ final class ProcessorOptions {
     private ProcessorOptions() {
     }
 
-    /**
-     * The type checking and static compilation settings of a run, resolved from the flags and the
-     * project model. They travel as {@code -A} options, so the processor source cache fingerprints
-     * them without further work: switching a mode on or off re-processes the sources.
-     *
-     * @param typeCheckMode           off, warn or error
-     * @param staticCompilationMode   off, annotated or all
-     * @param staticCompilationReport the report directory, given a sub-directory per pass
-     * @param staticCompilationStrict whether an unhonoured CompileStatic fails the build
-     */
-    record ProcessorSettings(String typeCheckMode,
-                             String staticCompilationMode,
-                             Path staticCompilationReport,
-                             boolean staticCompilationStrict) {
-        static final ProcessorSettings DEFAULT = new ProcessorSettings("off", "off", null, false);
-        static final String TYPE_CHECK_OPTION = "micronaut.python.typecheck";
-        static final String STATIC_COMPILATION_OPTION = "micronaut.python.compile.static";
-        static final String STATIC_COMPILATION_REPORT_OPTION = "micronaut.python.compile.static.report";
-        static final String STATIC_COMPILATION_STRICT_OPTION = "micronaut.python.compile.static.strict";
-
-        boolean typeChecks() {
-            return !"off".equals(typeCheckMode);
-        }
-
-        boolean compilesStatically() {
-            return !"off".equals(staticCompilationMode);
-        }
-
-        /**
-         * @return The settings a pass runs with, for the console, or {@code null} when both are off
-         */
-        String describe() {
-            List<String> parts = new ArrayList<>();
-            if (typeChecks()) {
-                parts.add("type-check " + typeCheckMode);
-            }
-            if (compilesStatically()) {
-                parts.add("static " + staticCompilationMode + (staticCompilationStrict ? " (strict)" : ""));
-            }
-            return parts.isEmpty() ? null : String.join(" · ", parts);
-        }
-
-        /**
-         * @param testPass Whether the test pass is meant
-         * @return The report directory of the pass, or {@code null} when nothing is compiled
-         */
-        Path reportDirectory(boolean testPass) {
-            return compilesStatically() && staticCompilationReport != null
-                ? staticCompilationReport.resolve(testPass ? "test" : "main").toAbsolutePath().normalize()
-                : null;
-        }
-    }
-
     static List<String> resolve(Path root, PyprojectModel model, List<String> explicit, boolean testPass) {
         return resolve(root, model, explicit, testPass, ProcessorSettings.DEFAULT);
     }
@@ -251,5 +198,58 @@ final class ProcessorOptions {
             return String.join(",", values);
         }
         return String.valueOf(value);
+    }
+
+    /**
+     * The type checking and static compilation settings of a run, resolved from the flags and the
+     * project model. They travel as {@code -A} options, so the processor source cache fingerprints
+     * them without further work: switching a mode on or off re-processes the sources.
+     *
+     * @param typeCheckMode           off, warn or error
+     * @param staticCompilationMode   off, annotated or all
+     * @param staticCompilationReport the report directory, given a sub-directory per pass
+     * @param staticCompilationStrict whether an unhonoured CompileStatic fails the build
+     */
+    record ProcessorSettings(String typeCheckMode,
+                             String staticCompilationMode,
+                             Path staticCompilationReport,
+                             boolean staticCompilationStrict) {
+        static final ProcessorSettings DEFAULT = new ProcessorSettings("off", "off", null, false);
+        static final String TYPE_CHECK_OPTION = "micronaut.python.typecheck";
+        static final String STATIC_COMPILATION_OPTION = "micronaut.python.compile.static";
+        static final String STATIC_COMPILATION_REPORT_OPTION = "micronaut.python.compile.static.report";
+        static final String STATIC_COMPILATION_STRICT_OPTION = "micronaut.python.compile.static.strict";
+
+        boolean typeChecks() {
+            return !"off".equals(typeCheckMode);
+        }
+
+        boolean compilesStatically() {
+            return !"off".equals(staticCompilationMode);
+        }
+
+        /**
+         * @return The settings a pass runs with, for the console, or {@code null} when both are off
+         */
+        String describe() {
+            List<String> parts = new ArrayList<>();
+            if (typeChecks()) {
+                parts.add("type-check " + typeCheckMode);
+            }
+            if (compilesStatically()) {
+                parts.add("static " + staticCompilationMode + (staticCompilationStrict ? " (strict)" : ""));
+            }
+            return parts.isEmpty() ? null : String.join(" · ", parts);
+        }
+
+        /**
+         * @param testPass Whether the test pass is meant
+         * @return The report directory of the pass, or {@code null} when nothing is compiled
+         */
+        Path reportDirectory(boolean testPass) {
+            return compilesStatically() && staticCompilationReport != null
+                ? staticCompilationReport.resolve(testPass ? "test" : "main").toAbsolutePath().normalize()
+                : null;
+        }
     }
 }
