@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PyronautProcessorMainTest {
@@ -206,6 +207,50 @@ class PyronautProcessorMainTest {
         assertEquals(PyronautProcessorExitCode.USAGE_ERROR.code(), new CommandLine(contradictory).execute(
             "--project-dir", project.toString(), "--pass", "main", "--progress", "off", "--type-check=error", "--no-type-check"
         ));
+    }
+
+    @Test
+    void refusesContradictingFlagsAndUnknownModesOfTheSettings() {
+        Path root = tempDir.resolve("project-settings");
+        PyronautProcessorMain typeCheck = new PyronautProcessorMain();
+        typeCheck.typeCheck = "warn";
+        typeCheck.noTypeCheck = true;
+        assertEquals("--type-check and --no-type-check cannot both be given",
+            assertThrows(IllegalArgumentException.class, () -> typeCheck.resolveSettings(root, null, null)).getMessage());
+
+        PyronautProcessorMain compileStatic = new PyronautProcessorMain();
+        compileStatic.typeCheck = "unknown";
+        compileStatic.compileStatic = "all";
+        compileStatic.noCompileStatic = true;
+        assertEquals("--compile-static and --no-compile-static cannot both be given",
+            assertThrows(IllegalArgumentException.class, () -> compileStatic.resolveSettings(root, null, null)).getMessage(),
+            "contradicting flags are reported before an unknown mode");
+
+        PyronautProcessorMain unknownTypeCheck = new PyronautProcessorMain();
+        unknownTypeCheck.typeCheck = "strict";
+        assertEquals("Unknown --type-check mode [strict]; expected off, warn or error",
+            assertThrows(IllegalArgumentException.class, () -> unknownTypeCheck.resolveSettings(root, null, null)).getMessage());
+
+        PyronautProcessorMain unknownStatic = new PyronautProcessorMain();
+        unknownStatic.compileStatic = "some";
+        assertEquals("Unknown --compile-static mode [some]; expected off, annotated or all",
+            assertThrows(IllegalArgumentException.class, () -> unknownStatic.resolveSettings(root, null, null)).getMessage());
+    }
+
+    @Test
+    void keepsTheStaticCompilationReportOfAnExternalProjectWithItsOtherOutputs() {
+        Path root = tempDir.resolve("project-report").toAbsolutePath().normalize();
+        ExternalProjectLayout layout = new ExternalProjectLayout(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), false, List.of());
+        PyronautProcessorMain main = new PyronautProcessorMain();
+
+        Path external = main.resolveSettings(root, layout, null).staticCompilationReport();
+        assertEquals(ExternalProjectLayout.outputDirectory(root).resolve("reports/static-compilation"), external);
+
+        main.compileStaticReport = " ";
+        assertEquals(external, main.resolveSettings(root, layout, null).staticCompilationReport(), "a blank directory names none");
+
+        main.compileStaticReport = "elsewhere";
+        assertEquals(root.resolve("elsewhere"), main.resolveSettings(root, layout, null).staticCompilationReport());
     }
 
     @Test
