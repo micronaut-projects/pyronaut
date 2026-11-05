@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import IO
 
 
 def _e2e_enabled() -> bool:
@@ -449,7 +450,8 @@ class E2EFlowTest(unittest.TestCase):
             Path(__file__).resolve().parents[4]
             / "src/main/docs/examples/direct-source/mysql/App.java"
         )
-        with tempfile.TemporaryDirectory() as temp_dir:
+        # a file rather than a pipe: nothing reads a pipe while the application starts, and a full one blocks it
+        with tempfile.TemporaryDirectory() as temp_dir, tempfile.TemporaryFile("w+", encoding="utf-8") as output:
             project_dir = Path(temp_dir)
             shutil.copy2(fixture, project_dir / "App.java")
             port = self._allocate_port()
@@ -458,7 +460,7 @@ class E2EFlowTest(unittest.TestCase):
                 "App.java",
                 "--port",
                 str(port),
-                capture_output=True,
+                output=output,
                 cwd=project_dir,
             )
             server_uri = ""
@@ -482,8 +484,9 @@ class E2EFlowTest(unittest.TestCase):
                     self._wait_for_http(f"http://localhost:{port}/books/count"),
                 )
             except AssertionError as error:
-                output, _ = process.communicate(timeout=5)
-                raise AssertionError(f"{error}\n{output or ''}") from error
+                self._stop_process(process)
+                output.seek(0)
+                raise AssertionError(f"{error}\n{output.read()}") from error
             finally:
                 self._stop_process(process)
             deadline = time.time() + 30
@@ -534,9 +537,10 @@ class E2EFlowTest(unittest.TestCase):
         extra_env: dict[str, str] | None = None,
         capture_output: bool = False,
         cwd: Path | None = None,
+        output: IO[str] | None = None,
     ) -> subprocess.Popen[str]:
-        stdout = subprocess.PIPE if capture_output else subprocess.DEVNULL
-        stderr = subprocess.STDOUT if capture_output else subprocess.DEVNULL
+        stdout = output or (subprocess.PIPE if capture_output else subprocess.DEVNULL)
+        stderr = subprocess.STDOUT if output or capture_output else subprocess.DEVNULL
         return subprocess.Popen(
             self._base_command(*args),
             stdout=stdout,
