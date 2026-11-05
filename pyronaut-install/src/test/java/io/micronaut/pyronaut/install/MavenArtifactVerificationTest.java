@@ -210,10 +210,9 @@ final class MavenArtifactVerificationTest {
     }
 
     @Test
-    void directSourceManifestsCannotBypassVerification() throws Exception {
+    void directSourceManifestsAreReusedUnlessVerificationRequiresResolution() throws Exception {
         Artifact jar = artifact("jar");
         Artifact pom = artifact("pom");
-        configure(List.of(entry(jar), entry(pom)));
         String platformVersion = PyronautManagedVersions.micronautPlatformVersion();
         Path platform = local.resolve("io/micronaut/platform/micronaut-platform/" + platformVersion);
         Files.createDirectories(platform);
@@ -223,6 +222,10 @@ final class MavenArtifactVerificationTest {
             """.formatted(platformVersion));
         DirectSourceDependencyResolver resolver = new DirectSourceDependencyResolver(resolver());
         Path cache = tempDir.resolve("direct-source");
+        assertFalse(resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()).cacheHit());
+        assertTrue(resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()).cacheHit());
+
+        configure(List.of(entry(jar), entry(pom)));
         assertFalse(resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()).cacheHit());
         assertReportContainsPomAndJar(cache, jar, pom);
         assertFalse(resolver.resolveDetailed(cache, List.of(), List.of(MODULE + ":1.0"), List.of(), local, true, false, List.of()).cacheHit());

@@ -442,7 +442,7 @@ final class PyronautDevMainTest {
     }
 
     @Test
-    void retriesDirectSourceAfterResolutionAndReusesCachedManifests(@TempDir Path tempDir) throws Exception {
+    void retriesDirectSourceAfterResolutionAndPreservesDependencyManifests(@TempDir Path tempDir) throws Exception {
         Path source = tempDir.resolve("App.java");
         Files.writeString(source, "class App {}\n");
         String previousProjectDirectory = System.getProperty("pyronaut.dev.project.dir");
@@ -477,10 +477,12 @@ final class PyronautDevMainTest {
             assertEquals("original-build", System.getProperty("micronaut.processing.processor.option"));
             Path runtimeManifest = tempDir.resolve("__pyronaut__/resolved-runtime-dependencies");
             assertTrue(Files.isRegularFile(runtimeManifest));
-            long firstModified = Files.getLastModifiedTime(runtimeManifest).toMillis();
+            List<String> firstManifest = Files.readAllLines(runtimeManifest);
+            assertFalse(firstManifest.isEmpty());
 
             assertEquals(0, PyronautDevMain.execute(args, (command, arguments) -> 0, runner));
-            assertEquals(firstModified, Files.getLastModifiedTime(runtimeManifest).toMillis());
+            // Verification may re-resolve and rewrite the manifest; the dependency list must stay stable.
+            assertEquals(firstManifest, Files.readAllLines(runtimeManifest));
             assertEquals("original-runtime", System.getProperty("example.value"));
             assertEquals("original-build", System.getProperty("micronaut.processing.processor.option"));
         } finally {
