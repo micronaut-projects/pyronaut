@@ -24,7 +24,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +58,7 @@ final class ProcessorOptions {
     }
 
     static List<String> resolve(Path root, PyprojectModel model, List<String> explicit, boolean testPass, ProcessorSettings settings) {
-        Set<String> supported = readSupported((ExternalProjectLayout.isExternal(root)
-            ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__")).resolve(CACHE_FILE));
+        Set<String> supported = readSupported(outputDirectory(root).resolve(CACHE_FILE));
         Map<String, String> values = new TreeMap<>();
         DEFAULTS.forEach((key, value) -> {
             if (supported.contains(key)) {
@@ -68,7 +66,20 @@ final class ProcessorOptions {
             }
         });
         loadApplicationOptions(root, model, supported, values);
-        // only settings that are on are emitted: a project with both off keeps its option list, and its cache hits
+        addSettings(settings, testPass, values);
+        List<String> result = new ArrayList<>(addExplicitOptions(explicit, supported, values));
+        if (testPass && supported.contains(OPENAPI_ENABLED)) {
+            values.put(OPENAPI_ENABLED, "false");
+        }
+        addStaticCompilationReport(root, testPass, values);
+        values.forEach((key, value) -> result.add("-A" + key + "=" + value));
+        return List.copyOf(result);
+    }
+
+    /**
+     * Adds the settings that are on: a project with both off keeps its option list, and its cache hits.
+     */
+    private static void addSettings(ProcessorSettings settings, boolean testPass, Map<String, String> values) {
         if (settings.typeChecks()) {
             values.put(ProcessorSettings.TYPE_CHECK_OPTION, settings.typeCheckMode());
         }
@@ -82,33 +93,44 @@ final class ProcessorOptions {
                 values.put(ProcessorSettings.STATIC_COMPILATION_STRICT_OPTION, "true");
             }
         }
-        Map<String, String> manual = new LinkedHashMap<>();
+    }
+
+    /**
+     * Adds the options given as {@code name=value}, with or without {@code -A}, the last value of a
+     * name winning. An OpenAPI option the visitors on the classpath do not support is dropped.
+     *
+     * @return The options given without a name and a value, which are passed on as they are
+     */
+    private static List<String> addExplicitOptions(List<String> explicit, Set<String> supported, Map<String, String> values) {
         List<String> raw = new ArrayList<>();
         for (String option : explicit == null ? List.<String>of() : explicit) {
             String normalized = option.startsWith("-A") ? option.substring(2) : option;
             int equals = normalized.indexOf('=');
-            if (equals > 0) {
-                manual.put(normalized.substring(0, equals), normalized.substring(equals + 1));
-            } else {
+            if (equals <= 0) {
                 raw.add(option);
+                continue;
             }
-        }
-        manual.forEach((key, value) -> {
+            String key = normalized.substring(0, equals);
             if (supported.contains(key) || !key.startsWith("micronaut.openapi.")) {
-                values.put(key, value);
+                values.put(key, normalized.substring(equals + 1));
             }
-        });
-        if (testPass && supported.contains(OPENAPI_ENABLED)) {
-            values.put(OPENAPI_ENABLED, "false");
         }
+        return raw;
+    }
+
+    /**
+     * The compiler writes its decisions where the page is rendered from, next to the test reports,
+     * unless an option names another directory.
+     */
+    private static void addStaticCompilationReport(Path root, boolean testPass, Map<String, String> values) {
         String staticCompilation = values.get(STATIC_COMPILATION);
         if (staticCompilation != null && !"off".equalsIgnoreCase(staticCompilation.trim()) && !values.containsKey(STATIC_COMPILATION_REPORT)) {
-            // the compiler writes its decisions where the page is rendered from, next to the test reports
             values.put(STATIC_COMPILATION_REPORT, staticCompilationReportDirectory(root, testPass).toString());
         }
-        List<String> result = new ArrayList<>(raw);
-        values.forEach((key, value) -> result.add("-A" + key + "=" + value));
-        return List.copyOf(result);
+    }
+
+    private static Path outputDirectory(Path root) {
+        return ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__");
     }
 
     /**
@@ -121,8 +143,7 @@ final class ProcessorOptions {
      * @return The directory
      */
     static Path staticCompilationReportDirectory(Path root, boolean testPass) {
-        Path output = ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__");
-        return output.resolve(REPORTS_DIR).resolve(testPass ? STATIC_COMPILATION_TEST_REPORT_DIR : STATIC_COMPILATION_REPORT_DIR);
+        return outputDirectory(root).resolve(REPORTS_DIR).resolve(testPass ? STATIC_COMPILATION_TEST_REPORT_DIR : STATIC_COMPILATION_REPORT_DIR);
     }
 
     /**
