@@ -24,7 +24,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -44,8 +43,11 @@ final class ProcessorOptions {
     }
 
     static List<String> resolve(Path root, PyprojectModel model, List<String> explicit, boolean testPass) {
-        Set<String> supported = readSupported((ExternalProjectLayout.isExternal(root)
-            ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__")).resolve(CACHE_FILE));
+        return resolve(root, model, explicit, testPass, ProcessorSettings.DEFAULT);
+    }
+
+    static List<String> resolve(Path root, PyprojectModel model, List<String> explicit, boolean testPass, ProcessorSettings settings) {
+        Set<String> supported = readSupported(outputDirectory(root).resolve(CACHE_FILE));
         Map<String, String> values = new TreeMap<>();
         DEFAULTS.forEach((key, value) -> {
             if (supported.contains(key)) {
@@ -53,28 +55,59 @@ final class ProcessorOptions {
             }
         });
         loadApplicationOptions(root, model, supported, values);
-        Map<String, String> manual = new LinkedHashMap<>();
+        addSettings(settings, testPass, values);
+        List<String> result = new ArrayList<>(addExplicitOptions(explicit, supported, values));
+        if (testPass && supported.contains(OPENAPI_ENABLED)) {
+            values.put(OPENAPI_ENABLED, "false");
+        }
+        values.forEach((key, value) -> result.add("-A" + key + "=" + value));
+        return List.copyOf(result);
+    }
+
+    /**
+     * Adds the settings that are on: a project with both off keeps its option list, and its cache hits.
+     */
+    private static void addSettings(ProcessorSettings settings, boolean testPass, Map<String, String> values) {
+        if (settings.typeChecks()) {
+            values.put(ProcessorSettings.TYPE_CHECK_OPTION, settings.typeCheckMode());
+        }
+        if (settings.compilesStatically()) {
+            values.put(ProcessorSettings.STATIC_COMPILATION_OPTION, settings.staticCompilationMode());
+            Path report = settings.reportDirectory(testPass);
+            if (report != null) {
+                values.put(ProcessorSettings.STATIC_COMPILATION_REPORT_OPTION, report.toString());
+            }
+            if (settings.staticCompilationStrict()) {
+                values.put(ProcessorSettings.STATIC_COMPILATION_STRICT_OPTION, "true");
+            }
+        }
+    }
+
+    /**
+     * Adds the options given as {@code name=value}, with or without {@code -A}, the last value of a
+     * name winning. An OpenAPI option the visitors on the classpath do not support is dropped.
+     *
+     * @return The options given without a name and a value, which are passed on as they are
+     */
+    private static List<String> addExplicitOptions(List<String> explicit, Set<String> supported, Map<String, String> values) {
         List<String> raw = new ArrayList<>();
         for (String option : explicit == null ? List.<String>of() : explicit) {
             String normalized = option.startsWith("-A") ? option.substring(2) : option;
             int equals = normalized.indexOf('=');
-            if (equals > 0) {
-                manual.put(normalized.substring(0, equals), normalized.substring(equals + 1));
-            } else {
+            if (equals <= 0) {
                 raw.add(option);
+                continue;
             }
-        }
-        manual.forEach((key, value) -> {
+            String key = normalized.substring(0, equals);
             if (supported.contains(key) || !key.startsWith("micronaut.openapi.")) {
-                values.put(key, value);
+                values.put(key, normalized.substring(equals + 1));
             }
-        });
-        if (testPass && supported.contains(OPENAPI_ENABLED)) {
-            values.put(OPENAPI_ENABLED, "false");
         }
-        List<String> result = new ArrayList<>(raw);
-        values.forEach((key, value) -> result.add("-A" + key + "=" + value));
-        return List.copyOf(result);
+        return raw;
+    }
+
+    private static Path outputDirectory(Path root) {
+        return ExternalProjectLayout.isExternal(root) ? ExternalProjectLayout.outputDirectory(root) : root.resolve("__pyronaut__");
     }
 
     private static Set<String> readSupported(Path cacheFile) {
@@ -136,5 +169,58 @@ final class ProcessorOptions {
             return String.join(",", values);
         }
         return String.valueOf(value);
+    }
+
+    /**
+     * The type checking and static compilation settings of a run, resolved from the flags and the
+     * project model. They travel as {@code -A} options, so the processor source cache fingerprints
+     * them without further work: switching a mode on or off re-processes the sources.
+     *
+     * @param typeCheckMode           off, warn or error
+     * @param staticCompilationMode   off, annotated or all
+     * @param staticCompilationReport the report directory, given a sub-directory per pass
+     * @param staticCompilationStrict whether an unhonoured CompileStatic fails the build
+     */
+    record ProcessorSettings(String typeCheckMode,
+                             String staticCompilationMode,
+                             Path staticCompilationReport,
+                             boolean staticCompilationStrict) {
+        static final ProcessorSettings DEFAULT = new ProcessorSettings("off", "off", null, false);
+        static final String TYPE_CHECK_OPTION = "micronaut.python.typecheck";
+        static final String STATIC_COMPILATION_OPTION = "micronaut.python.compile.static";
+        static final String STATIC_COMPILATION_REPORT_OPTION = "micronaut.python.compile.static.report";
+        static final String STATIC_COMPILATION_STRICT_OPTION = "micronaut.python.compile.static.strict";
+
+        boolean typeChecks() {
+            return !"off".equals(typeCheckMode);
+        }
+
+        boolean compilesStatically() {
+            return !"off".equals(staticCompilationMode);
+        }
+
+        /**
+         * @return The settings a pass runs with, for the console, or {@code null} when both are off
+         */
+        String describe() {
+            List<String> parts = new ArrayList<>();
+            if (typeChecks()) {
+                parts.add("type-check " + typeCheckMode);
+            }
+            if (compilesStatically()) {
+                parts.add("static " + staticCompilationMode + (staticCompilationStrict ? " (strict)" : ""));
+            }
+            return parts.isEmpty() ? null : String.join(" · ", parts);
+        }
+
+        /**
+         * @param testPass Whether the test pass is meant
+         * @return The report directory of the pass, or {@code null} when nothing is compiled
+         */
+        Path reportDirectory(boolean testPass) {
+            return compilesStatically() && staticCompilationReport != null
+                ? staticCompilationReport.resolve(testPass ? "test" : "main").toAbsolutePath().normalize()
+                : null;
+        }
     }
 }

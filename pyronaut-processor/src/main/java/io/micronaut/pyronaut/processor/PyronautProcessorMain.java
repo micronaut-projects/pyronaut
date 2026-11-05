@@ -123,6 +123,39 @@ public final class PyronautProcessorMain implements Callable<Integer> {
     )
     Boolean daemon;
 
+    @CommandLine.Option(
+        names = "--type-check",
+        arity = "0..1",
+        fallbackValue = "warn",
+        description = "Check Python sources against the Java types they use: off|warn|error (the bare flag means warn)"
+    )
+    String typeCheck;
+
+    @CommandLine.Option(names = "--no-type-check", description = "Switch type checking off for this invocation")
+    boolean noTypeCheck;
+
+    @CommandLine.Option(
+        names = "--compile-static",
+        arity = "0..1",
+        fallbackValue = "annotated",
+        description = "Compile Python method bodies to Java: off|annotated|all (the bare flag means annotated)"
+    )
+    String compileStatic;
+
+    @CommandLine.Option(names = "--no-compile-static", description = "Switch static compilation off for this invocation")
+    boolean noCompileStatic;
+
+    @CommandLine.Option(
+        names = "--compile-static-report",
+        arity = "0..1",
+        fallbackValue = "",
+        description = "Directory the static compilation report is written to (default __pyronaut__/reports/static-compilation)"
+    )
+    String compileStaticReport;
+
+    @CommandLine.Option(names = "--compile-static-strict", description = "Fail when an explicit CompileStatic cannot be honoured")
+    boolean compileStaticStrict;
+
     @CommandLine.Option(names = "--daemon-server", hidden = true)
     Path daemonServerDirectory;
 
@@ -156,6 +189,61 @@ public final class PyronautProcessorMain implements Callable<Integer> {
         this.modelReader = modelReader;
         this.compilerExecutor = compilerExecutor;
         this.daemonRequest = daemonRequest;
+    }
+
+    /**
+     * The type checking and static compilation settings of this run: an explicit flag, else the
+     * project model, else the defaults, as {@code --incremental} resolves.
+     */
+    ProcessorOptions.ProcessorSettings resolveSettings(Path root, ExternalProjectLayout externalLayout, PyprojectModel model) {
+        requireNoContradictingFlags();
+        PyprojectModel.Processor processor = model == null ? null : model.pyronaut().processor();
+        PyprojectModel.TypeCheck configuredTypeCheck = processor == null || processor.typeCheck() == null ? PyprojectModel.TypeCheck.DEFAULT : processor.typeCheck();
+        PyprojectModel.StaticCompilation configuredStatic = processor == null || processor.staticCompilation() == null ? PyprojectModel.StaticCompilation.DEFAULT : processor.staticCompilation();
+        String typeCheckMode = selectMode(noTypeCheck, typeCheck, configuredTypeCheck.mode());
+        if (!List.of("off", "warn", "error").contains(typeCheckMode)) {
+            throw new IllegalArgumentException("Unknown --type-check mode [" + typeCheckMode + "]; expected off, warn or error");
+        }
+        String staticMode = selectMode(noCompileStatic, compileStatic, configuredStatic.mode());
+        if (!List.of("off", "annotated", "all").contains(staticMode)) {
+            throw new IllegalArgumentException("Unknown --compile-static mode [" + staticMode + "]; expected off, annotated or all");
+        }
+        Path report = staticCompilationReport(root, externalLayout, configuredStatic);
+        boolean strict = compileStaticStrict || Boolean.TRUE.equals(configuredStatic.strict());
+        return new ProcessorOptions.ProcessorSettings(typeCheckMode, staticMode, report.toAbsolutePath().normalize(), strict);
+    }
+
+    private static void noteTheSilentTypeChecker(ProcessorOptions.ProcessorSettings settings) {
+        if (settings.compilesStatically() && !settings.typeChecks()) {
+            System.out.println("Static compilation runs the type checker silently; add --type-check to see why a method is not compiled.");
+        }
+    }
+
+    private void requireNoContradictingFlags() {
+        if (noTypeCheck && typeCheck != null) {
+            throw new IllegalArgumentException("--type-check and --no-type-check cannot both be given");
+        }
+        if (noCompileStatic && compileStatic != null) {
+            throw new IllegalArgumentException("--compile-static and --no-compile-static cannot both be given");
+        }
+    }
+
+    private static String selectMode(boolean switchedOff, String flag, String configured) {
+        if (switchedOff) {
+            return "off";
+        }
+        return flag != null ? flag : configured;
+    }
+
+    private Path staticCompilationReport(Path root, ExternalProjectLayout externalLayout, PyprojectModel.StaticCompilation configuredStatic) {
+        if (compileStaticReport != null && !compileStaticReport.isBlank()) {
+            return root.resolve(compileStaticReport);
+        }
+        if (externalLayout != null && PyprojectModel.StaticCompilation.DEFAULT.report().equals(configuredStatic.report())) {
+            // a Maven or Gradle project keeps the report with its other outputs, like the incremental cache
+            return ExternalProjectLayout.outputDirectory(root).resolve("reports/static-compilation");
+        }
+        return root.resolve(configuredStatic.report());
     }
 
     @Override
@@ -211,12 +299,14 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             }
             ProcessorProgressReporter.ProgressMode.fromCliValue(progress);
             ProcessingPass selectedPass = ProcessingPass.fromCliValue(pass);
-            List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false);
+            ProcessorOptions.ProcessorSettings settings = resolveSettings(root, externalLayout, model);
+            noteTheSilentTypeChecker(settings);
+            List<String> mainOptions = ProcessorOptions.resolve(root, model, options, false, settings);
             if (externalLayout == null) {
                 // development mode compiles in process with the options the main pass uses
                 writeResolvedOptions(root.resolve(DEFAULT_PYRONAUT_DIR).resolve(RESOLVED_PROCESSOR_OPTIONS), mainOptions);
             }
-            List<String> testOptions = ProcessorOptions.resolve(root, model, options, true);
+            List<String> testOptions = ProcessorOptions.resolve(root, model, options, true, settings);
             if (externalLayout == null) {
                 // and test mode compiles the tests in process with the options of the test pass
                 writeResolvedOptions(root.resolve(DEFAULT_PYRONAUT_DIR).resolve(RESOLVED_TEST_PROCESSOR_OPTIONS), testOptions);
@@ -313,7 +403,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         effectiveClasspath = appendDistinct(effectiveClasspath, pyronautProcessorSupport);
                     }
 
-                    progressReporter.startPass("main", incrementalCompilation);
+                    progressReporter.startPass("main", incrementalCompilation, settings.describe());
                     long mainSourceCount;
 
                     String mainFingerprint = null;
@@ -386,6 +476,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             );
                         }
                         progressReporter.finishPass("main", mainSourceCount);
+                        StaticCompilationSummary.report(progressReporter, settings.reportDirectory(false));
                         mainStatus = "processed";
                     }
                     if (externalLayout != null) {
@@ -423,7 +514,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                         mergeSourceTrees(resolvedTestJavaSrc, mergedTestJavaSrc);
                     }
 
-                    progressReporter.startPass("test", incrementalCompilation);
+                    progressReporter.startPass("test", incrementalCompilation, settings.describe());
                     long testSourceCount;
                     ProcessorSourceCache.InputSnapshot testSnapshot = null;
                     if (!noCache && (Files.isDirectory(mergedTestPythonSrc) || Files.isDirectory(mergedTestJavaSrc))) {
@@ -508,6 +599,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                             }
                             syncProcessedTestSources(resolvedTestTargetDir, resolvedTestSourcesDir, resolvedTestPythonSrc);
                             progressReporter.finishPass("test", testSourceCount);
+                            StaticCompilationSummary.report(progressReporter, settings.reportDirectory(true));
                             testStatus = "processed";
                         }
                     }
