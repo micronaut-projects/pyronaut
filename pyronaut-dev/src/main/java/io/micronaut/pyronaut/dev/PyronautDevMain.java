@@ -1997,5 +1997,4 @@ public final class PyronautDevMain implements Callable<Integer> {
 
     private record DirectSourceClasspaths(List<Path> processor, List<Path> compile, List<Path> runtime) {
     }
-
 }

@@ -227,8 +227,9 @@ public final class PyronautTestReload extends MicronautDevMain {
             DevReloadFiles.deleteRecursively(pyronautDir.resolve(TEST_SOURCES_DIR));
             List<Path> buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
             return writeManifest(layout, devDir,
-                DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST)),
-                DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)),
+                // against the compiler jars the native image was built with, as pyronaut process compiles there
+                DevReloadFiles.withNativeCompilerClasspath(DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST))),
+                DevReloadFiles.withNativeCompilerClasspath(DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST))),
                 // in a native image the processors the image holds run from it, as pyronaut process runs them there
                 DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies),
                 DevReloadFiles.withOpenApiAdoc(

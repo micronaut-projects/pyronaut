@@ -6722,7 +6722,7 @@ def _build_test_reload_invocation(
     if native is not None:
         command_line, env = _native_test_reload_invocation(native, project_dir, env_overrides, java_home_provider)
         index = command_line.index("test")
-        command_line[index:index] = properties
+        command_line[index:index] = [*_native_reload_compiler_properties(command_line[0], args), *properties]
         return command_line, env
     command_line, env = _build_java_delegate_invocation(
         "test",
@@ -6802,6 +6802,20 @@ def _native_parent_tier_class_path(command_line: Sequence[str]) -> list[str]:
                 entry for entry in entries if entry and Path(entry).suffix == ".jar"
             )
     return command_line
+
+
+def _native_reload_compiler_properties(executable: str, args: Sequence[str]) -> list[str]:
+    """
+    The system property naming the compiler jars of a native pyronaut-dev
+    image, which the development runtime compiles changed sources against in
+    process, as pyronaut process does: javac cannot read the classes the image
+    holds, and what its processors generate refers to their versions, such as
+    sourcegen's @GeneratedSource, which the project's may not have.
+    """
+    compiler_classpath = os.pathsep.join(
+        _native_launcher_compile_classpath_entries(executable, _extract_local_repository(args))
+    )
+    return [f"-Dpyronaut.dev.compiler.class.path={compiler_classpath}"] if compiler_classpath else []
 
 
 def _native_test_reload_invocation(
@@ -6960,6 +6974,7 @@ def _build_dev_delegate_invocation(
             # The processed classes and the resource directories are the
             # reloadable tier, read through each generation's loader.
             dev_command_line = _native_parent_tier_class_path(dev_command_line)
+            native_properties.extend(_native_reload_compiler_properties(dev_command_line[0], args))
         dev_command_line[command_index:command_index] = native_properties
         env = _build_non_test_resources_env("dev", java_home_provider)
         if dev_jvm_args:

@@ -4313,6 +4313,46 @@ type = "{toolchain}"
         # restarting the process for every change keeps the run command's class path
         self.assertIn(classes, class_path(restarting))
 
+    def test_native_reloading_dev_and_test_mode_compile_against_the_compiler_jars_of_the_image(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bin_dir = root / "tools" / "pyronaut-dev" / "bin"
+            bin_dir.mkdir(parents=True)
+            native_dev = bin_dir / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            home = root / "home"
+            # the image's sourcegen annotations hold @GeneratedSource, which the project's version may not have
+            [annotations] = self._write_native_compile_descriptor(
+                native_dev,
+                home,
+                [("io.micronaut.sourcegen", "micronaut-sourcegen-annotations", "2.2.4",
+                  "micronaut-sourcegen-annotations-2.2.4.jar")],
+            )
+            project_dir = self._write_disabled_test_resources_project(root, toolchain="native")
+            args = ["--project-dir", str(project_dir)]
+            with patch.object(
+                cli,
+                "_bundled_native_executable",
+                side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None,
+            ), patch.object(cli, "_setup_is_required", return_value=False), patch("pathlib.Path.home", return_value=home):
+                reloading, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                    args, self._resolver(), debug_vm=False, env_overrides=None, java_home_provider=None, reload_in_process=True,
+                )
+                restarting, _ = cli._build_dev_delegate_invocation(  # noqa: SLF001
+                    args, self._resolver(), debug_vm=False, env_overrides=None, java_home_provider=None,
+                )
+                testing, _ = cli._build_test_reload_invocation(  # noqa: SLF001
+                    args, self._resolver(), debug_vm=False, env_overrides=None, java_home_provider=None,
+                )
+
+        compiler_property = f"-Dpyronaut.dev.compiler.class.path={annotations.resolve()}"
+        # a property of the image, ahead of the command, which the development runtime compiles against
+        self.assertIn(compiler_property, reloading[:reloading.index("run")])
+        self.assertIn(compiler_property, testing[:testing.index("test")])
+        # restarting the process for every change compiles with pyronaut process alone
+        self.assertNotIn(compiler_property, restarting)
+
     def _relaunch_cycle(
         self, temp_dir: str, *, reload_in_process: bool, statuses: list[int], marked: bool = True
     ) -> tuple[int, list, list, str]:

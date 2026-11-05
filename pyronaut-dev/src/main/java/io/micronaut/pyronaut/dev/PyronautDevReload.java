@@ -146,7 +146,9 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         }
         // in a native image the processors the image holds run from it, as pyronaut process runs them there
         List<Path> processorPath = DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies);
-        Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, runtime, processorPath, options);
+        // and javac compiles what they generate against the compiler jars the image was built with, as pyronaut process
+        List<Path> compileClasspath = DevReloadFiles.withNativeCompilerClasspath(runtime);
+        Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, compileClasspath, processorPath, options);
 
         DevRuntime devRuntime = launch(DevManifest.load(manifestFile), appArgs.toArray(String[]::new));
         Runtime.getRuntime().addShutdownHook(new Thread(devRuntime::close, "pyronaut-dev-shutdown"));
