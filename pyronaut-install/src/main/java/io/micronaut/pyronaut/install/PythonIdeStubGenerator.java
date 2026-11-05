@@ -1096,15 +1096,20 @@ final class PythonIdeStubGenerator {
                 parameters.append(", ");
             }
             // an implicit parameter (this$0, the enclosing instance) has no name Python can use
-            String name = index < signatureOffset ? null : index < compiledNames.size() ? compiledNames.get(index) : null;
-            if (name == null && index >= signatureOffset && index < documentationNames.size()) {
-                name = documentationNames.get(index);
-            }
+            String name = index < signatureOffset ? null : parameterName(index, compiledNames, documentationNames);
             String type = signature == null || index < signatureOffset ? renderClassDesc(method.methodTypeSymbol().parameterType(index))
                 : renderSignature(signature.arguments().get(index - signatureOffset), typeVariables);
             parameters.append(sanitizeParameterName(name, index)).append(": ").append(type);
         }
         return parameters.toString();
+    }
+
+    private static String parameterName(int index, List<String> compiledNames, List<String> documentationNames) {
+        String name = index < compiledNames.size() ? compiledNames.get(index) : null;
+        if (name == null && index < documentationNames.size()) {
+            name = documentationNames.get(index);
+        }
+        return name;
     }
 
     /**
