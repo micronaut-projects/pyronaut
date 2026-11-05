@@ -7062,6 +7062,12 @@ def _build_dev_delegate_invocation(
                 dev_jar,
             ])
         )
+        agent = _micronaut_dev_jar(command_line[classpath_index].split(os.pathsep))
+        if agent is not None:
+            # micronaut-dev is its own agent: the runtime redefines classes whose
+            # method bodies alone changed, Java sources' and those statically
+            # compiled from Python, without starting a new generation.
+            command_line.insert(command_line.index("-cp"), f"-javaagent:{agent}")
         command_line.insert(command_line.index("-cp"), f"-D{DEV_RELOAD_PROPERTY}=true")
     return command_line, env
 
@@ -7231,6 +7237,11 @@ _DEV_COMPILER_JAR = re.compile(
 
 
 _PYRONAUT_DEV_JAR = re.compile(r"^micronaut-pyronaut-dev-\d[^/\\]*\.jar$")
+
+
+def _micronaut_dev_jar(classpath: Sequence[str]) -> str | None:
+    """The micronaut-dev jar of a launch classpath, which is also the runtime's Java agent."""
+    return next((entry for entry in classpath if _MICRONAUT_DEV_JAR.match(Path(entry).name)), None)
 
 
 def _pyronaut_dev_jar(resolver: Callable[[str], str | None]) -> str | None:
