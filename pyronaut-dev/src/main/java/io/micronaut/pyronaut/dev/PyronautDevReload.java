@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.dev;
 
+import io.micronaut.core.util.NativeImageUtils;
 import io.micronaut.dev.DevRuntime;
 import io.micronaut.dev.MicronautDevMain;
 import io.micronaut.dev.compile.SourceCompiler;
@@ -61,6 +62,10 @@ import java.util.concurrent.Callable;
  * runtime by GraalVM's runtime class loading. A native image never unloads them, so there the runtime
  * keeps a generation budget ({@code micronaut.dev.max-generations}) and exits with
  * {@link MicronautDevMain#RELAUNCH} when it is spent, for the CLI to start the process again.</p>
+ *
+ * <p>On the JVM toolchain the CLI launches the process with {@code micronaut-dev} as its Java agent, and a change to
+ * method bodies alone is applied in place: the JVM redefines the classes, those statically compiled from Python too,
+ * and the Python modules that changed with them are patched. A native image has no such agent.</p>
  */
 public final class PyronautDevReload extends MicronautDevMain implements PyronautRunMain.DevelopmentRuntime {
 
@@ -174,7 +179,7 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         Properties properties = new Properties();
         properties.setProperty("micronaut.dev.main-class", MAIN_CLASS);
         properties.setProperty("micronaut.dev.project-dir", root.toString());
-        properties.setProperty("micronaut.dev.strategy", "restart");
+        properties.setProperty("micronaut.dev.strategy", strategy(NativeImageUtils.inImageRuntimeCode()));
         properties.setProperty("micronaut.dev.reloadable", classes.toString());
         properties.setProperty("micronaut.dev.compile-classpath", "@compile.argfile");
         properties.setProperty("micronaut.dev.processor-path", "@processor.argfile");
@@ -202,6 +207,15 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
             properties.store(out, "Written by pyronaut dev for the micronaut-dev runtime");
         }
         return manifest;
+    }
+
+    /**
+     * The strategy of the runtime: a native image cannot redefine a class, so every change it does not patch in place
+     * starts a generation, while on the JVM the agent the CLI launches this process with redefines a change to method
+     * bodies alone.
+     */
+    static String strategy(boolean nativeImage) {
+        return nativeImage ? "restart" : "auto";
     }
 
     /**

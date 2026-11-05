@@ -4238,6 +4238,31 @@ type = "{toolchain}"
             project_dir = self._reload_project(temp_dir)
             self.assertTrue(cli._dev_reload_in_process(project_dir, []))  # noqa: SLF001
 
+    def test_reloading_dev_on_the_jvm_launches_with_micronaut_dev_as_its_agent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project(temp_dir)
+            (project_dir / "__pyronaut__" / "resolved-build-dependencies").write_text("", encoding="utf-8")
+            dev_jar = "/repo/io/micronaut/micronaut-dev-5.3.0.jar"
+            classpath = ["/repo/io/micronaut/micronaut-dev-livereload-5.3.0.jar", dev_jar]
+            args = ["--project-dir", str(project_dir)]
+
+            def invocation(reload_in_process):
+                with patch.object(cli, "_build_java_delegate_invocation", return_value=(["java", "-cp", "", "Main"], {})), patch.object(
+                    cli, "_build_delegate_classpath", return_value=os.pathsep.join(classpath)
+                ), patch.object(cli, "_delegate_lib_entries", return_value=[]), patch.object(
+                    cli, "_pyronaut_dev_jar", return_value="/tools/micronaut-pyronaut-dev-0.2.0.jar"
+                ):
+                    return cli._build_dev_delegate_invocation(  # noqa: SLF001
+                        args, lambda name: None, debug_vm=False, env_overrides=None, java_home_provider=None, reload_in_process=reload_in_process,
+                    )[0]
+
+            reloading = invocation(True)
+            # the agent ahead of the classpath, and never the livereload jar, whose name starts the same
+            self.assertIn(f"-javaagent:{dev_jar}", reloading[:reloading.index("-cp")])
+            self.assertEqual(1, sum(1 for value in reloading if value.startswith("-javaagent:")))
+            # a process restarted for every change has nothing to redefine
+            self.assertFalse(any(value.startswith("-javaagent:") for value in invocation(False)))
+
     def test_dev_restarts_the_process_on_the_native_toolchain_without_an_image_holding_micronaut_dev(self):
         with tempfile.TemporaryDirectory() as temp_dir, patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value=None):
             project_dir = self._reload_project(temp_dir, toolchain="native")

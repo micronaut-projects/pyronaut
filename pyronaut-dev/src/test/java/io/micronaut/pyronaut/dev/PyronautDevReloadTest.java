@@ -2,6 +2,7 @@ package io.micronaut.pyronaut.dev;
 
 import io.micronaut.dev.compile.SourceKind;
 import io.micronaut.dev.manifest.DevManifest;
+import io.micronaut.dev.manifest.DevReloadStrategy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -127,6 +128,9 @@ class PyronautDevReloadTest {
         DevManifest manifest = DevManifest.load(file);
 
         assertEquals("pyronaut_application.PyronautMain", manifest.mainClass());
+        // the agent the CLI adds on the JVM decides; a native image has none
+        assertEquals(DevReloadStrategy.AUTO, manifest.strategy());
+        assertEquals("restart", PyronautDevReload.strategy(true));
         assertEquals(List.of(classes), manifest.reloadableRoots());
         assertEquals(List.of(jar), manifest.compileClasspath());
         assertEquals(List.of(processor), manifest.processorPath());
