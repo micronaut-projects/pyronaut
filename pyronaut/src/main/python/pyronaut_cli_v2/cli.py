@@ -6254,7 +6254,7 @@ class _ProjectFiles:
         problems = self._problems()
         if problems != self._reported:
             for problem in problems:
-                print(f"{problem} Carrying on as it is until this is corrected.", file=sys.stderr)
+                print(f"{problem.rstrip('.')}. Carrying on as it is until this is corrected.", file=sys.stderr)
             if self._reported and not problems:
                 print("The project files can be read again.", file=sys.stderr)
             self._reported = problems
