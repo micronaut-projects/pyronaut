@@ -1,3 +1,8 @@
+import io.micronaut.pyronaut.gradle.CheckMavenLocalUntouched
+import io.micronaut.pyronaut.gradle.PyronautTestHome
+import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+
 plugins {
     id "io.micronaut.build.internal.parent"
 }
@@ -134,9 +139,68 @@ def jacocoIncludes = [
     "io.micronaut.test.pytest.*",
     "io.micronaut.core.io.service.*"
 ]
+// Tests and the tools they start write to the Maven repository under $HOME, which on a developer
+// machine holds the jars the installed pyronaut runs. Give them a home of their own. Modules are
+// published there under the name below for the tests that resolve this build's snapshots.
+def testHomeEnvironment = PyronautTestHome.environment(project)
+def testHomeRepository = PyronautTestHome.mavenRepository(project)
+def testHomePublicationsTask = "publishToTestHomeRepository"
+
+tasks.register("cleanTestHomePublications", Delete) {
+    group = "build setup"
+    description = "Removes this version's snapshots of an earlier build from the test home's Maven repository."
+    def groupDirectory = new File(testHomeRepository, providers.gradleProperty("projectGroup").get().replace('.', '/'))
+    def version = providers.gradleProperty("projectVersion").get()
+    delete(fileTree(groupDirectory) {
+        include("*/$version/**")
+    })
+}
+
+tasks.register(testHomePublicationsTask) {
+    group = "build setup"
+    description = "Publishes this build's modules to the test home's Maven repository."
+    dependsOn({
+        subprojects.collect { it.tasks.findByName("publishAllPublicationsToTestHomeRepository") }
+            .findAll { it != null }
+    })
+}
+
+def buildStart = System.currentTimeMillis()
+def checkMavenLocalUntouched = tasks.register("checkMavenLocalUntouched", CheckMavenLocalUntouched) {
+    group = "verification"
+    description = "Reports what tests wrote to the developer's Maven repository in this build."
+    def home = testHomeEnvironment.HOME
+    def realHomes = [System.getProperty("user.home"), System.getenv("HOME")].findAll { it && it != home }
+    mavenRepositories.set(realHomes.collect { new File(it, ".m2/repository") })
+    buildStartMillis.set(buildStart)
+    failOnChange.set(providers.gradleProperty("pyronaut.test.failOnMavenLocalWrite").map { it.toBoolean() }
+        .orElse(providers.environmentVariable("CI").map { !it.isBlank() })
+        .orElse(false))
+    // A build that also publishes to Maven local asked for those writes
+    onlyIf { !gradle.taskGraph.allTasks.any { it instanceof PublishToMavenLocal } }
+}
+
 subprojects {
     tasks.withType(Test).configureEach {
         jvmArgs(testJvmArgs)
+        environment(testHomeEnvironment)
+        jvmArgumentProviders.add(new PyronautTestHome.MavenRepositoryArgument(testHomeRepository))
+        mustRunAfter(":$testHomePublicationsTask")
+        finalizedBy(checkMavenLocalUntouched)
+        doFirst {
+            new File(testHomeEnvironment.HOME).mkdirs()
+        }
+    }
+    pluginManager.withPlugin("maven-publish") {
+        publishing.repositories.maven {
+            name = "TestHome"
+            url = testHomeRepository.toURI()
+        }
+        tasks.withType(PublishToMavenRepository).configureEach {
+            if (name.endsWith("ToTestHomeRepository")) {
+                dependsOn(":cleanTestHomePublications")
+            }
+        }
     }
     pluginManager.withPlugin("jacoco") {
         tasks.withType(Test).configureEach {

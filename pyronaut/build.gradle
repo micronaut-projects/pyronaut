@@ -1,5 +1,6 @@
 import io.micronaut.pyronaut.gradle.PyenvVersions
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
+import io.micronaut.pyronaut.gradle.PyronautTestHome
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import java.nio.file.Files
@@ -61,7 +62,7 @@ def effectiveMavenLocalRepositoryDir = providers.provider {
 }
 def sdkMavenLocalRepositoryDir = providers.gradleProperty("pyronaut.sdk.mavenLocalRepository")
     .map { file(it) }
-    .orElse(providers.provider { new File(System.getProperty("user.home"), ".m2/repository") })
+    .orElse(effectiveMavenLocalRepositoryDir)
 
 def delegatedCliProjects = [
     [path: ":micronaut-pyronaut-install", command: "pyronaut-install"],
@@ -139,7 +140,7 @@ def graalVmJavaVersionForTag = { String tag ->
 
 tasks.register("prepareSdkMavenLocalEnvironment") {
     group = "build setup"
-    description = "Publishes local Pyronaut artifacts to the Maven local repository used by demo applications."
+    description = "Publishes local Pyronaut artifacts to Maven local for the installed SDK and demo applications: ~/.m2/repository, -Dmaven.repo.local when set, and a copy in -Ppyronaut.sdk.mavenLocalRepository when set."
     dependsOn({
         rootProject.subprojects
             .collect { it.tasks.findByName("publishToMavenLocal") }
@@ -701,14 +702,10 @@ tasks.register("testPythonOrchestrator", Exec) {
     }
 }
 
-// The e2e fixtures resolve through ~/.m2. Publishing into it while they resolve
-// leaves half-written SNAPSHOT entries (jar without pom) that Maven Resolver
-// rejects, so run the e2e tasks only after any publishToMavenLocal in the build.
-def mavenLocalPublishingTasks = {
-    rootProject.subprojects
-        .collect { it.tasks.findByName("publishToMavenLocal") }
-        .findAll { it != null }
-}
+// The e2e fixtures resolve through the test home's Maven repository. Publishing into it
+// while they resolve leaves half-written SNAPSHOT entries (jar without pom) that Maven
+// Resolver rejects, so run the e2e tasks only after any publication to it in the build.
+def testHomePublicationTask = ":publishToTestHomeRepository"
 
 tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
     group = "build setup"
@@ -745,7 +742,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
         dependsOn(graalVmProvisionTask)
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
-    mustRunAfter(mavenLocalPublishingTasks)
+    mustRunAfter(testHomePublicationTask)
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
@@ -800,7 +797,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
         // Other fixture builds in the same Gradle run cache the same SNAPSHOTs in
-        // ~/.m2 under different repository ids, which Maven Resolver then refuses
+        // the test home's repository under different ids, which Maven Resolver then refuses
         // to serve ("present, but unavailable"). Give the e2e fixture its own.
         environment("PYRONAUT_LOCAL_REPOSITORY", e2eLocalRepositoryDir.get().asFile.absolutePath)
         if (graalVmHomeProvider.present) {
@@ -816,7 +813,7 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
 tasks.register("testPythonOrchestratorExternalE2E", Exec) {
     group = "verification"
     description = "Runs opt-in Maven and Gradle external-build orchestrator e2e checks"
-    mustRunAfter(mavenLocalPublishingTasks)
+    mustRunAfter(testHomePublicationTask)
 
     if (graalVmProvisionTask != null) {
         dependsOn(graalVmProvisionTask)
@@ -872,7 +869,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
         dependsOn(graalVmProvisionTask)
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
-    mustRunAfter(mavenLocalPublishingTasks)
+    mustRunAfter(testHomePublicationTask)
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
@@ -927,7 +924,7 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     doFirst {
         environment("PYRONAUT_E2E_FIXTURE_DIR", e2eFixtureDir.get().asFile.absolutePath)
         // Other fixture builds in the same Gradle run cache the same SNAPSHOTs in
-        // ~/.m2 under different repository ids, which Maven Resolver then refuses
+        // the test home's repository under different ids, which Maven Resolver then refuses
         // to serve ("present, but unavailable"). Give the e2e fixture its own.
         environment("PYRONAUT_LOCAL_REPOSITORY", e2eLocalRepositoryDir.get().asFile.absolutePath)
         Process dockerProcess
@@ -964,6 +961,17 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
             PyronautGraalVmDevBuilds.ensureMacOsGatekeeperDoesNotBlock(file(graalVmHome))
             environment("JAVA_HOME", graalVmHome)
             environment("PATH", graalVmHome + "/bin" + File.pathSeparator + System.getenv("PATH"))
+        }
+    }
+}
+
+// These tests run the Pyronaut CLI and tools, which use the Maven repository and settings under HOME.
+["testPythonOrchestrator", "testPythonOrchestratorE2E", "testPythonOrchestratorExternalE2E", "testPythonOrchestratorE2EFull"].each { name ->
+    tasks.named(name) {
+        environment(PyronautTestHome.environment(project))
+        finalizedBy(":checkMavenLocalUntouched")
+        doFirst {
+            PyronautTestHome.directory(project).mkdirs()
         }
     }
 }
