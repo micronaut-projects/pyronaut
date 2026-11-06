@@ -6140,7 +6140,11 @@ def _run_with_auto_restart(
 
     def _refresh_on_each_change() -> bool:
         """With no application running: refreshes on every change until it succeeds; False if interrupted."""
-        nonlocal snapshot
+        nonlocal snapshot, snapshotter
+        # no runtime is watching the sources now, and the correction may be in any of them
+        watching = snapshotter
+        snapshotter = source_snapshotter
+        snapshot = _snapshot_if_readable(snapshotter, project_root) or ()
         try:
             while True:
                 print("Waiting for the next change to try again.", file=sys.stderr)
@@ -6159,6 +6163,9 @@ def _run_with_auto_restart(
                 print(f"Failed to refresh artifacts for restart (exit code {code}).", file=sys.stderr)
         except KeyboardInterrupt:
             return False
+        finally:
+            snapshotter = watching
+            snapshot = _snapshot_if_readable(snapshotter, project_root) or snapshot
 
     while True:
         if initial_preflight_done:

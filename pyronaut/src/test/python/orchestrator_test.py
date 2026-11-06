@@ -4687,7 +4687,7 @@ type = "{toolchain}"
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._reload_project_with_options(temp_dir)
             marker = project_dir / "__pyronaut__" / "micronaut-dev" / "relaunch"
-            manifest = project_dir / "pyproject.toml"
+            source = project_dir / "src" / "controller.py"
             launched = []
             preflights = []
             ticks = {"count": 0}
@@ -4715,7 +4715,8 @@ type = "{toolchain}"
             def sleep(seconds):
                 ticks["count"] += 1
                 if ticks["count"] == 2:
-                    manifest.write_text(manifest.read_text(encoding="utf-8") + "# corrected\n", encoding="utf-8")
+                    # the runtime is gone, and the correction is in a source only it would have seen
+                    source.write_text("print('corrected')\n", encoding="utf-8")
                 if ticks["count"] > 50:
                     raise AssertionError("the session did not end")
 
@@ -4743,7 +4744,7 @@ type = "{toolchain}"
                     initial_preflight_done=True,
                     poll_interval=0.01,
                     debounce_seconds=0.05,
-                    snapshotter=lambda path: (),
+                    snapshotter=cli._snapshot_watched_files,  # noqa: SLF001
                     monotonic=monotonic,
                     sleep=sleep,
                     java_home_provider=None,
