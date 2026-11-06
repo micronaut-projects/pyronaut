@@ -88,7 +88,7 @@ pyronaut setup [--local-repository <dir>] [--offline] [--refresh] [--locked] [--
 ----
 
 Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAVA_HOME` or a preinstalled Java runtime.
-It then locates the exact GraalPy interpreter the SDK was built with (shown by `pyronaut --version` as `GraalPy Interpreter`, for example `graalpy3.13-25.4.4`).
+It then locates the exact GraalPy interpreter the SDK was built with (shown by `pyronaut --version` as `GraalPy Interpreter`, for example `graalpy3.13-25.5.5`).
 Setup reuses a matching GraalPy when the CLI itself runs on one, when `~/.pyronaut/sdks/<version>` already contains one, or when pyenv already has that version installed.
 Otherwise it runs `pyenv install <version>` when pyenv is available, and falls back to downloading the checksum-verified GraalPy release from GitHub into `~/.pyronaut/sdks/<version>`.
 Delegated commands receive that interpreter through `PYRONAUT_PYTHON_EXECUTABLE` and `PATH`; a project `.venv` takes precedence.
