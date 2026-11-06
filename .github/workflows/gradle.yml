@@ -54,7 +54,7 @@ jobs:
         with:
           distribution: 'graalvm'
           java-version: ${{ matrix.java }}
-          version: '25.4'
+          version: '25.5'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: "🔧 Setup GraalPy pyenv virtualenv"
@@ -159,7 +159,7 @@ jobs:
         with:
           distribution: 'graalvm'
           java-version: '25'
-          version: '25.4'
+          version: '25.5'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: "🔧 Setup GraalPy pyenv virtualenv"
