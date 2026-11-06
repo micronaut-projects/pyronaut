@@ -1,12 +1,19 @@
 package io.micronaut.pyronaut.dev;
 
+import io.micronaut.context.ApplicationContext;
+import io.micronaut.dev.DevRuntime;
 import io.micronaut.dev.compile.SourceKind;
 import io.micronaut.dev.manifest.DevManifest;
 import io.micronaut.dev.manifest.DevReloadStrategy;
+import io.micronaut.pyronaut.config.model.PyprojectModel;
+import io.micronaut.pyronaut.config.model.PyprojectModelReader;
+import io.micronaut.pyronaut.run.PyronautRunMain;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -91,6 +98,40 @@ class PyronautDevReloadTest {
                 System.clearProperty("pyronaut.dev.compiler.class.path");
             } else {
                 System.setProperty("pyronaut.dev.compiler.class.path", previous);
+            }
+        }
+    }
+
+    @Test
+    void theRuntimesThreadsDoNotTakeTheRunCommandsLoaderOfTheProcessedClassesAsTheirContextClassLoader() throws Exception {
+        Path pyronaut = Files.createDirectories(project.resolve("__pyronaut__"));
+        Path classes = Files.createDirectories(pyronaut.resolve("classes"));
+        Files.writeString(pyronaut.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST), "");
+        Files.writeString(pyronaut.resolve(DevReloadFiles.PROCESSOR_OPTIONS), "");
+        Files.writeString(project.resolve("pyproject.toml"), "[project]\nname = 'demo'\nversion = '0.1.0'\n");
+        PyprojectModel model = new PyprojectModelReader().readProjectDirectory(project);
+        URL processed = classes.toUri().toURL();
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        PyronautDevReload reload = new PyronautDevReload();
+        // the loader the run command gives the application: the jars and the processed classes
+        try (URLClassLoader runCommandLoader = new URLClassLoader(new URL[] {processed}, previous)) {
+            thread.setContextClassLoader(runCommandLoader);
+            reload.start(project, new PyronautRunMain.ResolvedProjectLayout(classes, List.of(processed)), model, List.of(), () -> {
+                ApplicationContext.builder().classLoader(Thread.currentThread().getContextClassLoader()).start();
+                return true;
+            });
+            // the worker that restarts the application, which starts threads a request then runs on
+            Thread worker = Thread.getAllStackTraces().keySet().stream()
+                .filter(candidate -> candidate.getName().equals("micronaut-dev-reload"))
+                .findFirst()
+                .orElseThrow();
+            assertEquals(reload.parentClassLoader(), worker.getContextClassLoader());
+            assertEquals(runCommandLoader, thread.getContextClassLoader());
+        } finally {
+            thread.setContextClassLoader(previous);
+            if (DevRuntime.current() != null) {
+                DevRuntime.current().close();
             }
         }
     }
