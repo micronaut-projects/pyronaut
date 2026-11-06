@@ -6180,7 +6180,13 @@ def _run_with_auto_restart(
                 processor_args=processor_args,
             )
             if preflight_code != SUCCESS:
-                return preflight_code
+                if not started:
+                    return preflight_code
+                print(f"Failed to refresh artifacts for restart (exit code {preflight_code}).", file=sys.stderr)
+                if not _refresh_on_each_change():
+                    return 130
+                initial_preflight_done = True
+                continue
 
         # A change to pyproject.toml may switch the toolchain, the reload mode or
         # the dependencies that provide micronaut-dev: decide again, and watch
@@ -7430,10 +7436,11 @@ def _snapshot_dependency_inputs(project_dir: Path) -> tuple[tuple[str, int, int]
     for name in ("pyproject.toml", "requirements.txt"):
         file_path = project_dir / name
         try:
-            stat = file_path.stat()
+            content = file_path.read_bytes()
         except OSError:
             continue
-        entries.append((name, stat.st_mtime_ns, stat.st_size))
+        # by content: a file put back as it was, after an error in it was corrected, needs no new process
+        entries.append((name, int.from_bytes(hashlib.sha256(content).digest()[:8], "big"), len(content)))
     layout = _read_pyproject_sources(project_dir)
     for root_name in (
         layout.python_source_dir,

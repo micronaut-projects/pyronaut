@@ -4604,6 +4604,156 @@ type = "{toolchain}"
             toml.write_text("[micronaut.application]\nname = 'other'\n[micronaut.openapi]\nenabled = false\n", encoding="utf-8")
             self.assertNotEqual(snapshot, cli._snapshot_dependency_inputs(project_dir))  # noqa: SLF001
 
+    def _reloading_session_with_broken_file(self, project_dir, break_it, fix_it):
+        """The session of _session_with_broken_file, with the runtime reloading the sources in one process."""
+        with patch.object(cli, "_dev_reload_in_process", return_value=True), patch.object(
+            cli, "_build_dev_delegate_invocation", return_value=(["pyronaut-dev", "run"], {})
+        ):
+            return self._session_with_broken_file(project_dir, break_it, fix_it)
+
+    def _reload_project_with_options(self, temp_dir):
+        project_dir = self._dev_project(temp_dir)
+        (project_dir / "__pyronaut__" / "annotation-processor-options.properties").write_text(
+            "options=micronaut.openapi.enabled\n", encoding="utf-8"
+        )
+        return project_dir
+
+    def _assert_reloading_process_left_alone(self, session, during, file_name):
+        self._assert_keeps_running_until_fixed(session, during, file_name)
+        self.assertEqual(1, len(session.started), "a new process was started for a file put back as it was")
+
+    def test_dev_reloading_in_process_stays_up_while_application_toml_cannot_be_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project_with_options(temp_dir)
+            config = project_dir / "config" / "application.toml"
+            good = config.read_text(encoding="utf-8")
+            session, during = self._reloading_session_with_broken_file(
+                project_dir,
+                lambda: config.write_text(good + "\n[datasources.default\nbroken = \n", encoding="utf-8"),
+                lambda: config.write_text(good, encoding="utf-8"),
+            )
+            self._assert_reloading_process_left_alone(session, during, "application.toml")
+
+    def test_dev_reloading_in_process_stays_up_while_pyproject_toml_cannot_be_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project_with_options(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._reloading_session_with_broken_file(
+                project_dir,
+                lambda: manifest.write_text(good + "\n[tool.pyronaut\nbroken = \n", encoding="utf-8"),
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_reloading_process_left_alone(session, during, "pyproject.toml")
+
+    def test_dev_reloading_in_process_stays_up_while_pyproject_toml_is_deleted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project_with_options(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._reloading_session_with_broken_file(
+                project_dir,
+                manifest.unlink,
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_reloading_process_left_alone(session, during, "pyproject.toml")
+
+    def test_dev_reloading_in_process_stays_up_while_pyproject_toml_holds_an_invalid_toolchain(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project_with_options(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._reloading_session_with_broken_file(
+                project_dir,
+                lambda: manifest.write_text(good + "\n[tool.pyronaut.toolchain]\ndistribution = 'nonsense'\n", encoding="utf-8"),
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_reloading_process_left_alone(session, during, "pyproject.toml")
+
+    def test_dev_reloading_in_process_starts_a_new_process_when_the_corrected_pyproject_toml_differs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project_with_options(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._reloading_session_with_broken_file(
+                project_dir,
+                lambda: manifest.write_text(good + "\n[tool.pyronaut\nbroken = \n", encoding="utf-8"),
+                lambda: manifest.write_text(good + "\n[tool.pyronaut.dependencies]\nruntime = []\n", encoding="utf-8"),
+            )
+            self.assertFalse(during["terminated"])
+            self.assertEqual(2, len(session.started))
+
+    def test_dev_stays_up_when_processing_fails_after_the_generation_budget_is_spent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._reload_project_with_options(temp_dir)
+            marker = project_dir / "__pyronaut__" / "micronaut-dev" / "relaunch"
+            manifest = project_dir / "pyproject.toml"
+            launched = []
+            preflights = []
+            ticks = {"count": 0}
+            processes = []
+
+            class Process:
+                def __init__(self, status):
+                    self.status = status
+
+                def poll(self):
+                    return self.status
+
+            def process_runner(command_line, env):
+                status = cli.DEV_RELAUNCH_STATUS if not launched else 0
+                launched.append(command_line)
+                if status:
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text("generation budget spent\n", encoding="utf-8")
+                return Process(status)
+
+            def preflight(*args, **kwargs):
+                preflights.append(args)
+                return 7 if len(preflights) == 1 else cli.SUCCESS
+
+            def sleep(seconds):
+                ticks["count"] += 1
+                if ticks["count"] == 2:
+                    manifest.write_text(manifest.read_text(encoding="utf-8") + "# corrected\n", encoding="utf-8")
+                if ticks["count"] > 50:
+                    raise AssertionError("the session did not end")
+
+            clock = {"value": 0.0}
+
+            def monotonic():
+                clock["value"] += 0.1
+                return clock["value"]
+
+            stderr = io.StringIO()
+            with patch.object(cli, "_dev_reload_in_process", return_value=True), patch.object(
+                cli, "_build_dev_delegate_invocation", return_value=(["pyronaut-dev", "run"], {})
+            ), patch.object(cli, "_run_preflight", side_effect=preflight), patch.object(
+                cli, "_run_lifecycle_validation", return_value=cli.SUCCESS
+            ), redirect_stderr(stderr):
+                code = cli._run_with_auto_restart(  # noqa: SLF001
+                    project_dir,
+                    ["--project-dir", str(project_dir)],
+                    False,
+                    lambda command_line, env: 0,
+                    process_runner,
+                    self._resolver(),
+                    debug_vm=False,
+                    env_overrides=None,
+                    initial_preflight_done=True,
+                    poll_interval=0.01,
+                    debounce_seconds=0.05,
+                    snapshotter=lambda path: (),
+                    monotonic=monotonic,
+                    sleep=sleep,
+                    java_home_provider=None,
+                    local_repository=None,
+                )
+
+            self.assertEqual(0, code)
+            self.assertEqual(2, len(launched))
+            self.assertIn("exit code 7", stderr.getvalue())
+
     def test_dev_restarts_the_process_for_an_exclusion_inside_a_watched_root(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._reload_project(temp_dir)
