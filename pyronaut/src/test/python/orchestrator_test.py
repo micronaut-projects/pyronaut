@@ -5275,6 +5275,56 @@ additional-test-resources = ["test-fixtures"]
         session = self._dev_session(project_dir, {2: before, 7: look, 8: fix_it, 14: lambda: None}, on_start=sessions.append)
         return session, during
 
+    def test_project_files_reads_the_configuration_of_every_resource_root_the_command_loads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8") + "additional-resources = ['extra']\ntest-resources = 'tests-config'\n",
+                encoding="utf-8",
+            )
+            (project_dir / "extra").mkdir()
+            (project_dir / "tests-config").mkdir()
+            test_config = project_dir / "tests-config" / "application-test.toml"
+            test_config.write_text("[broken\n", encoding="utf-8")
+            with redirect_stderr(io.StringIO()):
+                # development mode does not load the test resources
+                self.assertFalse(cli._ProjectFiles(project_dir).unreadable())  # noqa: SLF001
+                self.assertTrue(cli._ProjectFiles(project_dir, tests=True).unreadable())  # noqa: SLF001
+                test_config.unlink()
+                (project_dir / "extra" / "application.toml").write_text("[broken\n", encoding="utf-8")
+                self.assertTrue(cli._ProjectFiles(project_dir).unreadable())  # noqa: SLF001
+
+    def test_dev_stays_up_when_a_retry_of_the_refresh_raises(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            source = project_dir / "src" / "controller.py"
+            seen = {"count": 0}
+
+            def runner(command_line):
+                if "pyronaut-processor" in command_line[0]:
+                    seen["count"] += 1
+                    if seen["count"] == 2:
+                        return 7
+                    if seen["count"] == 3:
+                        raise OSError("the processor went away")
+                return 0
+
+            session = self._dev_session(
+                project_dir,
+                {
+                    2: lambda: source.write_text("print('v2')\n", encoding="utf-8"),
+                    8: lambda: source.write_text("print('v3')\n", encoding="utf-8"),
+                    14: lambda: source.write_text("print('v4')\n", encoding="utf-8"),
+                    20: lambda: None,
+                },
+                runner=runner,
+            )
+
+            self.assertEqual(0, session.exit_code)
+            self.assertEqual(2, len(session.started))
+            self.assertIn("the processor went away", session.stderr)
+
     def test_dev_stays_up_when_the_refresh_fails_and_tries_again_on_the_next_change(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._dev_project(temp_dir)
