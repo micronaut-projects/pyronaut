@@ -6049,6 +6049,90 @@ def _run_with_auto_restart(
 
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
+    # dev mode stays up after a failure and tries again on the next change: only stopping it ends it
+    project_files = _ProjectFiles(project_root)
+    changed_at: float | None = None
+    started = False
+
+    def _poll_for_change() -> tuple[tuple[str, int, int], ...] | None:
+        """The state of the watched files once a change has settled; a file that cannot be read is no change yet."""
+        nonlocal changed_at
+        if project_files.unreadable():
+            changed_at = None
+            return None
+        try:
+            next_snapshot = snapshotter(project_root)
+        except (RuntimeError, ValueError):
+            # changed again since the check above: the next poll reports it
+            changed_at = None
+            return None
+        if next_snapshot == snapshot:
+            changed_at = None
+            return None
+        now = monotonic()
+        if changed_at is None:
+            changed_at = now
+            return None
+        if now - changed_at < debounce_seconds:
+            return None
+        changed_at = None
+        return next_snapshot
+
+    def _refresh_artifacts(reinstall: bool) -> int:
+        if reinstall:
+            code = _ensure_install_current(
+                project_root,
+                "restarting",
+                no_install=no_install,
+                no_cache=no_cache,
+                local_repository=local_repository,
+                runner=execute,
+                resolver=resolver,
+                java_home_provider=java_home_provider,
+            )
+            if code != SUCCESS:
+                return code
+        # validation reads the configuration metadata of this processing pass
+        code = _run_preflight(
+            str(project_root),
+            no_cache,
+            local_repository,
+            execute,
+            resolver,
+            install=False,
+            process_pass=process_pass,
+            java_home_provider=java_home_provider,
+        )
+        if code == SUCCESS and validate_on_restart:
+            code = _run_lifecycle_validation(
+                project_dir=str(project_root), scenario="dev",
+                runner=execute, resolver=resolver,
+                no_cache=no_cache, env_overrides=env_overrides,
+                java_home_provider=java_home_provider,
+            )
+        return code
+
+    def _refresh_on_each_change() -> bool:
+        """With no application running: refreshes on every change until it succeeds; False if interrupted."""
+        nonlocal snapshot
+        try:
+            while True:
+                print("Waiting for the next change to try again.", file=sys.stderr)
+                next_snapshot = None
+                while next_snapshot is None:
+                    sleep(poll_interval)
+                    next_snapshot = _poll_for_change()
+                snapshot = next_snapshot
+                try:
+                    code = _refresh_artifacts(_stale_install_reason(project_root) is not None)
+                except (RuntimeError, ValueError) as exc:
+                    print(f"Failed to refresh artifacts for restart: {exc}", file=sys.stderr)
+                    continue
+                if code == SUCCESS:
+                    return True
+                print(f"Failed to refresh artifacts for restart (exit code {code}).", file=sys.stderr)
+        except KeyboardInterrupt:
+            return False
 
     while True:
         if initial_preflight_done:
@@ -6077,7 +6161,12 @@ def _run_with_auto_restart(
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
-            return PRECONDITION_FAILED
+            if not started:
+                return PRECONDITION_FAILED
+            if not _refresh_on_each_change():
+                return 130
+            initial_preflight_done = True
+            continue
 
         if _delegation_trace_enabled():
             print(shlex.join(command_line), file=sys.stderr)
@@ -6087,8 +6176,7 @@ def _run_with_auto_restart(
         except OSError as exception:
             print(f"Failed executing delegated command: {exception}", file=sys.stderr)
             return INTERNAL_ERROR
-
-        restart_requested_at: float | None = None
+        started = True
 
         try:
             while True:
@@ -6097,25 +6185,20 @@ def _run_with_auto_restart(
                     return int(code)
 
                 sleep(poll_interval)
-                next_snapshot = snapshotter(project_root)
-                if next_snapshot == snapshot:
-                    restart_requested_at = None
-                    continue
-
-                now = monotonic()
-                if restart_requested_at is None:
-                    restart_requested_at = now
-                    continue
-
-                if now - restart_requested_at < debounce_seconds:
+                next_snapshot = _poll_for_change()
+                if next_snapshot is None:
                     continue
 
                 stop_ok: bool | None = None
                 refresh_code: int | None = None
-                refresh_exception: BaseException | None = None
+                refresh_exception: Exception | None = None
                 # A dependency change reinstalls before processing. Stop the
                 # application first so the install owns the terminal alone.
-                reinstall = _stale_install_reason(project_root) is not None
+                try:
+                    reinstall = _stale_install_reason(project_root) is not None
+                except (RuntimeError, ValueError):
+                    # changed again since the poll: the next poll reports it
+                    continue
 
                 def _stop_worker() -> None:
                     nonlocal stop_ok
@@ -6124,40 +6207,9 @@ def _run_with_auto_restart(
                 def _refresh_worker() -> None:
                     nonlocal refresh_code, refresh_exception
                     try:
-                        if reinstall:
-                            refresh_code = _ensure_install_current(
-                                project_root,
-                                "restarting",
-                                no_install=no_install,
-                                no_cache=no_cache,
-                                local_repository=local_repository,
-                                runner=execute,
-                                resolver=resolver,
-                                java_home_provider=java_home_provider,
-                            )
-                            if refresh_code != SUCCESS:
-                                return
-                        # validation reads the configuration metadata of this processing pass
-                        refresh_code = _run_preflight(
-                            str(project_root),
-                            no_cache,
-                            local_repository,
-                            execute,
-                            resolver,
-                            install=False,
-                            process_pass=process_pass,
-                            java_home_provider=java_home_provider,
-                        )
-                        if refresh_code == SUCCESS and validate_on_restart:
-                            refresh_code = _run_lifecycle_validation(
-                                project_dir=str(project_root), scenario="dev",
-                                runner=execute, resolver=resolver,
-                                no_cache=no_cache, env_overrides=env_overrides,
-                                java_home_provider=java_home_provider,
-                            )
-                    except BaseException as exc:
+                        refresh_code = _refresh_artifacts(reinstall)
+                    except Exception as exc:
                         refresh_exception = exc
-                        refresh_code = INTERNAL_ERROR
 
                 stop_thread = threading.Thread(target=_stop_worker, name="pyronaut-stop-for-restart", daemon=True)
                 refresh_thread = threading.Thread(target=_refresh_worker, name="pyronaut-refresh-for-restart", daemon=True)
@@ -6171,16 +6223,14 @@ def _run_with_auto_restart(
                 if stop_ok is not True:
                     print("Failed to stop running process for restart.", file=sys.stderr)
                     return INTERNAL_ERROR
-                if refresh_exception is not None:
-                    print(f"Failed to refresh artifacts for restart: {refresh_exception}", file=sys.stderr)
-                    return INTERNAL_ERROR
-                if refresh_code is None:
-                    print("Failed to refresh artifacts for restart.", file=sys.stderr)
-                    return INTERNAL_ERROR
-                if refresh_code != SUCCESS:
-                    print(f"Failed to refresh artifacts for restart (exit code {refresh_code}).", file=sys.stderr)
-                    return int(refresh_code)
                 snapshot = next_snapshot
+                if refresh_code != SUCCESS:
+                    if refresh_exception is not None:
+                        print(f"Failed to refresh artifacts for restart: {refresh_exception}", file=sys.stderr)
+                    else:
+                        print(f"Failed to refresh artifacts for restart (exit code {refresh_code}).", file=sys.stderr)
+                    if not _refresh_on_each_change():
+                        return 130
                 # The refresh worker already completed processing for the next
                 # application launch; do not run the same preflight again at
                 # the top of the restart loop.
@@ -6189,6 +6239,44 @@ def _run_with_auto_restart(
         except KeyboardInterrupt:
             _stop_managed_process(process, interrupted=True)
             return 130
+
+
+class _ProjectFiles:
+    """The files that decide how the application runs, which a watch must be able to read before it acts on a change."""
+
+    def __init__(self, project_dir: Path) -> None:
+        self._project_dir = project_dir
+        self._manifest_required = (project_dir / "pyproject.toml").is_file() and not _is_external_build_project(project_dir)
+        self._reported: tuple[str, ...] = ()
+
+    def unreadable(self) -> bool:
+        """Whether any cannot be read now, reporting each new reason, and when they can be read again."""
+        problems = self._problems()
+        if problems != self._reported:
+            for problem in problems:
+                print(f"{problem} Carrying on as it is until this is corrected.", file=sys.stderr)
+            if self._reported and not problems:
+                print("The project files can be read again.", file=sys.stderr)
+            self._reported = problems
+        return bool(problems)
+
+    def _problems(self) -> tuple[str, ...]:
+        manifest = self._project_dir / "pyproject.toml"
+        if self._manifest_required and not manifest.is_file():
+            return (f"{manifest} is missing.",)
+        try:
+            layout = _read_pyproject_sources(self._project_dir)
+            _read_pyproject_toolchain_spec(self._project_dir)
+        except (RuntimeError, ValueError) as exc:
+            return (str(exc),)
+        problems: list[str] = []
+        for config in sorted(_resolve_layout_dir(self._project_dir, layout.resources_dir).glob("application*.toml")):
+            try:
+                with config.open("rb") as fp:
+                    _toml_parser(config.name).load(fp)
+            except (OSError, RuntimeError, ValueError) as exc:
+                problems.append(f"{config} cannot be read: {exc}.")
+        return tuple(problems)
 
 
 def _run_test_cycle(
@@ -6306,6 +6394,7 @@ def _run_test_continuously(
 ) -> int:
     project_root = project_dir.resolve()
     snapshot = snapshotter(project_root)
+    project_files = _ProjectFiles(project_root)
     watch_mode = False
 
     try:
@@ -6320,11 +6409,14 @@ def _run_test_continuously(
                         return False
                     if key == "w":
                         continue
-                    if key == " ":
+                    if key == " " and not project_files.unreadable():
                         return True
                     if key is not None:
                         continue
 
+                    if project_files.unreadable():
+                        changed_at = None
+                        continue
                     next_snapshot = snapshotter(project_root)
                     if next_snapshot == snapshot:
                         changed_at = None
@@ -6357,7 +6449,8 @@ def _run_test_continuously(
                 )
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
-                snapshot = snapshotter(project_root)
+                if not project_files.unreadable():
+                    snapshot = snapshotter(project_root)
                 _print_continuous_test_banner()
                 if not interactive:
                     return exit_code
@@ -6376,7 +6469,7 @@ def _run_test_continuously(
                         if not _wait_for_watch_trigger():
                             return SUCCESS
                         break
-                    if key == " ":
+                    if key == " " and not project_files.unreadable():
                         break
                     if key is not None:
                         continue
