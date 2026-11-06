@@ -6300,7 +6300,7 @@ def _snapshot_if_readable(
 ) -> tuple[tuple[str, int, int], ...] | None:
     try:
         return snapshotter(project_dir)
-    except (RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         return None
 
 
