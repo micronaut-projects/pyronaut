@@ -1,4 +1,5 @@
 import io.micronaut.pyronaut.gradle.PyenvVersions
+import io.micronaut.pyronaut.gradle.PyronautTestHome
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.VersionCatalogsExtension
@@ -308,6 +309,7 @@ fun Configuration.useJavaRuntimeClasspathAttributes() {
 
 fun defaultFixtureEnv(): Map<String, String> {
     val environment = linkedMapOf<String, String>()
+    environment.putAll(PyronautTestHome.environment(project))
     environment["VIRTUAL_ENV"] = venvDir.asFile.absolutePath
     environment["PYRONAUT_PYTHON_EXECUTABLE"] = venvPython.asFile.absolutePath
     resolveFixtureSitePackagesDir()?.let {
@@ -1630,6 +1632,8 @@ val installPytest by tasks.registering {
 val installApp by tasks.registering {
     group = "verification"
     description = "Resolves functional-test app dependencies into __pyronaut__."
+    // Resolves through the test home's Maven repository, so not while it is being published to
+    mustRunAfter(":publishToTestHomeRepository")
     dependsOn(publishFixtureArtifactsToMavenLocal, installFixtureLaunchers, installPytest)
     inputs.files(
         fixtureAppDir.file("pyproject.toml"),
@@ -1831,6 +1835,7 @@ val process by tasks.registering {
 tasks.register("test") {
     group = "verification"
     description = "Runs the functional-test app through pyronaut-test using local project launchers."
+    finalizedBy(":checkMavenLocalUntouched")
     dependsOn(process, verifyEditorSupport)
     inputs.dir(fixtureAppDir)
     doLast {
