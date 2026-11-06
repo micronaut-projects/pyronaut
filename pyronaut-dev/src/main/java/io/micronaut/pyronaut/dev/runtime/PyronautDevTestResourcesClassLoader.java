@@ -33,6 +33,8 @@ import java.util.regex.Pattern;
 @Internal
 final class PyronautDevTestResourcesClassLoader {
     static final String CLIENT_CLASSPATH_PROPERTY = "pyronaut.dev.test.resources.client.classpath";
+    // by name: this class also runs on the classpath of a plain development run, which does not hold micronaut-dev
+    private static final String GENERATION_LOADER_CLASS = "io.micronaut.dev.loader.GenerationClassLoader";
 
     private static final ConcurrentMap<String, ClassLoader> CLASS_LOADERS = new ConcurrentHashMap<>();
 
@@ -44,7 +46,21 @@ final class PyronautDevTestResourcesClassLoader {
         if (classpath == null || classpath.isBlank()) {
             return fallback;
         }
-        return CLASS_LOADERS.computeIfAbsent(classpath, value -> buildClassLoader(value, fallback));
+        return CLASS_LOADERS.computeIfAbsent(classpath, value -> buildClassLoader(value, withoutGenerations(fallback)));
+    }
+
+    /**
+     * The loader the client's own is parented on. There is one client loader per process, while a loader of the
+     * development runtime's generations serves one restart only: parented on the generation that first asked, the client
+     * loader would keep that generation, and the classes of the application it holds, for as long as the process lives,
+     * and hand those old classes to whatever looks them up through it. The client needs only the parent tier's.
+     */
+    private static ClassLoader withoutGenerations(ClassLoader loader) {
+        ClassLoader current = loader;
+        while (current != null && GENERATION_LOADER_CLASS.equals(current.getClass().getName())) {
+            current = current.getParent();
+        }
+        return current;
     }
 
     private static ClassLoader buildClassLoader(String classpath, ClassLoader parent) {
