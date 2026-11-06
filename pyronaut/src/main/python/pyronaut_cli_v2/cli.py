@@ -6057,13 +6057,9 @@ def _run_with_auto_restart(
     def _poll_for_change() -> tuple[tuple[str, int, int], ...] | None:
         """The state of the watched files once a change has settled; a file that cannot be read is no change yet."""
         nonlocal changed_at
-        if project_files.unreadable():
-            changed_at = None
-            return None
-        try:
-            next_snapshot = snapshotter(project_root)
-        except (RuntimeError, ValueError):
-            # changed again since the check above: the next poll reports it
+        # read after the snapshot, so that a file broken while it was taken is not acted on
+        next_snapshot = _snapshot_if_readable(snapshotter, project_root)
+        if project_files.unreadable() or next_snapshot is None:
             changed_at = None
             return None
         if next_snapshot == snapshot:
@@ -6241,6 +6237,16 @@ def _run_with_auto_restart(
             return 130
 
 
+def _snapshot_if_readable(
+    snapshotter: Callable[[Path], tuple[tuple[str, int, int], ...]],
+    project_dir: Path,
+) -> tuple[tuple[str, int, int], ...] | None:
+    try:
+        return snapshotter(project_dir)
+    except (RuntimeError, ValueError):
+        return None
+
+
 class _ProjectFiles:
     """The files that decide how the application runs, which a watch must be able to read before it acts on a change."""
 
@@ -6268,6 +6274,7 @@ class _ProjectFiles:
         try:
             layout = _read_pyproject_sources(self._project_dir)
             _read_pyproject_toolchain_spec(self._project_dir)
+            _read_pyproject_toolchain_type(self._project_dir)
         except (RuntimeError, ValueError) as exc:
             return (str(exc),)
         roots = [layout.resources_dir, *layout.additional_resources_dirs]
@@ -6419,13 +6426,8 @@ def _run_test_continuously(
                     if key is not None:
                         continue
 
-                    if project_files.unreadable():
-                        changed_at = None
-                        continue
-                    try:
-                        next_snapshot = snapshotter(project_root)
-                    except (RuntimeError, ValueError):
-                        # changed again since the check above: the next poll reports it
+                    next_snapshot = _snapshot_if_readable(snapshotter, project_root)
+                    if project_files.unreadable() or next_snapshot is None:
                         changed_at = None
                         continue
                     if next_snapshot == snapshot:
@@ -6459,12 +6461,9 @@ def _run_test_continuously(
                 )
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
-                if not project_files.unreadable():
-                    try:
-                        snapshot = snapshotter(project_root)
-                    except (RuntimeError, ValueError):
-                        # changed again since the check above: the next poll reports it
-                        pass
+                next_snapshot = _snapshot_if_readable(snapshotter, project_root)
+                if next_snapshot is not None and not project_files.unreadable():
+                    snapshot = next_snapshot
                 _print_continuous_test_banner()
                 if not interactive:
                     return exit_code

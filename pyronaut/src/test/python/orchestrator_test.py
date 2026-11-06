@@ -5275,6 +5275,18 @@ additional-test-resources = ["test-fixtures"]
         session = self._dev_session(project_dir, {2: before, 7: look, 8: fix_it, 14: lambda: None}, on_start=sessions.append)
         return session, during
 
+    def test_dev_keeps_running_while_pyproject_toml_holds_an_invalid_toolchain_type(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._session_with_broken_file(
+                project_dir,
+                lambda: manifest.write_text(good + "\n[tool.pyronaut.toolchain]\ntype = 'nonsense'\n", encoding="utf-8"),
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_keeps_running_until_fixed(session, during, "pyproject.toml")
+
     def test_project_files_reads_the_configuration_of_every_resource_root_the_command_loads(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._dev_project(temp_dir)
