@@ -5306,6 +5306,10 @@ additional-test-resources = ["test-fixtures"]
                 test_config.unlink()
                 (project_dir / "extra" / "application.toml").write_text("[broken\n", encoding="utf-8")
                 self.assertTrue(cli._ProjectFiles(project_dir).unreadable())  # noqa: SLF001
+                # nor the file of an environment that is not active
+                (project_dir / "extra" / "application.toml").unlink()
+                (project_dir / "config" / "application-production.toml").write_text("[broken\n", encoding="utf-8")
+                self.assertFalse(cli._ProjectFiles(project_dir).unreadable())  # noqa: SLF001
 
     def test_dev_stays_up_when_a_retry_of_the_refresh_raises(self):
         with tempfile.TemporaryDirectory() as temp_dir:

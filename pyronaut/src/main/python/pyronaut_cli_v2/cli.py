@@ -6281,11 +6281,16 @@ class _ProjectFiles:
         if self._tests:
             roots.extend((layout.test_resources_dir, *layout.additional_test_resources_dirs))
         problems: list[str] = []
+        # the files this command reads whatever else is active: a file of another environment doesn't stop it
+        names = ("application.toml", "application-test.toml" if self._tests else "application-dev.toml")
         for root in dict.fromkeys(roots):
-            for config in sorted(_resolve_layout_dir(self._project_dir, root).glob("application*.toml")):
+            for name in names:
+                config = _resolve_layout_dir(self._project_dir, root) / name
+                if not config.is_file():
+                    continue
                 try:
                     with config.open("rb") as fp:
-                        _toml_parser(config.name).load(fp)
+                        _toml_parser(name).load(fp)
                 except (OSError, RuntimeError, ValueError) as exc:
                     problems.append(f"{config} cannot be read: {exc}.")
         return tuple(problems)
