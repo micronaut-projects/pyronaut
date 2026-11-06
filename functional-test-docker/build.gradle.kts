@@ -1658,6 +1658,23 @@ val verifyEditorSupport by tasks.registering {
             "def Inject() -> _M:",
             "Jakarta inject stubs"
         )
+        // as a decorator a call takes the default of _M, an annotation that returns what it decorates with its type
+        // intact; as a default value it takes the type expected of it, which the unbound _M leaves to the type checker
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
+            "_M = _TypeVarWithDefault(\"_M\", default=_Annotation)",
+            "Jakarta inject stubs"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
+            "def __call__(self, target: _T, /) -> _T: ...",
+            "Jakarta inject stubs"
+        )
+        requireFixtureFileContains(
+            fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
+            "def Inject(target: _T, /) -> _T:",
+            "Jakarta inject stubs"
+        )
         requireFixtureFileContains(
             fixtureIdeStubsDir.file("jakarta/inject/__init__.pyi").asFile,
             "Identifies injectable constructors, methods, and fields.",
