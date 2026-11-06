@@ -6155,7 +6155,7 @@ def _run_with_auto_restart(
                 snapshot = next_snapshot
                 try:
                     code = _refresh_artifacts(_stale_install_reason(project_root) is not None)
-                except (RuntimeError, ValueError) as exc:
+                except Exception as exc:
                     print(f"Failed to refresh artifacts for restart: {exc}", file=sys.stderr)
                     continue
                 if code == SUCCESS:
@@ -6301,8 +6301,9 @@ def _run_with_auto_restart(
 class _ProjectFiles:
     """The files that decide how the application runs, which a watch must be able to read before it acts on a change."""
 
-    def __init__(self, project_dir: Path) -> None:
+    def __init__(self, project_dir: Path, *, tests: bool = False) -> None:
         self._project_dir = project_dir
+        self._tests = tests
         self._manifest_required = (project_dir / "pyproject.toml").is_file() and not _is_external_build_project(project_dir)
         self._reported: tuple[str, ...] = ()
 
@@ -6326,13 +6327,17 @@ class _ProjectFiles:
             _read_pyproject_toolchain_spec(self._project_dir)
         except (RuntimeError, ValueError) as exc:
             return (str(exc),)
+        roots = [layout.resources_dir, *layout.additional_resources_dirs]
+        if self._tests:
+            roots.extend((layout.test_resources_dir, *layout.additional_test_resources_dirs))
         problems: list[str] = []
-        for config in sorted(_resolve_layout_dir(self._project_dir, layout.resources_dir).glob("application*.toml")):
-            try:
-                with config.open("rb") as fp:
-                    _toml_parser(config.name).load(fp)
-            except (OSError, RuntimeError, ValueError) as exc:
-                problems.append(f"{config} cannot be read: {exc}.")
+        for root in dict.fromkeys(roots):
+            for config in sorted(_resolve_layout_dir(self._project_dir, root).glob("application*.toml")):
+                try:
+                    with config.open("rb") as fp:
+                        _toml_parser(config.name).load(fp)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    problems.append(f"{config} cannot be read: {exc}.")
         return tuple(problems)
 
 
@@ -6513,7 +6518,7 @@ def _run_test_continuously(
             processor_args=processor_args,
         )
     snapshot = snapshotter(project_root)
-    project_files = _ProjectFiles(project_root)
+    project_files = _ProjectFiles(project_root, tests=True)
     watch_mode = False
 
     try:
@@ -6536,7 +6541,12 @@ def _run_test_continuously(
                     if project_files.unreadable():
                         changed_at = None
                         continue
-                    next_snapshot = snapshotter(project_root)
+                    try:
+                        next_snapshot = snapshotter(project_root)
+                    except (RuntimeError, ValueError):
+                        # changed again since the check above: the next poll reports it
+                        changed_at = None
+                        continue
                     if next_snapshot == snapshot:
                         changed_at = None
                         continue
@@ -6570,7 +6580,11 @@ def _run_test_continuously(
                 # Only the first cycle can reuse the install performed by run().
                 external_install_done = False
                 if not project_files.unreadable():
-                    snapshot = snapshotter(project_root)
+                    try:
+                        snapshot = snapshotter(project_root)
+                    except (RuntimeError, ValueError):
+                        # changed again since the check above: the next poll reports it
+                        pass
                 _print_continuous_test_banner()
                 if not interactive:
                     return exit_code
