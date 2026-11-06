@@ -32,13 +32,9 @@ import io.micronaut.pyronaut.logback.PyronautLauncherLogging;
 import io.micronaut.runtime.Micronaut;
 import picocli.CommandLine;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -62,7 +58,6 @@ public class PyronautRunMain implements Callable<Integer> {
     private static final String MICRONAUT_PYTHON_ENABLED = "micronaut.python.enabled";
     private static final String PYTHON_ENABLED_MARKER = "META-INF/pyronaut/python-enabled";
     private static final String PACKAGED_JAR_PROPERTY = "pyronaut.packaged.jar";
-    private static final String APPLICATION_CLASSES_INDEX = "META-INF/pyronaut/application-classes.idx";
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
@@ -105,7 +100,7 @@ public class PyronautRunMain implements Callable<Integer> {
         this(
             new PyprojectModelReader(),
             classLoader -> { },
-            PyronautRunMain::startMicronautApplication,
+            (processedClassesRoot, applicationArgs) -> startMicronautApplication(applicationArgs),
             loadRunConfigurer()
         );
     }
@@ -324,26 +319,23 @@ public class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private static boolean startMicronautApplication(Path resolvedClassesDir,
-                                                     ApplicationArgs applicationArgs) {
+    private static boolean startMicronautApplication(ApplicationArgs applicationArgs) {
+        application(applicationArgs).start();
+        return true;
+    }
+
+    static Micronaut application(ApplicationArgs applicationArgs) {
         Micronaut micronaut = Micronaut.build(applicationArgs.appArgs.toArray(String[]::new));
         micronaut.banner(!Boolean.FALSE.equals(applicationArgs.bannerEnabled));
+        // The stack here is the launcher's, not the application's, so the package deduced from it would be picocli's
+        micronaut.deducePackage(false);
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         if (contextClassLoader != null) {
             micronaut.classLoader(contextClassLoader);
             micronaut.beanDefinitionsProvider(new ContextClassLoaderBeanDefinitionsProvider());
             ContextClassLoaderApplicationContextConfigurers.configure(micronaut, contextClassLoader);
         }
-        List<Class<?>> applicationClasses = discoverApplicationClasses(resolvedClassesDir, contextClassLoader);
-        if (!applicationClasses.isEmpty()) {
-            micronaut.classes(applicationClasses.toArray(Class[]::new));
-        }
-        List<String> packages = discoverApplicationPackages(resolvedClassesDir);
-        if (!packages.isEmpty()) {
-            micronaut.packages(packages.toArray(String[]::new));
-        }
-        micronaut.start();
-        return true;
+        return micronaut;
     }
 
     static void initializeJavaHomeIfMissing(Supplier<String> javaHomeSupplier) {
@@ -525,91 +517,8 @@ public class PyronautRunMain implements Callable<Integer> {
         }
     }
 
-    private static List<String> discoverApplicationPackages(Path classesDirectory) {
-        if (isPackagedJar()) {
-            return packagedApplicationClassNames(resolveApplicationClassLoader()).stream()
-                .map(PyronautRunMain::topLevelPackage)
-                .filter(name -> !name.isBlank())
-                .distinct()
-                .toList();
-        }
-        try (Stream<Path> stream = Files.list(classesDirectory)) {
-            return stream
-                .filter(Files::isDirectory)
-                .map(path -> path.getFileName().toString())
-                .filter(name -> !name.isBlank())
-                .filter(name -> !"META-INF".equals(name))
-                .filter(name -> !"pyronaut_application".equals(name))
-                .toList();
-        } catch (Exception ignored) {
-            return List.of();
-        }
-    }
-
-    static List<Class<?>> discoverApplicationClasses(Path classesDirectory, ClassLoader classLoader) {
-        if (classLoader == null) {
-            return List.of();
-        }
-        if (isPackagedJar()) {
-            return packagedApplicationClassNames(classLoader).stream()
-                .map(className -> loadApplicationClass(className, classLoader))
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-        }
-        try (Stream<Path> stream = Files.walk(classesDirectory)) {
-            return stream
-                .filter(Files::isRegularFile)
-                .map(classesDirectory::relativize)
-                .map(path -> path.toString().replace('\\', '/'))
-                .filter(name -> name.endsWith(".class"))
-                .filter(name -> !name.startsWith("META-INF/"))
-                .filter(name -> !name.startsWith("pyronaut_application/"))
-                .filter(name -> !name.endsWith("package-info.class"))
-                .filter(name -> !name.contains("$Definition"))
-                .filter(name -> !name.contains("$Introspection"))
-                .map(name -> name.substring(0, name.length() - ".class".length()).replace('/', '.'))
-                .map(className -> loadApplicationClass(className, classLoader))
-                .filter(java.util.Objects::nonNull)
-                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to discover application classes from " + classesDirectory + ": " + e.getMessage(), e);
-        }
-    }
-
-    static List<String> packagedApplicationClassNames(ClassLoader classLoader) {
-        if (classLoader == null) {
-            return List.of();
-        }
-        try (InputStream input = classLoader.getResourceAsStream(APPLICATION_CLASSES_INDEX)) {
-            if (input == null) {
-                throw new IllegalStateException("Missing packaged application class index: " + APPLICATION_CLASSES_INDEX);
-            }
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-                return reader.lines()
-                    .map(String::trim)
-                    .filter(name -> !name.isBlank())
-                    .toList();
-            }
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to read packaged application class index: " + e.getMessage(), e);
-        }
-    }
-
-    private static String topLevelPackage(String className) {
-        int separator = className.indexOf('.');
-        return separator < 1 ? "" : className.substring(0, separator);
-    }
-
     private static boolean isPackagedJar() {
         return Boolean.getBoolean(PACKAGED_JAR_PROPERTY);
-    }
-
-    private static Class<?> loadApplicationClass(String className, ClassLoader classLoader) {
-        try {
-            return Class.forName(className, true, classLoader);
-        } catch (ClassNotFoundException e) {
-            throw new IllegalStateException("Failed to load application class " + className, e);
-        }
     }
 
     public static void main(String[] args) {

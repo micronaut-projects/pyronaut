@@ -47,7 +47,6 @@ import java.util.zip.ZipOutputStream;
 public final class FatJarPackager {
     static final String ARCHIVE_ROOT = "PYRONAUT-INF/";
     static final String CLASSPATH_INDEX = ARCHIVE_ROOT + "classpath.idx";
-    static final String APPLICATION_CLASS_INDEX = "META-INF/pyronaut/application-classes.idx";
     private static final String APP_CLASSES_ROOT = ARCHIVE_ROOT + "app/classes/";
     private static final String RESOURCE_ROOT = ARCHIVE_ROOT + "app/resources/";
     private static final String LIB_ROOT = ARCHIVE_ROOT + "lib/";
@@ -109,15 +108,7 @@ public final class FatJarPackager {
             try (ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(temporary)))) {
                 zip.setLevel(Deflater.BEST_COMPRESSION);
                 write(zip, written, JarFile.MANIFEST_NAME, manifest(request));
-                List<String> applicationClasses = applicationClasses(request.applicationClasses());
-                applicationEntries += copyDirectoryWithEntry(
-                    zip,
-                    written,
-                    request.applicationClasses(),
-                    applicationRoot.prefix(),
-                    APPLICATION_CLASS_INDEX,
-                    String.join("\n", applicationClasses) + (applicationClasses.isEmpty() ? "" : "\n")
-                );
+                applicationEntries += copyDirectory(zip, written, request.applicationClasses(), applicationRoot.prefix(), false);
                 for (RootInput resourceRoot : resourceRoots) {
                     applicationEntries += copyDirectory(
                         zip, written, resourceRoot.input(), resourceRoot.root().prefix(), false
@@ -264,40 +255,6 @@ public final class FatJarPackager {
         return copyDirectoryPrefix(zip, written, directory, directory, omitInvalidatedMetadata, prefix);
     }
 
-    private static int copyDirectoryWithEntry(ZipOutputStream zip, Set<String> written, Path directory, String prefix,
-                                              String addedName, String addedValue) throws IOException {
-        List<Path> files;
-        try (var stream = Files.walk(directory)) {
-            files = stream
-                .filter(Files::isRegularFile)
-                .sorted(Comparator.comparing(path -> archivePath(directory.relativize(path))))
-                .toList();
-        }
-        boolean added = false;
-        int copied = 0;
-        for (Path file : files) {
-            String relative = archivePath(directory.relativize(file));
-            validateEntryName(relative);
-            if (addedName.equals(relative)) {
-                continue;
-            }
-            if (!added && addedName.compareTo(relative) < 0) {
-                write(zip, written, prefix + addedName, addedValue);
-                added = true;
-                copied++;
-            }
-            try (InputStream input = Files.newInputStream(file)) {
-                write(zip, written, prefix + relative, input);
-            }
-            copied++;
-        }
-        if (!added) {
-            write(zip, written, prefix + addedName, addedValue);
-            copied++;
-        }
-        return copied;
-    }
-
     private static int copyDirectoryPrefix(ZipOutputStream zip, Set<String> written, Path directory, Path base,
                                            boolean omitInvalidatedMetadata) throws IOException {
         return copyDirectoryPrefix(zip, written, directory, base, omitInvalidatedMetadata, "");
@@ -379,25 +336,6 @@ public final class FatJarPackager {
                 || "MAGIC".equals(name)
                 || name.contains("-DIGEST");
         });
-    }
-
-    private static List<String> applicationClasses(Path classesDirectory) throws IOException {
-        try (var stream = Files.walk(classesDirectory)) {
-            return stream
-                .filter(Files::isRegularFile)
-                .map(classesDirectory::relativize)
-                .map(FatJarPackager::archivePath)
-                .filter(name -> name.endsWith(".class"))
-                .filter(name -> !name.startsWith("META-INF/"))
-                .filter(name -> !name.startsWith("pyronaut_application/"))
-                .filter(name -> !name.endsWith("module-info.class"))
-                .filter(name -> !name.endsWith("package-info.class"))
-                .filter(name -> !name.contains("$Definition"))
-                .filter(name -> !name.contains("$Introspection"))
-                .map(name -> name.substring(0, name.length() - ".class".length()).replace('/', '.'))
-                .sorted()
-                .toList();
-        }
     }
 
     private static boolean multiRelease(Path entry) throws IOException {
