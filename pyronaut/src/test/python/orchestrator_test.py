@@ -8,6 +8,7 @@ import shutil
 import tarfile
 import tempfile
 import time
+import types
 import unittest
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -3435,6 +3436,55 @@ mode = "jvm"
         self.assertEqual(1, sum(1 for command_line, _ in executed if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "start"]))
         self.assertEqual(1, sum(1 for command_line, _ in executed if command_line[:2] == ["/tmp/pyronaut-test-resources-server", "stop"]))
 
+    def test_test_continuous_watch_mode_waits_while_pyproject_toml_cannot_be_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            executed = []
+            polls = {"count": 0}
+            during = {}
+            now = {"value": 0.0}
+
+            def tests_run():
+                return sum("pyronaut-processor" in command[0] for command in executed)
+
+            def input_reader(timeout):
+                polls["count"] += 1
+                now["value"] += 0.1
+                if polls["count"] == 1:
+                    return "w"
+                if polls["count"] == 3:
+                    during["before"] = tests_run()
+                    manifest.write_text(good + "\n[tool.pyronaut\nbroken = \n", encoding="utf-8")
+                if polls["count"] == 8:
+                    # a key asks for a run too: it can't start either
+                    return " "
+                if polls["count"] == 9:
+                    during["after"] = tests_run()
+                    manifest.write_text(good + "# corrected\n", encoding="utf-8")
+                if polls["count"] == 14:
+                    return "q"
+                return None
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), redirect_stdout(io.StringIO()):
+                exit_code = cli.run(
+                    ["test", "--continuous", "--project-dir", str(project_dir)],
+                    runner_with_env=lambda command_line, env: executed.append(command_line) or 0,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                    watch_poll_interval=0.05,
+                    watch_debounce_seconds=0.05,
+                    monotonic=lambda: now["value"],
+                    input_reader=input_reader,
+                )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(during["before"], during["after"])
+            self.assertEqual(during["before"] + 1, tests_run())
+            self.assertRegex(stderr.getvalue(), r"pyproject\.toml.*line 9")
+
     def test_test_continuous_watch_mode_reruns_on_pyproject_change(self):
         executed: list[tuple[list[str], dict[str, str] | None]] = []
         stdout = io.StringIO()
@@ -5910,74 +5960,219 @@ additional-test-resources = ["test-fixtures"]
             self.assertTrue(preflight_entered.is_set())
             self.assertEqual(2, len(started))
 
-    def test_run_restart_aborts_when_refresh_preflight_fails(self):
-        executed = []
-        started = []
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_dir = Path(temp_dir) / "watched-fail-refresh"
-            src_dir = project_dir / "src"
-            src_dir.mkdir(parents=True, exist_ok=True)
-            source_file = src_dir / "controller.py"
-            source_file.write_text("print('v1')\n", encoding="utf-8")
-            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
-            self._write_manifests(project_dir)
+    def _dev_session(self, project_dir, edits, runner=None, on_start=None):
+        """
+        Runs dev with fake processes. Each edit runs on its tick and may look at the session; after the last edit the
+        running process ends, which ends the session.
+        """
+        session = types.SimpleNamespace(started=[], executed=[], stderr="")
+        if on_start is not None:
+            on_start(session)
 
-            class FakeProcess:
-                def __init__(self):
-                    self.terminated = False
-                    self.polls = 0
+        class FakeProcess:
+            def __init__(self):
+                self.terminated = False
+                self.finished = False
 
-                def poll(self):
-                    self.polls += 1
-                    return 0 if self.terminated else None
+            def poll(self):
+                return 0 if self.terminated or self.finished else None
 
-                def terminate(self):
-                    self.terminated = True
+            def terminate(self):
+                self.terminated = True
 
-                def wait(self, timeout=None):
-                    return 0
-
-                def kill(self):
-                    self.terminated = True
-
-            processes = [FakeProcess(), FakeProcess()]
-
-            def process_runner(command_line, env):
-                started.append((command_line, env))
-                return processes.pop(0)
-
-            def runner(command_line):
-                executed.append(command_line)
-                if len(executed) > 2 and "pyronaut-processor" in command_line[0]:
-                    return 7
+            def wait(self, timeout=None):
                 return 0
 
-            ticks = {"count": 0}
-            now = {"value": 0.0}
+            def kill(self):
+                self.terminated = True
 
-            def monotonic():
-                return now["value"]
+        def process_runner(command_line, env):
+            session.started.append(FakeProcess())
+            return session.started[-1]
 
-            def sleep(seconds):
-                now["value"] += seconds
-                ticks["count"] += 1
-                if ticks["count"] == 1:
-                    source_file.write_text("print('v2')\n", encoding="utf-8")
+        def default_runner(command_line, env):
+            session.executed.append(command_line)
+            return runner(command_line) if runner is not None else 0
 
-            exit_code = cli.run(
+        now = {"value": 0.0}
+        ticks = {"count": 0}
+        last = max(edits)
+
+        def sleep(seconds):
+            now["value"] += seconds
+            ticks["count"] += 1
+            edit = edits.get(ticks["count"])
+            if edit is not None:
+                edit()
+            if ticks["count"] == last:
+                session.started[-1].finished = True
+            if ticks["count"] > last + 100:
+                raise AssertionError("the session did not end")
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            session.exit_code = cli.run(
                 ["dev", "--project-dir", str(project_dir)],
-                runner=runner,
+                runner_with_env=default_runner,
                 process_runner=process_runner,
                 resolver=self._resolver(),
                 platform_name="linux",
                 watch_poll_interval=0.05,
                 watch_debounce_seconds=0.05,
-                monotonic=monotonic,
+                monotonic=lambda: now["value"],
                 sleep=sleep,
             )
+        session.stderr = stderr.getvalue()
+        return session
 
-            self.assertEqual(7, exit_code)
-            self.assertEqual(1, len(started))
+    def _dev_project(self, temp_dir):
+        project_dir = Path(temp_dir) / "broken-files"
+        (project_dir / "src").mkdir(parents=True)
+        (project_dir / "config").mkdir()
+        (project_dir / "src" / "controller.py").write_text("print('v1')\n", encoding="utf-8")
+        (project_dir / "pyproject.toml").write_text(
+            "[project]\nname = 'demo'\nversion = '1.0'\n\n[tool.pyronaut.sources]\npython = 'src'\nresources = 'config'\n",
+            encoding="utf-8",
+        )
+        (project_dir / "config" / "application.toml").write_text("[micronaut.application]\nname = 'demo'\n", encoding="utf-8")
+        (project_dir / "__pyronaut__" / "classes").mkdir(parents=True)
+        self._write_manifests(project_dir)
+        return project_dir
+
+    def _assert_keeps_running_until_fixed(self, session, session_during, file_name):
+        self.assertFalse(session_during["terminated"], "the application was stopped for a file that cannot be read")
+        self.assertEqual(0, session_during["refreshes"], "the application was refreshed from a file that cannot be read")
+        self.assertEqual(0, session.exit_code)
+        self.assertIn(file_name, session.stderr)
+        self.assertEqual(1, session.stderr.count(file_name), session.stderr)
+
+    def test_dev_keeps_running_while_application_toml_cannot_be_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            config = project_dir / "config" / "application.toml"
+            good = config.read_text(encoding="utf-8")
+            session, during = self._session_with_broken_file(
+                project_dir,
+                lambda: config.write_text(good + "\n[datasources.default\nbroken = \n", encoding="utf-8"),
+                lambda: config.write_text(good, encoding="utf-8"),
+            )
+            self._assert_keeps_running_until_fixed(session, during, "application.toml")
+            self.assertRegex(session.stderr, r"application\.toml.*line 4")
+
+    def test_dev_keeps_running_while_pyproject_toml_cannot_be_parsed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._session_with_broken_file(
+                project_dir,
+                lambda: manifest.write_text(good + "\n[tool.pyronaut\nbroken = \n", encoding="utf-8"),
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_keeps_running_until_fixed(session, during, "pyproject.toml")
+            self.assertRegex(session.stderr, r"pyproject\.toml.*line 9")
+
+    def test_dev_keeps_running_while_pyproject_toml_is_deleted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._session_with_broken_file(
+                project_dir,
+                manifest.unlink,
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_keeps_running_until_fixed(session, during, "pyproject.toml")
+
+    def test_dev_keeps_running_while_pyproject_toml_holds_an_invalid_toolchain(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            manifest = project_dir / "pyproject.toml"
+            good = manifest.read_text(encoding="utf-8")
+            session, during = self._session_with_broken_file(
+                project_dir,
+                lambda: manifest.write_text(good + "\n[tool.pyronaut.toolchain]\ndistribution = 'nonsense'\n", encoding="utf-8"),
+                lambda: manifest.write_text(good, encoding="utf-8"),
+            )
+            self._assert_keeps_running_until_fixed(session, during, "pyproject.toml")
+            self.assertIn("toolchain", session.stderr)
+
+    def _session_with_broken_file(self, project_dir, break_it, fix_it):
+        """Breaks a file on tick 2, looks at the session on tick 7, fixes the file on tick 8, and runs on to tick 14."""
+        during = {}
+        sessions = []
+
+        def processed():
+            return sum("pyronaut-processor" in command[0] for command in sessions[0].executed)
+
+        def before():
+            during["processed"] = processed()
+            break_it()
+
+        def look():
+            during["terminated"] = sessions[0].started[0].terminated
+            during["refreshes"] = processed() - during["processed"]
+
+        session = self._dev_session(project_dir, {2: before, 7: look, 8: fix_it, 14: lambda: None}, on_start=sessions.append)
+        return session, during
+
+    def test_dev_stays_up_when_the_refresh_fails_and_tries_again_on_the_next_change(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            source = project_dir / "src" / "controller.py"
+            failures = {"left": 1}
+            processes = {"seen": 0}
+
+            def runner(command_line):
+                if "pyronaut-processor" in command_line[0]:
+                    processes["seen"] += 1
+                    if processes["seen"] == 2 and failures["left"]:
+                        failures["left"] -= 1
+                        return 7
+                return 0
+
+            session = self._dev_session(
+                project_dir,
+                {
+                    2: lambda: source.write_text("print('v2')\n", encoding="utf-8"),
+                    8: lambda: source.write_text("print('v3')\n", encoding="utf-8"),
+                    14: lambda: None,
+                },
+                runner=runner,
+            )
+
+            self.assertEqual(0, session.exit_code)
+            self.assertEqual(2, len(session.started))
+            self.assertIn("exit code 7", session.stderr)
+            self.assertIn("next change", session.stderr)
+
+    def test_dev_stays_up_when_validation_fails_on_a_refresh(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._dev_project(temp_dir)
+            config = project_dir / "config" / "application.toml"
+            good = config.read_text(encoding="utf-8")
+            validations = {"seen": 0}
+
+            def runner(command_line):
+                if "pyronaut-validate-config" in command_line[0]:
+                    validations["seen"] += 1
+                    if validations["seen"] == 2:
+                        return 10
+                return 0
+
+            session = self._dev_session(
+                project_dir,
+                {
+                    2: lambda: config.write_text(good + "\n[bad]\noption = 1\n", encoding="utf-8"),
+                    8: lambda: config.write_text(good, encoding="utf-8"),
+                    14: lambda: None,
+                },
+                runner=runner,
+            )
+
+            self.assertEqual(0, session.exit_code)
+            self.assertEqual(2, len(session.started))
+            self.assertIn("exit code 10", session.stderr)
 
     def test_run_restart_aborts_when_stop_fails(self):
         executed = []
@@ -6048,81 +6243,6 @@ additional-test-resources = ["test-fixtures"]
             self.assertEqual(cli.INTERNAL_ERROR, exit_code)
             self.assertEqual(1, len(started))
             self.assertIn("Failed to stop running process for restart", stderr.getvalue())
-
-    def test_run_restart_aborts_when_refresh_fails_after_initial_start(self):
-        executed = []
-        started = []
-        with tempfile.TemporaryDirectory() as temp_dir:
-            project_dir = Path(temp_dir) / "watched-refresh-fail-after-start"
-            src_dir = project_dir / "src"
-            src_dir.mkdir(parents=True, exist_ok=True)
-            source_file = src_dir / "controller.py"
-            source_file.write_text("print('v1')\n", encoding="utf-8")
-            (project_dir / "__pyronaut__" / "classes").mkdir(parents=True, exist_ok=True)
-            self._write_manifests(project_dir)
-
-            class FakeProcess:
-                def __init__(self):
-                    self.terminated = False
-                    self.polls = 0
-
-                def poll(self):
-                    self.polls += 1
-                    return 0 if self.terminated else None
-
-                def terminate(self):
-                    self.terminated = True
-
-                def wait(self, timeout=None):
-                    return 0
-
-                def kill(self):
-                    self.terminated = True
-
-            processes = [FakeProcess(), FakeProcess()]
-            processor_calls = {"count": 0}
-
-            def process_runner(command_line, env):
-                started.append((command_line, env))
-                return processes.pop(0)
-
-            def runner(command_line):
-                executed.append(command_line)
-                if "pyronaut-processor" in command_line[0]:
-                    processor_calls["count"] += 1
-                    if processor_calls["count"] >= 2:
-                        return 7
-                return 0
-
-            now = {"value": 0.0}
-            ticks = {"count": 0}
-
-            def monotonic():
-                return now["value"]
-
-            def sleep(seconds):
-                now["value"] += seconds
-                ticks["count"] += 1
-                if ticks["count"] == 1:
-                    source_file.write_text("print('v2')\n", encoding="utf-8")
-
-            stderr = io.StringIO()
-            with redirect_stderr(stderr):
-                exit_code = cli.run(
-                    ["dev", "--project-dir", str(project_dir)],
-                    runner=runner,
-                    process_runner=process_runner,
-                    resolver=self._resolver(),
-                    platform_name="linux",
-                    watch_poll_interval=0.05,
-                    watch_debounce_seconds=0.05,
-                    monotonic=monotonic,
-                    sleep=sleep,
-                )
-
-            self.assertEqual(7, exit_code)
-            self.assertEqual(1, len(started))
-            self.assertIn("Failed to refresh artifacts for restart (exit code 7)", stderr.getvalue())
 
     def test_run_ignores_generated_output_changes_for_restart(self):
         executed = []
