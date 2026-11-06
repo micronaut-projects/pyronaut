@@ -155,8 +155,19 @@ public final class PyronautDevReload extends MicronautDevMain implements Pyronau
         List<Path> compileClasspath = DevReloadFiles.withNativeCompilerClasspath(runtime);
         Path manifestFile = writeManifest(root, devDir, classes, python, java, config, additional, compileClasspath, processorPath, options);
 
-        DevRuntime devRuntime = launch(DevManifest.load(manifestFile), appArgs.toArray(String[]::new));
-        Runtime.getRuntime().addShutdownHook(new Thread(devRuntime::close, "pyronaut-dev-shutdown"));
+        // the context class loader of the runtime's threads, and of those they start in turn, such as the event loop
+        // threads a stopping server starts as it closes its connections: the run command's own loader also holds the
+        // processed classes, so a request on such a thread would find the application's classes once more, read from there
+        // rather than from the generation that serves it
+        Thread launching = Thread.currentThread();
+        ClassLoader previous = launching.getContextClassLoader();
+        launching.setContextClassLoader(parent);
+        try {
+            DevRuntime devRuntime = launch(DevManifest.load(manifestFile), appArgs.toArray(String[]::new));
+            Runtime.getRuntime().addShutdownHook(new Thread(devRuntime::close, "pyronaut-dev-shutdown"));
+        } finally {
+            launching.setContextClassLoader(previous);
+        }
     }
 
     /**
