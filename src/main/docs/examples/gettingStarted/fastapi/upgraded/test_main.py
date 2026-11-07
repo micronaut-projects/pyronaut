@@ -2,9 +2,8 @@ from typing import Annotated
 
 import requests
 
-from jakarta.inject import Inject
-from micronaut.context import ApplicationContext
 from micronaut.test.extensions.junit5.annotation import MicronautTest
+from pyronaut import context
 from pyronaut.build import Dependency
 
 
@@ -17,10 +16,10 @@ Dependency(
 
 MicronautTest()
 
-context: Annotated[ApplicationContext, Inject]
+application_context: Annotated[context.ApplicationContext, context.Inject]
 
 def client():
-    return requests.with_context(context)
+    return requests.with_context(application_context)
 
 def test_root():
     response = client().get("/")
