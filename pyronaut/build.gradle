@@ -745,6 +745,28 @@ def mavenLocalPublishingTasks = {
         .findAll { it != null } + [tasks.named("prepareSdkMavenLocalEnvironment").get()]
 }
 
+// The e2e fixture has its own local repository, and Central snapshots has newer metadata than the file repositories
+// holding a core built from source: seed it with what this build publishes, so that only those artifacts are resolved.
+tasks.register("seedE2eLocalRepository", Copy) {
+    group = "build setup"
+    description = "Seeds the e2e local repository with the Micronaut core and Pyronaut artifacts this build publishes."
+    dependsOn("prepareSdkMavenLocalEnvironment")
+    from(effectiveMavenLocalRepositoryDir.map { new File(it, "io/micronaut") }) {
+        include("micronaut-*/${micronautCoreVersion.get()}/**")
+        include("pyronaut/*/${project.version}/**")
+        exclude("**/_remote.repositories")
+    }
+    into(e2eLocalRepositoryDir.map { it.dir("io/micronaut") })
+    outputs.upToDateWhen { false }
+    doLast {
+        // a marker left by an earlier resolution would hide the seeded artifacts
+        fileTree(e2eLocalRepositoryDir.map { it.dir("io/micronaut") }) {
+            include("micronaut-*/${micronautCoreVersion.get()}/_remote.repositories")
+            include("pyronaut/*/${project.version}/_remote.repositories")
+        }.files.each { it.delete() }
+    }
+}
+
 tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
     group = "build setup"
     description = "Prepares the Python orchestrator e2e fixture with locally staged snapshot artifacts"
@@ -782,8 +804,9 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     mustRunAfter(mavenLocalPublishingTasks)
     if (micronautCoreCheckout != null) {
-        // publish the core built from source to Maven local first, where the applications resolve it
-        dependsOn(tasks.named("prepareSdkMavenLocalEnvironment"))
+        // the applications resolve the core built from source, not the snapshot Central publishes
+        dependsOn(tasks.named("seedE2eLocalRepository"))
+        environment("PYRONAUT_SONATYPE_SNAPSHOTS", "false")
     }
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
@@ -913,8 +936,9 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     mustRunAfter(mavenLocalPublishingTasks)
     if (micronautCoreCheckout != null) {
-        // publish the core built from source to Maven local first, where the applications resolve it
-        dependsOn(tasks.named("prepareSdkMavenLocalEnvironment"))
+        // the applications resolve the core built from source, not the snapshot Central publishes
+        dependsOn(tasks.named("seedE2eLocalRepository"))
+        environment("PYRONAUT_SONATYPE_SNAPSHOTS", "false")
     }
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
