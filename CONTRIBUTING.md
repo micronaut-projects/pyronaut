@@ -69,7 +69,17 @@ To also build the Javadocs, run `./gradlew docs`.
 
 If you use IntelliJ IDEA, you can import the project using the Intellij Gradle Tooling ("File / Import Project" and selecting the "settings.gradle" file).
 
-Micronaut Core `5.2.9` and stable GraalPy artifacts are resolved from Maven Central.
+Stable GraalPy artifacts are resolved from Maven Central. While `pyronaut.micronaut.core.version` in `gradle.properties` is a snapshot, Micronaut Core is built from source: the `micronaut-core` submodule tracks the core branch of that snapshot, and the build includes it, so every core module resolves to its project. Check the submodule out with the repository:
+
+```bash
+git clone --recurse-submodules https://github.com/micronaut-projects/pyronaut.git
+# or, in an existing clone
+git submodule update --init micronaut-core
+```
+
+`git submodule update --remote micronaut-core` moves it to the head of the core branch. To build against another core checkout, pass `-Ppyronaut.micronaut.core.checkout=/path/to/micronaut-core`. The tasks that prepare the Maven local repository for the end-to-end tests publish the included core build there too, as the applications they run resolve Micronaut Core from it.
+
+Once the core version is released, set it in `gradle.properties` and remove the submodule: a released core is resolved from Maven Central.
 
 ## Testing native bundles from a checkout
 

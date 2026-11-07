@@ -1,0 +1,4 @@
+[submodule "micronaut-core"]
+	path = micronaut-core
+	url = https://github.com/micronaut-projects/micronaut-core.git
+	branch = 5.3.x
