@@ -141,7 +141,7 @@ Important files include:
 - `.pyronaut-last-nodeid.txt`
 - `events.ndjson`
 
-With `engine = "both"`, the JUnit XML and HTML reports contain results from both engines. The node-id and event files remain pytest-specific.
+With `engine = "both"`, the JUnit XML and HTML reports contain results from both engines. The node-id and event files remain pytest-specific, except under `pyronaut test -t` on the JVM toolchain, where `events.ndjson` covers every engine (see Continuous testing below).
 
 === Console output
 
@@ -166,6 +166,65 @@ verbose = true
 ----
 
 Streaming disables the live progress display; Pyronaut reports tests as plain lines.
+
+== Continuous testing
+
+`pyronaut test -t` (or `--continuous`) keeps testing a project as it changes.
+On the JVM toolchain it validates the configuration and processes the
+application once, then runs the tests in the test mode of the Micronaut
+development runtime, in a single JVM. The runtime watches the Python and Java
+sources, the tests and the configuration directories, compiles a change in
+process, and runs the tests again on a new class loader generation. The
+dependencies, the compilers, the JIT-compiled code and the GraalPy runtime stay
+loaded from one run to the next, so a run after an edit takes seconds rather
+than a new process. Each run gets a fresh GraalPy context built over its own
+generation, so the Python modules a test imports are always the edited ones.
+
+A change to a pytest test, or to the application while the project has pytest
+tests, runs every test; a change that only reaches Java tests runs the test
+classes it affects and those that failed last. A change that does not compile
+runs nothing and is reported; the last results stand.
+
+On a terminal, single keys ask for runs: space runs the last tests again, `a`
+runs every test, `f` the failures, `w` turns watching on or off, and `q` exits
+with the status of the last run.
+
+`--tests` filters every run. A pytest selector such as
+`tests/test_controller.py::test_index` or `test_controller.py` matches by test
+file and name; any other selector, such as `com.example.*Test`, matches Java
+test classes and methods as Gradle's `--tests` does.
+
+The runs write the reports of `pyronaut test` under
+`__pyronaut__/reports/tests/`: JUnit XML per test class or file in `junit/`,
+`events.ndjson` for every engine, rewritten for each run, and an `index.html`
+that keeps the latest result of every test, failures first. While
+`pyronaut test -t` runs, the LiveReload server also serves that page at
+`http://localhost:35729/tests/` and updates it test by test. Choose the path
+with:
+
+[source,toml]
+----
+[tool.pyronaut.test]
+report-path = "/tests/"
+----
+
+The development runtime needs Micronaut 5.3 or later: `pyronaut install` adds
+`micronaut-dev`, `micronaut-dev-test-report` and `micronaut-dev-livereload` to
+the project's development runtime. Pyronaut keeps the earlier behaviour, which
+processes the project and starts a new test process for every run, for the
+native toolchain, for external Maven and Gradle builds, for options test mode
+does not support such as `--select-class`, and when configured:
+
+[source,toml]
+----
+[tool.pyronaut.test]
+continuous = "process" # restart (default) | process
+----
+
+Without a terminal, as in CI, `pyronaut test -t` runs the tests once and exits
+with their status. A change to `pyproject.toml` or to the dependencies, or a
+source or test directory created after the start, needs a new
+`pyronaut test -t`.
 
 == Context tests
 
