@@ -9352,7 +9352,13 @@ def _windows_java_launcher(command_line: list[str], env: dict[str, str] | None) 
             raise FileNotFoundError(str(exc)) from exc
     entries = classpath.group(1).strip().replace("%APP_HOME%", str(script.parent.parent))
     quoted = entries.replace("\\", "\\\\").replace('"', '\\"')
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+    # Java's Windows launcher reads argument files in the ANSI code page,
+    # including when Python runs in UTF-8 mode.
+    encoding = "utf-8"
+    if os.name == "nt":
+        import ctypes
+        encoding = f"cp{ctypes.windll.kernel32.GetACP()}"
+    with tempfile.NamedTemporaryFile(mode="w", encoding=encoding, newline="\n",
                                      prefix="pyronaut-java-", suffix=".args", delete=False) as args_file:
         args_file.write(f'-classpath\n"{quoted}"\n')
     # A spawned JVM may not have read the file yet when Popen returns.
