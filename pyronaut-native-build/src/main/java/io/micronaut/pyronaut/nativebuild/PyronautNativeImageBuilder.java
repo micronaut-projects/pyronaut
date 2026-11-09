@@ -226,6 +226,8 @@ public final class PyronautNativeImageBuilder {
 // Core
             "--initialize-at-build-time=io.micronaut.core.io",
             "--initialize-at-build-time=io.micronaut.core.optim",
+            // Serde registrars inherit Ordered's default method and are stored in the image heap.
+            "--initialize-at-build-time=io.micronaut.core.order.Ordered",
             "--initialize-at-build-time=io.micronaut.core.async.publisher.PublishersOptimizations",
             "--initialize-at-build-time=io.micronaut.core.util",
             "--initialize-at-build-time=io.micronaut.core.bind",
