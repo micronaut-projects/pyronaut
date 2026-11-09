@@ -9334,8 +9334,9 @@ def _windows_java_launcher(command_line: list[str], env: dict[str, str] | None) 
     classpath = re.search(r"^set CLASSPATH=(.*)$", text, re.MULTILINE)
     defaults = re.search(r"^set DEFAULT_JVM_OPTS=(.*)$", text, re.MULTILINE)
     invocation = re.search(
-        r'^"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %(\w+_OPTS)%\s+'
-        r'-classpath "%CLASSPATH%" ([\w.$]+) %\*\s*$', text, re.MULTILINE,
+        r'^(?:endlocal & )?"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %(\w+_OPTS)%\s+'
+        r'-classpath "%CLASSPATH%" ([\w.$]+) %\*'
+        r'(?: & call :exitWithErrorLevel & goto exitWithErrorLevel)?\s*$', text, re.MULTILINE,
     )
     # Only translate the known Gradle launcher; custom scripts and native shims stay intact.
     if classpath is None or defaults is None or invocation is None:
