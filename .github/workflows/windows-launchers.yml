@@ -1,0 +1,42 @@
+name: Windows launchers
+
+on:
+  pull_request:
+    branches: [master, '[0-9]+.[0-9]+.x']
+    paths:
+      - 'pyronaut/src/main/python/**'
+      - 'pyronaut/src/test/python/orchestrator_test.py'
+      - '.github/workflows/windows-launchers.yml'
+  push:
+    branches: [master, '[0-9]+.[0-9]+.x']
+    paths:
+      - 'pyronaut/src/main/python/**'
+      - 'pyronaut/src/test/python/orchestrator_test.py'
+      - '.github/workflows/windows-launchers.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  launcher:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Test Windows launcher compatibility
+        working-directory: pyronaut/src/test/python
+        run: >-
+          python -m unittest
+          orchestrator_test.OrchestratorTest.test_windows_gradle_launchers_use_java_argfile_without_changing_options_or_arguments
+          orchestrator_test.OrchestratorTest.test_windows_custom_batch_and_native_shims_are_not_rewritten
+          orchestrator_test.OrchestratorTest.test_windows_java_argfile_uses_ansi_code_page
+          orchestrator_test.OrchestratorTest.test_windows_gradle_launcher_executes_java_with_long_classpath

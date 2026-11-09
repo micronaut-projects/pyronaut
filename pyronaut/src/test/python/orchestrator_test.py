@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import hashlib
 import io
 import os
@@ -11,6 +12,7 @@ import time
 import unittest
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
+from itertools import product
 from pathlib import Path
 import socket
 import threading
@@ -1580,8 +1582,13 @@ class OrchestratorTest(unittest.TestCase):
             self.assertEqual((native, {}), cli._windows_launch(native))  # noqa: SLF001
 
     def test_windows_gradle_launchers_use_java_argfile_without_changing_options_or_arguments(self):
-        for command in ("install", "processor", "validate-config", "run", "test", "native-build"):
-            with self.subTest(command=command), tempfile.TemporaryDirectory() as temp_dir:
+        commands = ("install", "processor", "validate-config", "run", "test", "native-build")
+        wrappers = (
+            ("", ""),
+            ("endlocal & ", " & call :exitWithErrorLevel & goto exitWithErrorLevel"),
+        )
+        for command, (prefix, suffix) in product(commands, wrappers):
+            with self.subTest(command=command, prefix=prefix), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir) / "tools with spaces"
                 bin_dir = root / "bin"
                 bin_dir.mkdir(parents=True)
@@ -1594,8 +1601,8 @@ class OrchestratorTest(unittest.TestCase):
                 script.write_bytes((
                     f"@rem  {script.stem} startup script for Windows\n"
                     f"set DEFAULT_JVM_OPTS={defaults}\nset CLASSPATH={classpath}\n"
-                    f'"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %{variable}%  '
-                    '-classpath "%CLASSPATH%" example.Main %*\n'
+                    f'{prefix}"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %{variable}%  '
+                    f'-classpath "%CLASSPATH%" example.Main %*{suffix}\n'
                 ).replace("\n", "\r\n").encode("utf-8"))
                 expected_classpath = classpath.replace("%APP_HOME%", str(root.resolve()))
                 self.assertGreater(len(expected_classpath), 8191)
@@ -1649,6 +1656,102 @@ class OrchestratorTest(unittest.TestCase):
                 script.write_text("@echo off\ncustom-command %*\n", encoding="utf-8")
                 command_line = [str(script), "install"]
                 self.assertEqual((command_line, {"shell": True}), cli._windows_launch(command_line, {}))
+
+    def test_windows_java_argfile_uses_ansi_code_page(self):
+        import ctypes
+
+        windows_os = Mock(wraps=os)
+        windows_os.name = "nt"
+        for code_page in (1252, 65001):
+            with self.subTest(code_page=code_page), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir) / "café"
+                (root / "bin").mkdir(parents=True)
+                script = root / "bin" / "pyronaut-install.bat"
+                script.write_text(
+                    "@rem  pyronaut-install startup script for Windows\n"
+                    "set DEFAULT_JVM_OPTS=\nset CLASSPATH=%APP_HOME%\\lib\\app.jar\n"
+                    'endlocal & "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %PYRONAUT_INSTALL_OPTS% '
+                    '-classpath "%CLASSPATH%" example.Main %* & call :exitWithErrorLevel & goto exitWithErrorLevel\n',
+                    encoding="utf-8",
+                )
+                with (
+                    patch.object(cli, "os", windows_os),
+                    patch.object(ctypes, "windll", create=True) as windll,
+                    patch.object(cli.tempfile, "gettempdir", return_value=temp_dir),
+                ):
+                    windll.kernel32.GetACP.return_value = code_page
+                    self.assertIsNotNone(cli._windows_java_launcher([str(script)], {"JAVA_HOME": temp_dir}))
+                args_file = next(Path(temp_dir).glob("pyronaut-java-*.args"))
+                self.assertIn(str(root.resolve()).replace("\\", "\\\\").encode(f"cp{code_page}"), args_file.read_bytes())
+                args_file.unlink()
+
+    @unittest.skipUnless(os.name == "nt", "Requires the Windows Java launcher")
+    def test_windows_gradle_launcher_executes_java_with_long_classpath(self):
+        javac = shutil.which("javac")
+        self.assertIsNotNone(javac, "A JDK is required for the Windows launcher smoke test")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "tools café with spaces"
+            (root / "bin").mkdir(parents=True)
+            classes = root / "classes"
+            classes.mkdir()
+            source = root / "LauncherProbe.java"
+            source.write_text('''
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
+
+public class LauncherProbe {
+    public static void main(String[] args) {
+        var values = new ArrayList<String>();
+        for (var key : List.of("java.class.path", "launcher.default", "launcher.java", "launcher.tool")) {
+            values.add(System.getProperty(key));
+        }
+        values.addAll(List.of(args));
+        for (var value : values) {
+            System.out.println(Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8)));
+        }
+        System.exit(37);
+    }
+}
+''', encoding="utf-8")
+            subprocess.run([javac, "-d", str(classes), str(source)], check=True, capture_output=True, timeout=30)
+            classpath = r"%APP_HOME%\classes;" + ";".join(
+                rf"%APP_HOME%\lib\dependency-{index}.jar" for index in range(200)
+            )
+            expected_classpath = classpath.replace("%APP_HOME%", str(root.resolve()))
+            self.assertGreater(len(expected_classpath), 8191)
+            script = root / "bin" / "pyronaut-install.bat"
+            script.write_bytes((
+                "@rem  pyronaut-install startup script for Windows\n"
+                'set DEFAULT_JVM_OPTS="-Dlauncher.default=true"\n'
+                f"set CLASSPATH={classpath}\n"
+                'endlocal & "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %PYRONAUT_INSTALL_OPTS%  '
+                '-classpath "%CLASSPATH%" LauncherProbe %* & call :exitWithErrorLevel & goto exitWithErrorLevel\n'
+            ).replace("\n", "\r\n").encode("utf-8"))
+            arguments = ["C:\\app with spaces\\", 'quote"value', "", "@app.args", "a&b", "x|y"]
+            environment = dict(os.environ, JAVA_OPTS='-Dlauncher.java="spaces & pipes | retained"',
+                               PYRONAUT_INSTALL_OPTS='-Dlauncher.tool="tool options"')
+            for key in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"):
+                environment.pop(key, None)
+            for java_home in (None, str(Path(javac).resolve().parent.parent)):
+                with self.subTest(java_home=java_home):
+                    if java_home is None:
+                        environment.pop("JAVA_HOME", None)
+                    else:
+                        environment["JAVA_HOME"] = f'"{java_home}"'
+                    with patch.object(cli.tempfile, "gettempdir", return_value=temp_dir):
+                        launched, options = cli._windows_launch([str(script), *arguments], environment)
+                    self.assertFalse(options.get("shell", False))
+                    result = subprocess.run(launched, env=environment, capture_output=True, text=True,
+                                            timeout=30, **options)
+                    self.assertEqual(37, result.returncode, result.stderr)
+                    self.assertEqual(
+                        [expected_classpath, "true", "spaces & pipes | retained", "tool options", *arguments],
+                        [base64.b64decode(line).decode("utf-8") for line in result.stdout.splitlines()],
+                    )
+                    for args_file in Path(temp_dir).glob("pyronaut-java-*.args"):
+                        args_file.unlink()
 
     def test_native_provided_coordinates_keep_same_artifact_id_from_different_group(self):
         with tempfile.TemporaryDirectory() as temp_dir:
