@@ -479,7 +479,7 @@ class PyronautNativeBuildMainTest {
     }
 
     @Test
-    void excludesBundledNativeImageConfigWhenBuildingReusableNativeBase() throws Exception {
+    void replacesBundledNativeImageConfigWhenBuildingReusableNativeBase() throws Exception {
         Path project = prepareProject("""
             [project]
             name = "demo"
@@ -492,6 +492,9 @@ class PyronautNativeBuildMainTest {
             "META-INF/native-image/io.netty/netty-handler/native-image.properties"
         );
         overwriteRuntimeManifest(project, List.of(nettyJar.toString()));
+        Path projectMetadataDir = project.resolve("config/META-INF/native-image/example/app");
+        Files.createDirectories(projectMetadataDir);
+        Files.writeString(projectMetadataDir.resolve("reachability-metadata.json"), "{}\n");
 
         List<List<String>> executed = new ArrayList<>();
         var invoker = (PyronautNativeBuildMain.NativeImageInvoker) (command, workingDirectory) -> {
@@ -520,6 +523,12 @@ class PyronautNativeBuildMainTest {
         assertTrue(excludeIndex >= 0);
         assertTrue(nativeCommand.get(excludeIndex + 1).contains("netty-handler-"));
         assertEquals("^/META-INF/native-image/.*", nativeCommand.get(excludeIndex + 2));
+        String directories = nativeCommand.stream()
+            .filter(flag -> flag.startsWith("-H:ConfigurationFileDirectories="))
+            .findFirst()
+            .orElseThrow();
+        assertTrue(directories.contains(Path.of("io.netty", "netty-handler", "4.1.80.Final").toString()));
+        assertTrue(directories.contains(projectMetadataDir.toAbsolutePath().normalize().toString()));
     }
 
     @Test
