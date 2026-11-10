@@ -648,6 +648,8 @@ val nativeImageRuntimeArgs = listOf(
     "--initialize-at-build-time=io.micronaut.core.util",
     "--initialize-at-build-time=io.micronaut.core.bind",
     "--initialize-at-build-time=io.micronaut.core.convert",
+    // ConversionService.SHARED retains this registrar through its converter lambdas.
+    "--initialize-at-build-time=io.micronaut.runtime.converters.time.TimeConverterRegistrar",
     "--initialize-at-build-time=io.micronaut.core.convert.ConversionContext",
     "--initialize-at-build-time=io.micronaut.core.convert.ImmutableArgumentConversionContext",
     "--initialize-at-build-time=io.micronaut.core.type",
