@@ -27,6 +27,7 @@ tasks {
     }
 
     processResources {
+        inputs.property("metadataVersion", libs.versions.graalvm.reachability.metadata)
         filesMatching("io/micronaut/pyronaut/nativebuild/metadata-version.txt") {
             expand("metadataVersion" to libs.versions.graalvm.reachability.metadata.get())
         }

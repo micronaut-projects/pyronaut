@@ -413,6 +413,7 @@ public final class PyronautNativeBuildMain implements Callable<Integer> {
             NativeImageConfigurationSupport.addBundledConfigurationExclusions(
                 configurationArguments, baseClasspath, metadataSelection.modules(), PyronautNativeBuildMain::gavFromClasspathEntry, verbose
             );
+            configurationDirs.addAll(metadataSelection.directories());
             configurationDirs.addAll(projectNativeImageConfigurationDirs(root.resolve(DEFAULT_CONFIG_DIR).normalize()));
         }
         PyronautNativeImageBuilder builder = new PyronautNativeImageBuilder(
