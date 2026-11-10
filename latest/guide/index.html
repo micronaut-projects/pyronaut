@@ -199,7 +199,7 @@
         <h1>Pyronaut</h1>
         <p></p>
         <p>Tools for Python + Micronaut integration</p>
-        <p><strong>Version:</strong> 0.1.1 </p>
+        <p><strong>Version:</strong> 0.1.2 </p>
     </div>
     
 <h1 id="introduction"><a class="anchor" href="#introduction"></a>1 Introduction</h1>
@@ -423,7 +423,7 @@ model on top of Micronaut.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install --upgrade 'pyronaut==0.1.1'
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install --upgrade 'pyronaut==0.1.2'
 pyronaut --version</code></pre>
 </div>
 </div>
@@ -434,8 +434,8 @@ directly from the release instead of PyPI, point <code>pip</code> at the release
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install --upgrade --no-index \
-  --find-links https://github.com/micronaut-projects/pyronaut/releases/expanded_assets/v0.1.1 \
-  'pyronaut==0.1.1'
+  --find-links https://github.com/micronaut-projects/pyronaut/releases/expanded_assets/v0.1.2 \
+  'pyronaut==0.1.2'
 pyronaut --version</code></pre>
 </div>
 </div>
@@ -516,7 +516,9 @@ See <a href="#pyronautCliV2">Pyronaut CLI Reference</a> for the full list of che
 </div>
 <div class="paragraph">
 <p>By default, setup resolves SDK dependencies from Maven Central. When the installed SDK is a snapshot build, setup also checks Sonatype Central&#8217;s snapshots repository for pre-release artifacts.
-Override the setup repositories globally in <code>~/.pyronaut/settings.toml</code>; an explicit list replaces these defaults:</p>
+Override the setup defaults globally in <code>~/.pyronaut/settings.toml</code>. An explicit
+<code>repositories</code> list replaces the defaults; <code>prepend-repositories</code> remains first
+even when a project supplies its own repository list:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -3902,7 +3904,8 @@ Context pooling, including the <code>@ContextPooled</code> scope, is experimenta
 <pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[micronaut.python.pool]
 enabled = true
 size = 8
-warn-wait = "2s"</code></pre>
+warn-wait = "2s"
+prestart = 1</code></pre>
 </div>
 </div>
 <div class="dlist">
@@ -3919,6 +3922,10 @@ warn-wait = "2s"</code></pre>
 <dd>
 <p>Log a warning when a request waits longer than this for a free context. Use it as the signal for tuning <code>size</code>.</p>
 </dd>
+<dt class="hdlist1"><code>prestart</code></dt>
+<dd>
+<p>The number of contexts to create on a background thread as soon as the application has started, at most <code>size</code>. Defaults to <code>1</code>, and to <code>0</code> when the <code>test</code> environment is active (for example under <code>pyronaut test</code>) unless you set it. <code>0</code> creates every context on demand.</p>
+</dd>
 </dl>
 </div>
 <div class="paragraph">
@@ -3932,6 +3939,17 @@ warn-wait = "2s"</code></pre>
 <pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[micronaut.python.pool]
 enabled = false</code></pre>
 </div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_the_first_request">The first request</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Preparing a GraalPy context takes far longer than serving a request: the interpreter starts and imports the runtime module every Python call goes through, which loads <code>asyncio</code> among others. Without pre-starting, the first request that needs a pooled context pays for that, about two seconds on the JVM for a small application. With the default <code>prestart = 1</code>, Pyronaut creates and warms up that context in the background right after startup, so a request that arrives a moment later finds it ready. A request that arrives while the context is still being created waits for it instead of creating a second one, and stopping the application during pre-start closes the context once it is built.</p>
+</div>
+<div class="paragraph">
+<p>Raise <code>prestart</code> up to <code>size</code> to have the whole pool ready before load arrives, at the cost of the memory those contexts hold whether or not traffic needs them. Set it to <code>0</code> to create every context on demand.</p>
 </div>
 </div>
 </div>
@@ -5751,7 +5769,9 @@ AppConfig(name="datasources.default.dialect", value="Oracle")</code></pre>
 <div class="sectionbody">
 <div class="paragraph">
 <p>Declare a repository with <code>MavenRepository("https://repository.example.com/maven/")</code> in Java or Python.
-Pyronaut uses Maven Central when you declare no repository; once you declare a repository, Pyronaut uses only the repositories you declare.</p>
+Pyronaut uses Maven Central when you declare no repository. Once you declare a
+repository, Pyronaut uses the repositories you declare plus any global
+<code>[maven].prepend-repositories</code> entries, which remain first.</p>
 </div>
 <div class="paragraph">
 <p>Pyronaut records resolved direct-source dependencies and the declaration fingerprint in <code><em>pyronaut</em></code> under the project directory (the current working directory unless you give <code>--project-dir</code>). The cached launch metadata includes command eligibility, sorted inline runtime configuration, and the positive or negative Test Resources decision. A subsequent launch with unchanged inputs reuses that cache.</p>
@@ -5768,12 +5788,24 @@ Pyronaut uses Maven Central when you declare no repository; once you declare a r
 </div>
 
 
+<div id="preamble">
+<div class="sectionbody">
 <div class="paragraph">
-<p>Pyronaut resolves Java dependencies through Apache Maven Resolver.</p>
+<p>Pyronaut resolves Java dependencies through Apache Maven Resolver. This includes
+project installation, direct-source execution, and the SDK dependencies resolved
+by <code>pyronaut setup</code>.</p>
 </div>
 <div class="paragraph">
-<p>Direct-source applications can instead use <code>MavenRepository</code>; see <a href="#directSourceDeclarations">Declaring Direct Source Dependencies</a>.
-Configure remote and local repositories in <code>[tool.pyronaut]</code>:</p>
+<p>Direct-source applications can declare <code>MavenRepository</code>; see
+<a href="#directSourceDeclarations">Declaring Direct Source Dependencies</a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_project_repositories">Project repositories</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Configure repositories for a project in <code>[tool.pyronaut]</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -5787,7 +5819,7 @@ repositories = [
 </div>
 </div>
 <div class="paragraph">
-<p>Supported entries:</p>
+<p>Supported entries are:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -5798,7 +5830,7 @@ repositories = [
 <p><code>mavenLocal</code>: the effective Maven local repository</p>
 </li>
 <li>
-<p><code><a href="https://&#8230;&#8203" class="bare">https://&#8230;&#8203</a>;</code>: a remote Maven repository URL</p>
+<p><code><a href="https://&#8230;&#8203" class="bare">https://&#8230;&#8203</a>;</code> or <code><a href="file://&#8230;&#8203" class="bare">file://&#8230;&#8203</a>;</code>: a remote or local Maven repository URL</p>
 </li>
 <li>
 <p>relative or absolute file paths: local Maven repository directories</p>
@@ -5806,32 +5838,287 @@ repositories = [
 </ul>
 </div>
 <div class="paragraph">
-<p>If <code>repositories</code> is omitted or empty, Pyronaut uses Maven Central. Pyronaut resolves relative file paths against the project directory.</p>
+<p>Relative project paths are resolved against the project directory. An explicit
+non-empty project list replaces the global default list, but global
+<code>prepend-repositories</code> entries are still searched first.</p>
 </div>
 <div class="paragraph">
-<p>When the configured Micronaut Core version or the installed Pyronaut SDK is a snapshot, Pyronaut additionally consults the Sonatype Central snapshots repository and the local Maven repository so that snapshot artifacts resolve. Set <code>PYRONAUT_SONATYPE_SNAPSHOTS=false</code> (or <code>-Dpyronaut.sonatype.snapshots.enabled=false</code>) to disable the snapshot repository.</p>
+<p><code>mavenLocal</code> is a source repository entry. It is separate from the install
+destination selected by <code>pyronaut install --local-repository</code>. By default, that
+destination is also Maven local, so many local development flows do not need to
+list <code>mavenLocal</code> explicitly. Use it when a dependency was published locally
+and no other configured repository provides it.</p>
 </div>
 <div class="paragraph">
-<p>The repositories above are project repositories used by <code>pyronaut install</code>.
-The global <code>pyronaut setup</code> command has a separate repository list in <code>~/.pyronaut/settings.toml</code>:</p>
+<p>If a project omits <code>repositories</code> (or leaves it empty), Pyronaut uses the
+non-empty <code>[maven].repositories</code> list from the user settings file. If that list
+is also omitted, Pyronaut uses Maven Central. Direct-source declarations use the
+same fallback when they do not declare a <code>MavenRepository</code>.</p>
+</div>
+<div class="paragraph">
+<p>Use <code>prepend-repositories</code> when a repository must be available even when a
+project declares its own repositories. Entries are searched in the listed order
+before the project repositories or the global default list. This is useful for
+a source-built repository in CI while retaining a fixture repository declared
+by the project:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+prepend-repositories = ["build/source-repository"]
 repositories = ["mavenCentral"]</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>If this global list is omitted, setup uses Maven Central and automatically adds the Sonatype Central snapshots repository when the installed Pyronaut SDK version is a snapshot.
-An explicit global list replaces those defaults.</p>
+<p>Relative prepend paths are resolved against the directory containing
+<code>settings.toml</code>; relative project paths continue to be resolved against the
+project directory. Pyronaut keeps the project repository identities stable so
+cached <code>_remote.repositories</code> provenance remains usable in offline mode.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_global_repositories">Global repositories</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The global settings file is <code>settings.toml</code> in Pyronaut&#8217;s configuration
+directory (normally <code>~/.pyronaut</code>; with the XDG layout it is
+<code>$XDG_CONFIG_HOME/pyronaut</code>). Configure shared defaults with <code>[maven]</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+repositories = [
+  "mavenCentral",
+  "https://repo.example.com/snapshots/"
+]</code></pre>
+</div>
 </div>
 <div class="paragraph">
-<p><code>mavenLocal</code> is a source repository entry.
-It is separate from the install destination selected by <code>pyronaut install --local-repository</code>.
-By default, the install destination is also Maven local, so many local development flows do not need to list <code>mavenLocal</code> explicitly.</p>
+<p><code>pyronaut setup</code> uses this list for SDK resolution. Relative paths in this list
+and in <code>prepend-repositories</code> are resolved against the directory containing
+<code>settings.toml</code>, not the project directory.</p>
 </div>
 <div class="paragraph">
-<p>Use <code>mavenLocal</code> when you published the dependency locally and no other configured repository provides it.</p>
+<p>When project, direct-source, or SDK resolution falls back to the automatic
+defaults, snapshot resolution also consults the local Maven repository and the
+Sonatype Central snapshots repository. A non-empty global list used as that
+fallback replaces the defaults and suppresses the automatic Sonatype addition;
+include the snapshots URL yourself when it is needed. An explicit project
+repository list retains the existing automatic snapshot behavior. Set
+<code>PYRONAUT_SONATYPE_SNAPSHOTS=false</code> (or
+<code>-Dpyronaut.sonatype.snapshots.enabled=false</code>) to disable automatic snapshot
+lookup.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_mirrors">Mirrors</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Add Maven mirror rules as repeatable <code><a id="maven.mirrors"></a></code> tables. The <code>mirror-of</code>
+value uses Maven Resolver&#8217;s matching syntax: comma-separated repository IDs,
+<code>external:*</code> for external repositories, <code>*</code> for every repository, and <code>!id</code> to
+exclude an ID.</p>
+</div>
+<div class="paragraph">
+<p>For example, this configuration keeps a local pipeline fixture available while
+mirroring external repositories:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+repositories = [
+  "file:///opt/build/maven-repository",
+  "mavenCentral"
+]
+
+[[maven.mirrors]]
+id = "company-mirror"
+url = "https://maven.example.org/mirror/"
+mirror-of = "external:*"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>external:*</code> does not match local <code>file://</code> repositories. To mirror only Maven
+Central and leave an external pipeline URL alone, use the repository IDs
+explicitly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[[maven.mirrors]]
+id = "central-mirror"
+url = "https://maven.example.org/mirror/"
+mirror-of = "mavenCentral,central"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Mirrors apply both to repositories configured as resolution roots and to
+repositories discovered from POM files. A mirror changes the repository used
+for resolution; it does not change the repository declarations in the project
+or POM.</p>
+</div>
+<div class="paragraph">
+<p>An explicit <code>--lock-repository</code> takes precedence over global repository defaults
+and mirror rules. See <a href="#dependencyLocking">Locking Maven Dependencies</a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_repository_credentials">Repository credentials</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Configure HTTP Basic credentials in user settings with <code><a id="maven.credentials"></a></code>.
+Each entry applies to one repository URL, including its path:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[[maven.credentials]]
+url = "https://maven.example.org/repository/private/"
+username-env = "PYRONAUT_MAVEN_USERNAME"
+password-env = "PYRONAUT_MAVEN_PASSWORD"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Provide the named environment variables through your shell or CI secret settings.
+For literal values, use <code>username</code> and <code>password</code> instead of the corresponding
+<code>-env</code> fields. Each field must select exactly one source. Tokens can be supplied
+as the password when the repository supports token-based HTTP Basic authentication.</p>
+</div>
+<div class="paragraph">
+<p>Credentials are selected using the effective repository URL after mirror selection.
+For an authenticated mirror, configure its URL in the credentials entry. Matching
+ignores trailing slashes. Separate repository roots on the same host need separate
+entries. This applies to project, SDK, native-classpath,
+and direct-source resolution, including repositories discovered from POM files.</p>
+</div>
+<div class="paragraph">
+<p>Environment variables are read only for matching repositories during online
+resolution. Missing variables produce a configuration error; offline resolution
+of cached artifacts does not require them. Secret environment values are not
+added to cache fingerprints or SDK metadata, so rotating a secret does not
+invalidate already cached artifacts.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_maven_resolution_policy">Maven resolution policy</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The global Maven table can also control retries and versions for application
+resolution:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+retry-count = 2
+
+[maven.version-overrides]
+"org.example:example-library" = "1.2.3"</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>retry-count</code> is the maximum number of HTTP retries after the initial attempt;
+zero disables retries. Omitting it retains Maven Resolver&#8217;s default retry policy.
+Version overrides use exact
+<code>group:artifact</code> module keys and apply to managed, explicitly declared, and
+transitive application dependencies. SDK and native compiler descriptors carry
+exact versions by design; rebuild those descriptors from the Gradle version
+catalogs when changing their versions. For Graal build tests, supply overrides
+for every GraalPy, Truffle, and SDK module that must use the pipeline version.</p>
+</div>
+<div class="paragraph">
+<p>For a CI bundle, a trusted lock can verify selected Maven groups independently
+of the project&#8217;s <code>pyronaut.lock</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-toml hljs" data-lang="toml">[maven]
+prepend-repositories = ["/ci/build/source-repository"]
+repositories = ["mavenCentral"]
+retry-count = 2
+
+[[maven.mirrors]]
+id = "ci-central"
+url = "https://maven.example.org/central/"
+mirror-of = "mavenCentral,central"
+
+[maven.version-overrides]
+"org.graalvm.python:python-language" = "25.5.5"
+
+[maven.verification]
+lock-file = "/trusted/bundle/pyronaut.lock"
+groups = ["org.graalvm.*"]</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Verification requires every resolved JAR and POM in the selected groups to be
+listed with its SHA-256 in the trusted lock. Sources and Javadoc are optional editor artifacts and are
+not required. When verification is active, warm dependency-graph shortcuts are
+disabled: cached Maven files are checked on every invocation, while matching
+files are reused without downloading them. The bundle pipeline must supply a
+fresh trusted lock generated from its source-built artifacts, using the
+<a href="#dependencyLocking">existing lock file format</a>. Include all selected groups
+used by the gate, including SDK and native compiler artifacts. Never promote a
+lock recorded from the test cache to the bundle&#8217;s checksum authority. Use an isolated local repository
+for bundles that reuse coordinates. The raw trusted lock is part of the cache
+fingerprint. Verification establishes checksum identity; it does not preserve
+the artifact&#8217;s original transport origin. Group selectors are exact group IDs
+or prefixes ending in <code>.*</code>. A normalized <code>-SNAPSHOT</code> cache entry requires a
+single matching timestamp in the trusted lock; ambiguous entries fail verification.</p>
+</div>
+<div class="paragraph">
+<p>When verification is active, installation records the resolved coordinates and local file paths in
+<code><em>pyronaut</em>/verified-maven-artifacts.json</code>. The versioned JSON report includes
+the Maven settings fingerprint and the POMs used to build the dependency graph.
+Cached commands, including <code>--no-install</code>, use these identities to recheck the
+selected files against the trusted lock. Run <code>pyronaut install</code> if the report is
+missing or the Maven settings changed. The report describes the local resolution;
+the bundle&#8217;s trusted lock remains the checksum authority.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_settings_caches_and_isolation">Settings, caches, and isolation</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The settings file and its directory are part of the Java/Python install and SDK
+resolution cache fingerprints. Editing any section of <code>settings.toml</code> invalidates
+those cache entries. Run <code>pyronaut install</code> again for a project; if setup is reported stale, run
+<code>pyronaut setup</code> (use <code>--refresh</code> to force re-resolution).</p>
+</div>
+<div class="paragraph">
+<p>When a repository rebuilds an artifact under the same coordinates, use
+<code>--refresh</code>. For separate bundles that reuse coordinates, use an isolated local
+repository per bundle, for example:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut install --refresh --local-repository .pyronaut-m2/bundle-a</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>To isolate the configuration and SDK state for a complete command or test gate,
+set <code>PYRONAUT_HOME</code> to a separate directory. Child Java, launcher, and Python
+processes inherit the resulting state locations:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">export PYRONAUT_HOME="$PWD/.gate-pyronaut"
+mkdir -p "$PYRONAUT_HOME"
+# Save the repository configuration above in "$PYRONAUT_HOME/settings.toml".
+pyronaut setup</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>These settings configure Pyronaut&#8217;s embedded Maven Resolver. Gradle repositories
+remain independently configured in the Gradle build. Pyronaut does not import
+mirrors or server credentials from Maven <code>settings.xml</code>; it only uses an
+active Maven proxy from <code>~/.m2/settings.xml</code> as the proxy fallback when no
+environment or Pyronaut proxy is configured. See <a href="#proxyConfig">Proxy
+Configuration</a>.</p>
+</div>
+</div>
 </div>
 
 <h2 id="dependencyLocking"><a class="anchor" href="#dependencyLocking"></a>9.10 Locking Maven Dependencies</h2>
@@ -6545,6 +6832,64 @@ custom base instead, name it: <code>--native-base=&lt;path&gt;</code> for a whee
 </div>
 </div>
 <div class="sect1">
+<h2 id="packaged-python-dependencies">Python runtime dependencies</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Pyronaut installs declared Python runtime dependencies during <code>pyronaut build</code>
+and includes the installed packages in the deployment artifact. The application
+imports them normally, and startup does not run <code>pip install</code> or <code>uv sync</code>.
+Rebuild the artifact after changing its runtime dependencies.</p>
+</div>
+<div class="paragraph">
+<p>For pip projects, Pyronaut installs <code>[project].dependencies</code> from
+<code>pyproject.toml</code> together with <code>requirements.txt</code>, when present, using the
+SDK&#8217;s matching GraalPy interpreter. For example, a project&#8217;s <code>requirements.txt</code>
+can contain:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-text hljs" data-lang="text">idna==3.10</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The packaged application can then use <code>import idna</code> without installing <code>idna</code>
+on the deployment machine separately. Referenced requirements and constraints
+files, relative local packages, and local <code>--find-links</code> wheel directories are
+included as build inputs. Editable local dependencies become ordinary installs
+so they do not refer to temporary build directories at runtime.</p>
+</div>
+<div class="paragraph">
+<p>For uv projects, Pyronaut uses the committed <code>uv.lock</code> and runs
+<code>uv sync --locked --no-dev --no-default-groups --no-install-project --no-editable</code>
+with GraalPy. Keep the lockfile up to date before building. Workspace members
+and relative <code>[tool.uv.sources]</code> paths are included. uv projects resolve their
+runtime dependencies through the lockfile and do not read <code>requirements.txt</code>.</p>
+</div>
+<div class="paragraph">
+<p>Packaging creates a fresh environment from these declarations; it does not
+copy the development <code>.venv</code>. It does not automatically include
+<code>requirements-test.txt</code>, implicit <code>pytest</code>, or development dependency groups.
+Packages explicitly declared as runtime dependencies are still included.
+Local dependency paths and included requirements files must use relative paths
+and remain within the project or uv workspace.</p>
+</div>
+<div class="paragraph">
+<p>JAR and wheel builds need the matching GraalPy interpreter on the build machine;
+run <code>pyronaut setup</code> to provision it. uv must also be available on <code>PATH</code> when
+building these artifacts from a uv project. Generated Dockerfiles provision
+GraalPy and, for uv projects, uv inside the dependency build stage.</p>
+</div>
+<div class="paragraph">
+<p>Python dependencies are resolved for the build platform. Wheels containing
+Python packages have platform-specific tags, even when the packages are pure
+Python, because dependency markers are evaluated during the build. Build wheels
+for the target operating system and architecture. JARs containing native Python
+extensions have the same platform constraint. Docker builds resolve dependencies
+for Linux inside the image build.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
 <h2 id="_runnable_fat_jars">Runnable fat JARs</h2>
 <div class="sectionbody">
 <div class="paragraph">
@@ -6565,6 +6910,14 @@ Java equivalents. The command supports Pyronaut projects, direct Java or Python
 sources, and external Maven or Gradle projects.</p>
 </div>
 <div class="paragraph">
+<p>For <code>fat-jar</code>, installed Python packages are embedded in the application&#8217;s
+GraalPy virtual filesystem inside the JAR. The bundled GraalPy runtime loads
+them when the application imports them. The deployment machine needs the
+compatible JDK, but no separate Python installation, Pyronaut SDK, virtual
+environment, or dependency installation step. An activated host virtual
+environment does not override the embedded packages.</p>
+</div>
+<div class="paragraph">
 <p>The outer JAR contains a small launcher plus an indexed <code>PYRONAUT-INF</code> layout.
 Application classes and resources precede dependencies, followed by dependency
 roots in resolved-classpath order. Duplicate classes use first-root-wins
@@ -6574,6 +6927,10 @@ bean and service markers into <code>META-INF/micronaut/</code> at the archive ro
 Micronaut&#8217;s classpath scanning finds them. The launcher preserves multi-release JAR
 selection and package manifest metadata such as sealing. It reads entries directly
 from the artifact and does not extract them to disk.</p>
+</div>
+<div class="paragraph">
+<p>GraalPy may extract native Python extensions to temporary files when loading
+them; this is separate from the JAR launcher&#8217;s handling of Java dependencies.</p>
 </div>
 <div class="paragraph">
 <p>The packager produces reproducible artifacts by using deterministic entry ordering and timestamps and omitting source
@@ -6599,6 +6956,29 @@ wheel carries the processed application and its runtime launch support; the
 deployment environment must provide a compatible GraalVM JDK.</p>
 </div>
 <div class="paragraph">
+<p>For <code>wheel-jvm</code>, the installed Python packages are embedded in the application&#8217;s
+GraalPy virtual filesystem in the wheel. Installing the wheel copies those
+packages along with the application. It does not install them as separate
+dependencies into the target Python interpreter&#8217;s environment.</p>
+</div>
+<div class="paragraph">
+<p>For a project named <code>hello-pyronaut</code> with version <code>0.1.0</code>, install the matching
+Pyronaut SDK in the target Python environment as described in
+<a href="#installation">Installing Pyronaut</a>, then install and run the application wheel:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">python3 -m pip install dist/hello_pyronaut-0.1.0-*.whl
+hello-pyronaut</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The target Python interpreter runs the console launcher, which uses the
+Pyronaut SDK to locate or provision the JDK. The application and its dependencies
+run on GraalPy in the JVM. An activated host virtual environment does not replace
+the application&#8217;s embedded packages.</p>
+</div>
+<div class="paragraph">
 <p>Use Docker when the deployment platform expects an OCI image:</p>
 </div>
 <div class="listingblock">
@@ -6610,18 +6990,39 @@ deployment environment must provide a compatible GraalVM JDK.</p>
 <p>The default Dockerfile stages the processed classes, application resources,
 resolved runtime dependencies, and the appropriate production launcher.</p>
 </div>
+<div class="paragraph">
+<p>For <code>docker-jvm</code>, a separate Linux build stage installs the Python packages in
+a GraalPy virtual environment. The final image includes that environment and
+the matching GraalPy installation, and sets <code>VIRTUAL_ENV</code> so the JVM&#8217;s embedded
+GraalPy uses the installed packages. The container requires no Python package
+installation at startup. See <a href="#docker-python-dependencies">Python dependencies in Docker images</a>
+for the shared behavior of all generated Docker formats.</p>
+</div>
 </div>
 </div>
 <div class="sect1">
 <h2 id="_application_native_images">Application native images</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Native builds create <code><em>pyronaut</em>/native/application</code> by default:</p>
+<p><code>wheel-native</code> builds produce a platform-specific wheel in <code>dist/</code> and stage
+the executable under <code><em>pyronaut</em>/native/&lt;project-name&gt;</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut build --native</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>Python runtime dependencies are installed and added to the application&#8217;s
+GraalPy virtual filesystem before native-image compilation. They remain Python
+packages loaded by the embedded GraalPy runtime. The wheel includes the
+application resources, native executable, and its required GraalPy language
+resources.</p>
+</div>
+<div class="paragraph">
+<p>Install and run the wheel with <code>pip</code> and the generated console command, as for
+a JVM wheel. A Python interpreter is needed for the wheel&#8217;s console launcher;
+the native application does not require a separate JDK or GraalPy installation.</p>
 </div>
 <div class="paragraph">
 <p>Native images offer fast startup and low memory consumption, which is useful
@@ -6645,6 +7046,37 @@ builder image:</p>
 <div class="listingblock">
 <div class="content">
 <pre class="highlightjs highlight"><code class="language-bash hljs" data-lang="bash">pyronaut build --native --docker</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>docker-native</code> installs the Python packages in a separate Linux dependency
+stage. Both the native build stage and the final runtime image use the resulting
+GraalPy environment. The final container launches the native executable directly
+and requires no JDK or Python package installation at startup.</p>
+</div>
+<div class="sect2">
+<h3 id="docker-python-dependencies">Python dependencies in Docker images</h3>
+<div class="paragraph">
+<p>Generated <code>docker-jvm</code>, <code>docker-native</code>, and <code>docker-crema</code> images all use the
+same dependency installation stage. It downloads the SDK&#8217;s matching GraalPy
+with checksum verification and installs the declared runtime packages with pip
+or locked uv sync. Its C/C++ compiler can build packages without a compatible
+GraalPy wheel. Packages requiring additional system libraries or build tools
+need a custom Dockerfile.</p>
+</div>
+<div class="paragraph">
+<p>The final image contains the GraalPy installation, virtual environment, and
+required interpreter libraries. The compiler and uv executable stay in the
+dependency build stage. uv is included in that stage for uv projects, even if
+it is unavailable on the host. The host development <code>.venv</code> is not copied.</p>
+</div>
+<div class="paragraph">
+<p>Generated images with Python dependencies need a glibc runtime. <code>--static</code>
+fails with an explanation when runtime Python dependencies are declared.
+Custom Dockerfiles remain responsible for installing Python dependencies.
+Their temporary <code>app/</code> context includes top-level <code>pyproject.toml</code>,
+<code>requirements.txt</code>, <code>uv.lock</code>, and <code>uv.toml</code> when present; automatic dependency
+installation and recursive source staging apply to generated Dockerfiles.</p>
 </div>
 </div>
 </div>
@@ -6675,8 +7107,20 @@ included in a custom base. The first invocation resolves the configured
 the bundle matching the current operating system and architecture; a Docker
 build selects the Linux bundle matching the current architecture. Pyronaut
 chooses <code>pyronaut-run</code> for Java projects and <code>pyronaut-run-python</code> for Python
-projects.
-Pyronaut resolves the bundle using <code>[native-images]</code> in
+projects.</p>
+</div>
+<div class="paragraph">
+<p>For <code>wheel-crema</code>, every application build installs its declared Python runtime
+dependencies and embeds them in the application&#8217;s GraalPy virtual filesystem
+in the wheel. The reusable base supplies GraalPy; the application wheel carries
+its Python packages. Rebuild the application wheel after changing those
+packages. Installing the wheel copies them with the application, and the native
+runtime loads them without a package installation step at startup. The target
+Python interpreter runs the wheel&#8217;s console launcher; no separate JDK or
+GraalPy installation is required to run the native application.</p>
+</div>
+<div class="paragraph">
+<p>Pyronaut resolves the bundle using <code>[native-images]</code> in
 <code>~/.pyronaut/settings.toml</code>, including its configured repository, version,
 proxy, and authentication settings. Pyronaut reuses a valid bundle already cached under
 <code>~/.pyronaut</code>; otherwise it downloads the bundle with progress reporting.</p>
@@ -6708,8 +7152,8 @@ native-base = "default"</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>When the application&#8217;s dependencies should be compiled into the runtime, build
-a custom base by giving it a path, relative to the project directory:</p>
+<p>When the application&#8217;s Java runtime dependencies should be compiled into the
+runtime, build a custom base by giving it a path, relative to the project directory:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -6732,7 +7176,7 @@ native-base = "build/pyronaut-base/pyronaut-run-python"</code></pre>
 </div>
 <div class="paragraph">
 <p>Later builds reuse the configured native base without rebuilding it. Run
-<code>pyronaut build --native-base=&lt;path&gt;</code> again after changing the dependencies
+<code>pyronaut build --native-base=&lt;path&gt;</code> again after changing the Java dependencies
 that the base should contain:</p>
 </div>
 <div class="listingblock">
@@ -6806,9 +7250,15 @@ base-image = "registry.example.com/acme/pyronaut-runtime:1"</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>The final image then adds only the application configuration, processed
-classes, and schemas on top of the shared production runtime layer. For a
-custom layering arrangement, see <a href="#custom-dockerfiles">Custom Dockerfiles with a reusable base</a>.</p>
+<p>For <code>docker-crema</code>, the application image also installs its declared Python
+runtime dependencies through the shared Linux dependency stage. The final
+image adds the GraalPy installation and virtual environment alongside the
+application configuration, processed classes, and schemas on top of the shared
+production runtime layer. <code>VIRTUAL_ENV</code> selects those packages when the Crema
+runtime starts; there is no <code>pip install</code> or <code>uv sync</code> at startup. Rebuilding
+the application image updates its Python packages without adding them to the
+reusable base image. For a custom layering arrangement, see
+<a href="#custom-dockerfiles">Custom Dockerfiles with a reusable base</a>.</p>
 </div>
 <div class="sect2">
 <h3 id="native-base-pgo">Profile-guided optimization</h3>
@@ -6892,6 +7342,12 @@ native base&#8217;s SBOM. A direct-source build with <code>--native-base=&lt;pat
 builds the custom base but does not record it, because the staged
 project is regenerated for every build; add the setting to the
 <code>--setup</code> file to reuse it.</p>
+</div>
+<div class="paragraph">
+<p>For direct-source Python builds, declare runtime Python packages in the setup
+file&#8217;s <code>[project].dependencies</code>. Use a project build when dependency resolution
+needs <code>requirements.txt</code>, <code>uv.lock</code>, or workspace-relative local sources; the
+direct-source flow stages the setup file rather than the complete project.</p>
 </div>
 </div>
 </div>
@@ -8288,7 +8744,9 @@ Pyronaut writes validated state atomically below <code>~/.pyronaut/setup</code>.
 </div>
 <div class="paragraph">
 <p>The default remote repository is Maven Central. Snapshot SDK versions also use <code><a href="https://central.sonatype.com/repository/maven-snapshots/" class="bare">https://central.sonatype.com/repository/maven-snapshots/</a></code>.
-Configure a replacement list in <code>~/.pyronaut/settings.toml</code>:</p>
+Configure a replacement default list in <code>~/.pyronaut/settings.toml</code>; use
+<code>prepend-repositories</code> when a repository must remain first for projects with
+explicit repository lists:</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -8640,7 +9098,8 @@ deterministic and uses plain summary lines without cursor-control sequences.</p>
 </div>
 <div class="paragraph">
 <p><code>pyronaut setup</code> and <code>pyronaut install</code> use the configured proxy for Maven dependency resolution; setup also applies it to GraalVM, GraalPy, and native-launcher downloads.
-This includes dependencies resolved from the global <code>[maven].repositories</code> list and project <code>tool.pyronaut.repositories</code>.
+This includes dependencies resolved from global <code>[maven]</code> repositories,
+including <code>prepend-repositories</code>, and project <code>tool.pyronaut.repositories</code>.
 Pyronaut discovers proxy configuration in this order:</p>
 </div>
 <div class="olist arabic">
@@ -9495,6 +9954,14 @@ distributions.</p>
 <p>When <code>--static</code> is present, the generated Dockerfile adds <code>--static --libc=musl</code> and uses <code>tool.pyronaut.build.docker.static-native-builder-image</code> plus <code>tool.pyronaut.build.docker.static-native-base-image</code>.</p>
 </li>
 </ul>
+</div>
+<div class="sect3">
+<h4 id="_python_dependencies_in_deployment_artifacts">Python dependencies in deployment artifacts</h4>
+<div class="paragraph">
+<p>See <a href="#packaged-python-dependencies">Python runtime dependencies</a> for pip and uv
+build inputs, how each packaging format carries installed packages, deployment
+requirements, and platform constraints.</p>
+</div>
 </div>
 <div class="sect3">
 <h4 id="_reusable_crema_base_images">Reusable Crema base images</h4>

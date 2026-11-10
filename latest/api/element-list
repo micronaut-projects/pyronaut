@@ -16,6 +16,7 @@ io.micronaut.pyronaut.nativebuild
 io.micronaut.pyronaut.processor
 io.micronaut.pyronaut.requests
 io.micronaut.pyronaut.run
+io.micronaut.pyronaut.run.python
 io.micronaut.pyronaut.test
 io.micronaut.pyronaut.testresources
 io.micronaut.pyronaut.tui
