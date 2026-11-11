@@ -9744,7 +9744,40 @@ def _is_supported_project_platform(platform_name: str) -> bool:
 def _print_usage(stream=None) -> None:
     if stream is None:
         stream = sys.stdout
-    stream.write("Usage: pyronaut [--version] [--allow-draft-release] [--tui [--smoke|--non-interactive]] <setup|update|doctor|clean|install|lock|process|dev|run|test|build|create|validate-config|test-resources-server> [args...]\n")
+    commands = [
+        ("setup", "Provision the SDK and toolchain."),
+        ("update", "Install a Pyronaut release and provision its SDK."),
+        ("doctor", "Check the environment and suggest fixes."),
+        ("clean", "Remove processed classes and compiler caches."),
+        ("create", "Create a new Python application."),
+        ("install", "Resolve dependencies and generate editor support."),
+        ("lock", "Lock Maven artifacts and checksums in pyronaut.lock."),
+        ("process", "Generate classes and Micronaut metadata from sources."),
+        ("dev", "Run in development mode with automatic restarts."),
+        ("run", "Run an application or direct Java/Python sources."),
+        ("test", "Run JUnit and pytest tests."),
+        ("build", "Build a fat JAR, Python wheel, or Docker image."),
+        ("validate-config", "Validate application configuration."),
+        ("test-resources-server", "Start, check, or stop the Test Resources server."),
+    ]
+    options = [
+        ("-h, --help", "Show this help message and exit."),
+        ("-V, --version", "Show version information and exit."),
+        ("--tui", "Open the terminal UI (--smoke or --non-interactive)."),
+        ("--allow-draft-release", "Allow draft GitHub release assets."),
+    ]
+    color = _help_color_enabled(stream)
+    width = max(len(name) for name, _ in commands + options)
+    padded_width = width + _help_color_extra(color)
+
+    stream.write("Pyronaut — Python applications powered by Micronaut\n\n")
+    stream.write("Usage: pyronaut [options] <command> [args...]\n")
+    for heading, entries in [("Commands", commands), ("Options", options)]:
+        stream.write(f"\n{heading}:\n")
+        for name, description in entries:
+            label = _help_option(name, color)
+            stream.write(f"  {label:<{padded_width}}  {description}\n")
+    stream.write("\nRun 'pyronaut <command> --help' for command-specific help.\n")
 
 
 def _print_create_usage(stream=None) -> None:

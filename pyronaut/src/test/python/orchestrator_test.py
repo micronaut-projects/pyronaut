@@ -2,6 +2,7 @@ import importlib.util
 import hashlib
 import io
 import os
+import re
 import signal
 import subprocess
 import shutil
@@ -278,6 +279,70 @@ class OrchestratorTest(unittest.TestCase):
     def test_unknown_command_returns_usage_error(self):
         exit_code = cli.run(["unknown"], runner=self._runner_ok(), resolver=self._resolver(), platform_name="linux")
         self.assertEqual(cli.USAGE_ERROR, exit_code)
+
+    def test_top_level_help_lists_supported_commands(self):
+        stdout = io.StringIO()
+        cli._print_usage(stdout)
+        text = stdout.getvalue()
+
+        self.assertIn("Usage: pyronaut", text)
+        self.assertIn("\nCommands:\n", text)
+        self.assertIn("\nOptions:\n", text)
+        self.assertIn("Resolve dependencies and generate editor support.", text)
+        self.assertIn("command-specific help", text)
+        self.assertNotIn("\033[", text)
+        command_section = text.split("\nCommands:\n", 1)[1].split("\nOptions:\n", 1)[0]
+        listed_commands = {
+            line.split()[0] for line in command_section.splitlines() if line.strip()
+        }
+        self.assertEqual(cli.SUPPORTED_COMMANDS, listed_commands)
+
+    def test_top_level_help_preserves_exit_codes_without_delegating(self):
+        for args, expected_code in [([], cli.USAGE_ERROR), (["--help"], cli.SUCCESS), (["-h"], cli.SUCCESS)]:
+            with self.subTest(args=args):
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                runner = Mock()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    exit_code = cli.run(args, runner=runner)
+
+                self.assertEqual(expected_code, exit_code)
+                self.assertIn("\nCommands:\n", stdout.getvalue())
+                self.assertEqual("", stderr.getvalue())
+                runner.assert_not_called()
+
+    def test_top_level_help_for_unknown_command_uses_stderr(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        runner = Mock()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = cli.run(["unknown"], runner=runner)
+
+        self.assertEqual(cli.USAGE_ERROR, exit_code)
+        self.assertEqual("", stdout.getvalue())
+        self.assertIn("Unknown command: unknown", stderr.getvalue())
+        self.assertIn("\nCommands:\n", stderr.getvalue())
+        runner.assert_not_called()
+
+    def test_top_level_help_colors_labels_only_when_enabled(self):
+        class TtyStringIO(io.StringIO):
+            def isatty(self):
+                return True
+
+        with patch.dict(os.environ):
+            os.environ.pop("NO_COLOR", None)
+            stdout = TtyStringIO()
+            cli._print_usage(stdout)
+            colored = stdout.getvalue()
+            self.assertIn("\033[33msetup\033[0m", colored)
+            self.assertIn("\033[33m-h, --help\033[0m", colored)
+
+            os.environ["NO_COLOR"] = "1"
+            stdout = TtyStringIO()
+            cli._print_usage(stdout)
+            plain = stdout.getvalue()
+            self.assertNotIn("\033[", plain)
+            self.assertEqual(re.sub(r"\033\[[0-9;]*m", "", colored), plain)
 
     def test_jvm_delegate_strips_orchestrator_only_options(self):
         self.assertEqual(
