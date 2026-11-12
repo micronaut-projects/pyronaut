@@ -9,6 +9,8 @@ dependencies {
     annotationProcessor(mnPicocli.picocli.codegen)
 
     implementation(project(":micronaut-pyronaut-config-model"))
+    // the curated modules (from pyronaut import http, ...) the editor stubs describe
+    implementation(project(":micronaut-pyronaut-imports"))
     implementation(project(":micronaut-pyronaut-direct-source"))
     implementation(mnSerde.micronaut.serde.jackson)
     implementation(mnPicocli.picocli)
