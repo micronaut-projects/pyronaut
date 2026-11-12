@@ -26,6 +26,7 @@ import io.micronaut.pyronaut.test.PyronautTestMain;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -73,6 +74,14 @@ public final class PyronautTestReload extends MicronautDevMain {
      * The test engines that run, by identifier, separated by commas: {@code tool.pyronaut.test.engine}.
      */
     static final String ENGINES_PROPERTY = "pyronaut.dev.test.engines";
+    /**
+     * Set by the CLI on the native image's test command to run it in test mode, in process.
+     */
+    static final String TEST_RELOAD_PROPERTY = "pyronaut.test.reload";
+    /**
+     * The application's Python source root, whose modules the test runner patches rather than imports again.
+     */
+    static final String PYTHON_SOURCES_PROPERTY = "pyronaut.dev.test.python-sources";
 
     private static final String TEST_DIR = "test";
     private static final String CLASSES_DIR = "classes";
@@ -124,11 +133,48 @@ public final class PyronautTestReload extends MicronautDevMain {
         Path manifest = prepare(layout, arguments.tests());
         System.setProperty(EVENTS_PROPERTY, layout.reports().resolve("events.ndjson").toString());
         System.setProperty(PROJECT_DIR_PROPERTY, root.toString());
+        System.setProperty(PYTHON_SOURCES_PROPERTY, layout.python().toString());
         System.setProperty(TESTS_ROOT_PROPERTY, relative(root, layout.pythonTests()));
         System.setProperty(APPLICATION_MAIN_PROPERTY, PyronautTestMain.applicationMain(layout.pythonTests()));
         System.setProperty(ENGINES_PROPERTY, String.join(",", engines(model.pyronaut().test().engine())));
         int status = new PyronautTestReload().runForStatus(new String[] {MANIFEST_OPTION, manifest.toString()});
+        if (status == RELAUNCH) {
+            // the generation budget is spent: the marker tells the CLI that the runtime, not a test, asks for a new process
+            Path marker = manifest.resolveSibling(PyronautDevReload.RELAUNCH_MARKER);
+            try {
+                Files.writeString(marker, "generation budget spent\n", StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                System.err.println("Cannot mark the relaunch in " + marker + ": " + e.getMessage());
+                return TESTS_FAILED;
+            }
+            return RELAUNCH;
+        }
         return status == 0 ? 0 : TESTS_FAILED;
+    }
+
+    /**
+     * Whether the CLI asked the native image's test command for test mode, {@code -Dpyronaut.test.reload=true}.
+     *
+     * @return True when the tests run continuously in this process
+     */
+    static boolean isRequested() {
+        return Boolean.getBoolean(TEST_RELOAD_PROPERTY);
+    }
+
+    /**
+     * Runs {@link #runTests(String[])} for the native image's test command, which reports a failure as a status.
+     *
+     * @param args The arguments
+     * @return The status
+     */
+    static int runTestsReportingFailures(String[] args) {
+        try {
+            return runTests(args);
+        } catch (Exception e) {
+            System.err.println("pyronaut test -t failed: " + e.getMessage());
+            e.printStackTrace(System.err);
+            return TESTS_FAILED;
+        }
     }
 
     /**
@@ -154,11 +200,16 @@ public final class PyronautTestReload extends MicronautDevMain {
         DevReloadFiles.deleteRecursively(pyronautDir.resolve(TEST_SOURCES_DIR));
         Files.createDirectories(layout.reports());
         Path devDir = Files.createDirectories(pyronautDir.resolve(DevReloadFiles.DEV_DIR).resolve(TEST_DIR));
+        Files.deleteIfExists(devDir.resolve(PyronautDevReload.RELAUNCH_MARKER));
+        List<Path> buildDependencies = DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST));
         return writeManifest(layout, devDir,
             DevReloadFiles.readLines(pyronautDir.resolve(RUNTIME_DEPENDENCIES_MANIFEST)),
             DevReloadFiles.readLines(pyronautDir.resolve(TEST_DEPENDENCIES_MANIFEST)),
-            DevReloadFiles.readLines(pyronautDir.resolve(DevReloadFiles.BUILD_DEPENDENCIES_MANIFEST)),
-            DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)),
+            // in a native image the processors the image holds run from it, as pyronaut process runs them there
+            DevReloadFiles.withoutNativeProvidedArtifacts(buildDependencies),
+            DevReloadFiles.withOpenApiAdoc(
+                DevReloadFiles.withPythonBytecode(DevReloadFiles.readStrings(pyronautDir.resolve(DevReloadFiles.PROCESSOR_OPTIONS)), layout.pythonBytecode()),
+                buildDependencies),
             options(pyronautDir),
             filterPatterns(tests));
     }
@@ -313,6 +364,7 @@ public final class PyronautTestReload extends MicronautDevMain {
      * @param testResources The test resource directories
      * @param reports The test reports
      * @param reportPath The path the LiveReload server serves the live HTML report at
+     * @param pythonBytecode Whether the build compiles Python modules to bytecode
      */
     record Layout(Path root,
                   Path classes,
@@ -325,7 +377,8 @@ public final class PyronautTestReload extends MicronautDevMain {
                   List<Path> additional,
                   List<Path> testResources,
                   Path reports,
-                  String reportPath) {
+                  String reportPath,
+                  boolean pythonBytecode) {
 
         static Layout of(Path root, PyprojectModel model) {
             PyprojectModel.Sources sources = model.pyronaut().sources();
@@ -350,7 +403,8 @@ public final class PyronautTestReload extends MicronautDevMain {
                 List.copyOf(additional),
                 List.copyOf(testResources),
                 pyronautDir.resolve(REPORTS_DIR),
-                model.pyronaut().test().reportPathOrDefault());
+                model.pyronaut().test().reportPathOrDefault(),
+                Boolean.TRUE.equals(model.pyronaut().build().pythonBytecodeEnabled()));
         }
     }
 
