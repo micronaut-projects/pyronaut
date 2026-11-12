@@ -174,7 +174,7 @@ tasks.named<Test>("test") {
     // classpath, so package implementation metadata is not available there.
     // Pass the Gradle project version explicitly for snapshot BOM resolution.
     systemProperty("pyronaut.version", project.version.toString())
-    dependsOn(project(":micronaut-pyronaut").tasks.named("prepareSdkMavenLocalEnvironment"))
+    dependsOn(":publishToTestHomeRepository")
 }
 
 val bundleControlPanelJars by tasks.registering(Sync::class) {

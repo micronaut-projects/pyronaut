@@ -57,6 +57,24 @@ ENTRYPOINT ["/opt/pyronaut/bin/pyronaut-run", "--project-dir", "/app"]
 
 To run the tests, use `./gradlew check`.
 
+Tests run with `HOME` set to `.gradle/test-home` in the checkout, so they and the
+tools they start resolve into that directory's Maven repository and not into your
+`~/.m2`, which the installed `pyronaut` may run from. The directory survives
+`clean`; the first run in a checkout downloads what the tests resolve. Your
+`~/.pyronaut/settings.toml` and `~/.m2/settings.xml` do not apply to the tests: set a
+proxy through the environment, or use `-Ppyronaut.test.home=<dir>` to run them
+against a home prepared with those files and repositories.
+
+After the tests, `checkMavenLocalUntouched` lists what changed in `~/.m2/repository`
+during the build. It warns on a developer machine, where other programs write there
+too, and fails the build on CI or with `-Ppyronaut.test.failOnMavenLocalWrite=true`.
+
+To use a checkout's snapshots from the installed CLI, publish them explicitly with
+`./gradlew :micronaut-pyronaut:prepareSdkMavenLocalEnvironment`, which
+`:micronaut-pyronaut:installSdkWheel` also runs. They go to `~/.m2/repository`, or
+to `-Dmaven.repo.local=<dir>` when set; `-Ppyronaut.sdk.mavenLocalRepository=<dir>`
+copies them to one more repository.
+
 ## Building Documentation
 
 The documentation sources are located at `src/main/docs/guide`.
