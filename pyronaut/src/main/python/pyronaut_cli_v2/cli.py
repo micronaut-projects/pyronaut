@@ -7900,14 +7900,20 @@ def _github_release_asset(
         if release_tag is not None
         else (version if version.startswith("v") else f"v{version}")
     )
-    token = _github_token()
     headers = _github_api_headers()
 
     def get_json(url: str) -> object | None:
         return _github_api_json(url, headers)
 
     api_root = _github_api_root(base_url)
-    release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
+    try:
+        release = get_json(f"{api_root}/releases/tags/{urllib.parse.quote(tag)}")
+    except _GitHubRateLimitError:
+        if _github_token() or allow_draft:
+            raise
+        # Published assets are served from a predictable public URL that
+        # anonymous rate limits do not apply to.
+        return f"{base_url.rstrip('/')}/download/{urllib.parse.quote(tag)}/{urllib.parse.quote(archive_name)}", {}
     if isinstance(release, dict) and release.get("draft") and not allow_draft:
         release = None
     if release is None:
@@ -7928,7 +7934,7 @@ def _github_release_asset(
     if not isinstance(release, dict):
         token_hint = (
             "; check GH_TOKEN, GITHUB_TOKEN, GITHUB_API_TOKEN, or PYRONAUT_RELEASE_TOKEN read access"
-            if not token
+            if not _github_token()
             else ""
         )
         raise RuntimeError(f"GitHub release '{tag}' was not found at {base_url}{token_hint}")
@@ -7943,7 +7949,7 @@ def _github_release_asset(
     public_url = _github_public_asset_url(asset, release)
     if public_url is not None:
         return public_url, {}
-    download_headers = dict(headers)
+    download_headers = _github_api_headers()
     download_headers["Accept"] = "application/octet-stream"
     return asset["url"], download_headers
 
@@ -7962,11 +7968,20 @@ def _github_public_asset_url(asset: dict, release: dict) -> str | None:
     return url
 
 
+_GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN")
+# A token GitHub answered with 401. Public releases do not need one, so the
+# rest of the run continues anonymously instead of failing on a stale token.
+_github_rejected_token: str | None = None
+
+
+def _github_token_variable() -> str | None:
+    return next((name for name in _GITHUB_TOKEN_VARIABLES if os.environ.get(name)), None)
+
+
 def _github_token() -> str | None:
-    return next(
-        (os.environ.get(name) for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN", "PYRONAUT_RELEASE_TOKEN") if os.environ.get(name)),
-        None,
-    )
+    name = _github_token_variable()
+    token = os.environ.get(name) if name else None
+    return None if token is None or token == _github_rejected_token else token
 
 
 def _github_api_headers() -> dict[str, str]:
@@ -7986,24 +8001,69 @@ def _github_api_root(base_url: str) -> str:
     return f"https://api.github.com/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repository)}"
 
 
-def _github_api_json(url: str, headers: dict[str, str]) -> object | None:
-    """Read a GitHub REST API document through the configured proxy; ``None`` on 404."""
+class _GitHubRateLimitError(RuntimeError):
+    """The GitHub REST API refused a request because the rate limit is exhausted."""
+
+
+def _github_opener(url: str) -> urllib.request.OpenerDirector:
     proxy, bypass = _download_proxy(url)
     parsed_url = urllib.parse.urlparse(url)
     host = parsed_url.hostname or ""
     host_with_port = parsed_url.netloc.rsplit("@", 1)[-1]
     bypassed = _proxy_bypasses_host(host, bypass) or _proxy_bypasses_host(host_with_port, bypass)
     proxies = {} if proxy is None or bypassed else {parsed_url.scheme: proxy}
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+    return urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+
+
+def _github_api_json(url: str, headers: dict[str, str]) -> object | None:
+    """Read a GitHub REST API document through the configured proxy; ``None`` on 404."""
+    global _github_rejected_token
+    # Callers may hold headers built before the token was rejected.
+    if _github_rejected_token is not None and headers.get("Authorization") == f"Bearer {_github_rejected_token}":
+        headers = {key: value for key, value in headers.items() if key != "Authorization"}
     try:
-        with opener.open(urllib.request.Request(url, headers=headers)) as response:
+        with _github_opener(url).open(urllib.request.Request(url, headers=headers)) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
+        token = _github_token()
+        if exc.code == 401 and token is not None and headers.get("Authorization") == f"Bearer {token}":
+            _github_rejected_token = token
+            print(
+                f"GitHub rejected the token in {_github_token_variable()} (HTTP 401); "
+                "continuing without it. Unset or renew it to silence this warning.",
+                file=sys.stderr,
+            )
+            return _github_api_json(url, headers)
+        if exc.code == 429 or (exc.code == 403 and exc.headers.get("X-RateLimit-Remaining") == "0"):
+            reset = exc.headers.get("X-RateLimit-Reset")
+            when = (
+                f"; it resets at {time.strftime('%H:%M', time.localtime(int(reset)))}"
+                if reset and reset.isdigit()
+                else ""
+            )
+            raise _GitHubRateLimitError(
+                f"GitHub API rate limit exceeded while reading {url}{when}"
+            ) from exc
         raise RuntimeError(f"Unable to read GitHub release metadata from {url}: HTTP {exc.code}") from exc
     except (OSError, ValueError, TypeError) as exc:
         raise RuntimeError(f"Unable to read GitHub release metadata from {url}: {exc}") from exc
+
+
+def _github_latest_release_tag(base_url: str) -> str | None:
+    """Resolve the latest published release tag through the public
+    ``releases/latest`` redirect, which the REST API rate limit does not cover."""
+    url = f"{base_url.rstrip('/')}/latest"
+    try:
+        with _github_opener(url).open(urllib.request.Request(url, method="HEAD")) as response:
+            final_url = response.geturl()
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Unable to resolve the latest release at {url}: {exc}") from exc
+    marker = "/releases/tag/"
+    if marker not in final_url:
+        return None
+    return urllib.parse.unquote(final_url.split(marker, 1)[1].strip("/")) or None
 
 
 def _is_github_release_url(base_url: str) -> bool:
@@ -8219,7 +8279,7 @@ def _ensure_native_image(
                 ):
                     _extract_native_image_archive(archive, extracted, image_name)
             except Exception as exc:
-                raise RuntimeError(f"Failed downloading {image_name} from {url}: {exc}") from exc
+                raise RuntimeError(f"Failed downloading {image_name} from {url or base_url}: {exc}") from exc
             bundle_files: list[str] = []
             for item in extracted.parent.iterdir():
                 # Several native bundles contain identically named manifests
@@ -11106,14 +11166,19 @@ def _update_release_url() -> str:
     return _NATIVE_IMAGE_BASE_URL
 
 
-def _sdk_releases(*, allow_draft: bool = False) -> list[_SdkRelease]:
+def _sdk_releases(*, allow_draft: bool = False, requested: str | None = None) -> list[_SdkRelease]:
     """List the published releases whose tags are SDK versions."""
     base_url = _update_release_url()
     api_root = _github_api_root(base_url)
     headers = _github_api_headers()
     releases: list[_SdkRelease] = []
     for page in range(1, _UPDATE_RELEASE_PAGES + 1):
-        data = _github_api_json(f"{api_root}/releases?per_page=100&page={page}", headers)
+        try:
+            data = _github_api_json(f"{api_root}/releases?per_page=100&page={page}", headers)
+        except _GitHubRateLimitError:
+            if page > 1 or allow_draft or _github_token() is not None:
+                raise
+            return _public_sdk_releases(base_url, requested)
         if data is None and page == 1:
             token_hint = (
                 "; check GH_TOKEN, GITHUB_TOKEN, GITHUB_API_TOKEN, or PYRONAUT_RELEASE_TOKEN read access"
@@ -11151,6 +11216,56 @@ def _sdk_releases(*, allow_draft: bool = False) -> list[_SdkRelease]:
         if len(data) < 100:
             break
     return releases
+
+
+def _public_sdk_releases(base_url: str, requested: str | None) -> list[_SdkRelease]:
+    """Describe the latest (or requested) final release without the REST API.
+
+    Used when anonymous API requests are rate limited. Without release
+    metadata only final versions can be offered, because their wheel name is
+    predictable from the tag: ``v1.2.3`` or ``1.2.3`` ships
+    ``pyronaut-1.2.3-py3-none-any.whl``. A release is only returned once its
+    wheel is confirmed to be downloadable; otherwise the rate limit is reported.
+    """
+    if requested is not None:
+        bare = requested.removeprefix("v")
+        tags = list(dict.fromkeys([requested, f"v{bare}", bare]))
+    else:
+        latest = _github_latest_release_tag(base_url)
+        tags = [latest] if latest else []
+    for tag in tags:
+        version = _parse_sdk_version(tag)
+        if version is None or version.prerelease:
+            continue
+        wheel_name = f"pyronaut-{tag.removeprefix('v')}-py3-none-any.whl"
+        wheel_url = f"{base_url.rstrip('/')}/download/{urllib.parse.quote(tag)}/{wheel_name}"
+        if _github_public_download_exists(wheel_url):
+            return [_SdkRelease(
+                tag=tag,
+                version=version,
+                prerelease=False,
+                wheel_name=wheel_name,
+                wheel_url=wheel_url,
+            )]
+    subject = f"Pyronaut release {requested}" if requested is not None else "the latest Pyronaut release"
+    raise _GitHubRateLimitError(
+        f"GitHub API rate limit exceeded while listing Pyronaut releases at {base_url}, "
+        f"and {subject} has no downloadable wheel at a public URL; "
+        "retry later or set GH_TOKEN to raise the limit"
+    )
+
+
+def _github_public_download_exists(url: str) -> bool:
+    """Whether a public ``releases/download`` URL serves a file."""
+    try:
+        with _github_opener(url).open(urllib.request.Request(url, method="HEAD")):
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise RuntimeError(f"Unable to check {url}: HTTP {exc.code}") from exc
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Unable to check {url}: {exc}") from exc
 
 
 def _installed_sdk_is_prerelease(installed: _SdkVersion, releases: Sequence[_SdkRelease]) -> bool:
@@ -11205,7 +11320,7 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
             raise RuntimeError(f"Unable to determine the installed Pyronaut version (found '{installed}')")
 
         with progress.step("Checking for Pyronaut releases", done="Checked Pyronaut releases") as check_step:
-            releases = _sdk_releases(allow_draft=_allow_draft_release)
+            releases = _sdk_releases(allow_draft=_allow_draft_release, requested=requested)
             release = _select_update_release(
                 releases,
                 installed_prerelease=_installed_sdk_is_prerelease(installed_version, releases),
