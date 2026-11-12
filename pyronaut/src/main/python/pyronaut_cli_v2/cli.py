@@ -93,7 +93,7 @@ PACKAGING_FORMATS = {
 }
 DEFAULT_PACKAGING_FORMAT = "wheel-jvm"
 _DEFAULT_JDK_VERSION = "25"
-_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i4"
+_DEFAULT_GRAALVM_DOWNLOAD_VERSION = f"{_DEFAULT_JDK_VERSION}i5"
 _GDS_DOWNLOAD_URL = "https://gds.oracle.com/download/graal"
 _SONATYPE_SNAPSHOTS_REPOSITORY = "https://central.sonatype.com/repository/maven-snapshots/"
 _NATIVE_IMAGE_BASE_URL = "https://github.com/micronaut-projects/pyronaut/releases"
@@ -7226,7 +7226,7 @@ def _detect_graalvm_distribution(version_output: str, java_home: Path, version: 
     if version is not None and "dev" in version.lower():
         return "dev"
     # Development archives identify themselves in the build string and/or
-    # installation directory (for example, graalvm-community-25.4.4.1.1-dev).
+    # installation directory (for example, graalvm-community-25.5.5.0.3-dev).
     # Check this before the generic "graalvm community" marker so CE dev
     # builds can satisfy an explicitly requested `distribution = "dev"`.
     if "dev" in lowered:
@@ -11482,10 +11482,10 @@ _GRAALPY_PROBE = (
 
 class _GraalPySpec(NamedTuple):
     # Standalone distribution name, which is also the pyenv version name,
-    # for example graalpy3.13-25.4.4.
+    # for example graalpy3.13-25.5.5.
     name: str
     # Exact runtime version reported by `graalpy --version`, for example
-    # 25.4.4.1.1. This is the GraalPy Maven version the SDK is built with.
+    # 25.5.5.0.3. This is the GraalPy Maven version the SDK is built with.
     version: str | None
     release_tag: str
 

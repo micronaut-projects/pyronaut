@@ -47,6 +47,8 @@ jobs:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
           fetch-depth: 0
 
       - name: "🔧 Setup GraalVM CE"
@@ -54,7 +56,7 @@ jobs:
         with:
           distribution: 'graalvm'
           java-version: ${{ matrix.java }}
-          version: '25.4'
+          version: '25.5'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: "🔧 Setup GraalPy pyenv virtualenv"
@@ -152,6 +154,8 @@ jobs:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v6
         with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
           fetch-depth: 0
 
       - name: "🔧 Setup GraalVM CE"
@@ -159,7 +163,7 @@ jobs:
         with:
           distribution: 'graalvm'
           java-version: '25'
-          version: '25.4'
+          version: '25.5'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: "🔧 Setup GraalPy pyenv virtualenv"

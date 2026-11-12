@@ -16,6 +16,9 @@ jobs:
           unset JAVA_HOME
           export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '/usr/lib/jvm' | paste -sd:)
       - uses: actions/checkout@v6
+        with:
+          # Micronaut core snapshots are built from the micronaut-core submodule
+          submodules: true
       - uses: actions/cache@v6
         with:
           path: ~/.gradle/caches

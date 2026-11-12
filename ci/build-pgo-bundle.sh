@@ -4,7 +4,7 @@
 #   ci/build-pgo-bundle.sh <pyronaut-dev|pyronaut-run|pyronaut-run-python> <version>
 #
 # Environment:
-#   JAVA_HOME                  Oracle GraalVM 25.4 (required)
+#   JAVA_HOME                  Oracle GraalVM 25.5 (required)
 #   PYRONAUT_GRAALPY           GraalPy executable used to run the CLI during training
 #                              (default: ~/.pyenv/versions/<pyronautPyenvVersion>/bin/graalpy)
 #   PYRONAUT_BUILDER_MAX_HEAP  native-image builder heap, e.g. 48g (default: native-image's own)

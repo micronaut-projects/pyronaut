@@ -1,7 +1,6 @@
 import io.micronaut.pyronaut.gradle.PyenvVersions
 import io.micronaut.pyronaut.gradle.PyronautGraalVmDevBuilds
 import org.gradle.api.GradleException
-import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import java.nio.file.Files
 import java.util.regex.Pattern
 
@@ -32,7 +31,7 @@ def nativeImageJdkVersion = graalVmDevTag.map { tag ->
     def matcher = tag.trim() =~ /(\d+)/
     matcher.find() ? matcher.group(1) : buildJdkVersion.get()
 }.orElse(buildJdkVersion)
-def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy3.13-25.4.4")
+def pyenvVersion = providers.gradleProperty("pyronautPyenvVersion").orElse("graalpy3.13-25.5.5")
 def pyenvExecutable = providers.provider {
     def configured = new File(PyenvVersions.root(), "bin/pyenv")
     if (configured.isFile() && configured.canExecute()) {
@@ -137,7 +136,23 @@ def graalVmJavaVersionForTag = { String tag ->
     matcher.find() ? matcher.group(1) : "25"
 }
 
+// A core snapshot is built from the checkout settings.gradle.kts includes. The applications the SDK runs resolve
+// core from Maven local, so the published core projects of that build are published there too: every project of
+// the checkout but its test suites, benchmarks and test helpers.
+def micronautCoreCheckout = gradle.ext.has("pyronaut.micronaut.core.checkout") ? gradle.ext.get("pyronaut.micronaut.core.checkout") as File : null
+def micronautCorePublishedProjects = micronautCoreCheckout == null ? [] : (new File(micronautCoreCheckout, "settings.gradle").text =~ /(?m)^include\s+['"]([^'"]+)['"]/)
+    .collect { it[1] }
+    .findAll { !(it ==~ /test-suite.*|benchmarks|.*-helper\d*|.*test-utils/) }
+tasks.register("publishMicronautCoreToMavenLocal") {
+    group = "build setup"
+    description = "Publishes the Micronaut core build included from source to the Maven local repository."
+    dependsOn(micronautCorePublishedProjects.collect {
+        gradle.includedBuild("micronaut-core").task(":micronaut-${it}:publishToMavenLocal")
+    })
+}
+
 tasks.register("prepareSdkMavenLocalEnvironment") {
+    dependsOn("publishMicronautCoreToMavenLocal")
     group = "build setup"
     description = "Publishes local Pyronaut artifacts to the Maven local repository used by demo applications."
     dependsOn({
@@ -169,6 +184,14 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
                     }
                 }
             }
+            if (micronautCoreCheckout != null) {
+                copy {
+                    from(new File(sourceRepository, "io/micronaut")) {
+                        include("micronaut-*/${micronautCoreVersion.get()}/**")
+                    }
+                    into(new File(targetRepository, "io/micronaut"))
+                }
+            }
         }
 
         // A previous resolver download can leave a remote provenance marker
@@ -181,6 +204,15 @@ tasks.register("prepareSdkMavenLocalEnvironment") {
                 include("**/_remote.repositories")
             }.files
                 .findAll { it.parentFile.name == project.version.toString() }
+                .each { it.delete() }
+        }
+        // The same holds for the core snapshot built from source, which Central snapshots publishes too
+        def micronautGroupDirectory = new File(targetRepository, "io/micronaut")
+        if (micronautCoreCheckout != null && micronautGroupDirectory.isDirectory()) {
+            micronautGroupDirectory.listFiles()
+                .findAll { it.name.startsWith("micronaut-") }
+                .collect { new File(it, "${micronautCoreVersion.get()}/_remote.repositories") }
+                .findAll { it.isFile() }
                 .each { it.delete() }
         }
 
@@ -330,8 +362,9 @@ tasks.register("prepareWheelSources", Sync) {
                             )
                         }
                         def artifact = matches.first()
-                        def component = artifact.id.componentIdentifier
-                        if (component instanceof ProjectComponentIdentifier || artifact.moduleVersion.id.group == projectGroup) {
+                        // only Pyronaut's own modules: the projects of an included Micronaut core build are
+                        // resolved from Maven like any other Micronaut module
+                        if (artifact.moduleVersion.id.group == projectGroup) {
                             return "bundled\t${fileName}"
                         }
                         def classifier = artifact.classifier ?: ""
@@ -703,11 +736,35 @@ tasks.register("testPythonOrchestrator", Exec) {
 
 // The e2e fixtures resolve through ~/.m2. Publishing into it while they resolve
 // leaves half-written SNAPSHOT entries (jar without pom) that Maven Resolver
-// rejects, so run the e2e tasks only after any publishToMavenLocal in the build.
+// rejects, so run the e2e tasks only after any publishToMavenLocal in the build,
+// and after prepareSdkMavenLocalEnvironment, which publishes a core snapshot built
+// from source and drops the download markers that would hide it.
 def mavenLocalPublishingTasks = {
     rootProject.subprojects
         .collect { it.tasks.findByName("publishToMavenLocal") }
-        .findAll { it != null }
+        .findAll { it != null } + [tasks.named("prepareSdkMavenLocalEnvironment").get()]
+}
+
+// The e2e fixture has its own local repository, and Central snapshots has newer metadata than the file repositories
+// holding a core built from source: seed it with what this build publishes, so that only those artifacts are resolved.
+tasks.register("seedE2eLocalRepository", Copy) {
+    group = "build setup"
+    description = "Seeds the e2e local repository with the Micronaut core and Pyronaut artifacts this build publishes."
+    dependsOn("prepareSdkMavenLocalEnvironment")
+    from(effectiveMavenLocalRepositoryDir.map { new File(it, "io/micronaut") }) {
+        include("micronaut-*/${micronautCoreVersion.get()}/**")
+        include("pyronaut/*/${project.version}/**")
+        exclude("**/_remote.repositories")
+    }
+    into(e2eLocalRepositoryDir.map { it.dir("io/micronaut") })
+    outputs.upToDateWhen { false }
+    doLast {
+        // a marker left by an earlier resolution would hide the seeded artifacts
+        fileTree(e2eLocalRepositoryDir.map { it.dir("io/micronaut") }) {
+            include("micronaut-*/${micronautCoreVersion.get()}/_remote.repositories")
+            include("pyronaut/*/${project.version}/_remote.repositories")
+        }.files.each { it.delete() }
+    }
 }
 
 tasks.register("preparePythonOrchestratorE2EFixture", Sync) {
@@ -746,6 +803,11 @@ tasks.register("testPythonOrchestratorE2E", Exec) {
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     mustRunAfter(mavenLocalPublishingTasks)
+    if (micronautCoreCheckout != null) {
+        // the applications resolve the core built from source, not the snapshot Central publishes
+        dependsOn(tasks.named("seedE2eLocalRepository"))
+        environment("PYRONAUT_SONATYPE_SNAPSHOTS", "false")
+    }
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
@@ -873,6 +935,11 @@ tasks.register("testPythonOrchestratorE2EFull", Exec) {
     }
     dependsOn(tasks.named("preparePythonOrchestratorE2EFixture"))
     mustRunAfter(mavenLocalPublishingTasks)
+    if (micronautCoreCheckout != null) {
+        // the applications resolve the core built from source, not the snapshot Central publishes
+        dependsOn(tasks.named("seedE2eLocalRepository"))
+        environment("PYRONAUT_SONATYPE_SNAPSHOTS", "false")
+    }
     dependsOn(project(":micronaut-pyronaut-install").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-dev").tasks.named("installDist"))
     dependsOn(project(":micronaut-pyronaut-processor").tasks.named("installDist"))
