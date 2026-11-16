@@ -478,10 +478,12 @@ Requirements:
 
 Oracle GraalVM can build all three native images (`pyronaut-dev`,
 `pyronaut-run` and `pyronaut-run-python`) with profile-guided optimization.
-On Linux, `pyronaut-run` also uses code compression. native-image does not
-support code compression on macOS, or with the runtime compilation that the
-GraalPy images need. Each image is built instrumented, trained with the
-workload in `pgo-training`, and rebuilt with the collected profiles:
+On Linux amd64, `pyronaut-run` also uses code compression. Compression is
+disabled on Windows and macOS, on Linux ARM64 because of a GraalVM GOT
+address-generation failure, and with the runtime compilation that the
+GraalPy images need. PGO remains enabled on those targets. Each image is built
+instrumented, trained with the workload in `pgo-training`, and rebuilt with the
+collected profiles:
 
 ```bash
 ./gradlew -Ppyronaut.pgo=instrument :micronaut-pyronaut-run:nativeCompile

@@ -1,0 +1,47 @@
+import org.gradle.api.GradleException
+import org.gradle.api.Project
+import org.gradle.api.provider.ProviderFactory
+
+// Run after buildSrc is available, before any tasks can observe the simulated platform.
+gradle.projectsEvaluated {
+    if (rootProject.name != 'pyronaut-parent') return
+    def policy = rootProject.buildscript.classLoader.loadClass('io.micronaut.pyronaut.gradle.PyronautPgo')
+    Map<String, String> properties = [:]
+    def factory = rootProject.providers
+    def providers = [gradleProperty: { String name -> factory.provider { properties[name] } }] as ProviderFactory
+    def project = [getProviders: { providers }] as Project
+    String originalOs = System.getProperty('os.name')
+    String originalArch = System.getProperty('os.arch')
+    int cases = 0
+    try {
+        [['Linux', 'amd64', true], ['Linux', 'x86_64', true], ['Linux', 'aarch64', false],
+         ['Linux', 'x86', false], ['Windows 10', 'amd64', false], ['Mac OS X', 'aarch64', false]].each { platform ->
+            System.setProperty('os.name', platform[0])
+            System.setProperty('os.arch', platform[1])
+            ['off', 'instrument', 'optimize'].each { mode ->
+                ['pyronaut-run', 'pyronaut-dev', 'pyronaut-run-python'].each { image ->
+                    [null, 'false', 'true'].each { requested ->
+                        properties.clear()
+                        properties['pyronaut.pgo'] = mode
+                        if (requested != null) properties['pyronaut.codeCompression'] = requested
+                        boolean eligible = platform[2] && image == 'pyronaut-run'
+                        boolean reject = mode == 'optimize' && requested == 'true' && !eligible
+                        try {
+                            boolean actual = policy.codeCompression(project, image)
+                            assert !reject: "Expected rejection for $platform, $mode, $image, $requested"
+                            assert actual == (mode == 'optimize' && eligible && requested != 'false')
+                        } catch (GradleException failure) {
+                            assert reject: failure.message
+                        }
+                        assert policy.mode(project).name().equalsIgnoreCase(mode)
+                        cases++
+                    }
+                }
+            }
+        }
+    } finally {
+        System.setProperty('os.name', originalOs)
+        System.setProperty('os.arch', originalArch)
+    }
+    println "PGO compression platform matrix passed ($cases cases)."
+}

@@ -712,10 +712,11 @@ command reuse those cached assets.
 ## PGO release builds
 
 Release bundles of `pyronaut-dev`, `pyronaut-run` and `pyronaut-run-python` are
-built with profile-guided optimization (PGO). On Linux, `pyronaut-run` also
-uses code compression (`-H:+EnableCodeCompression`). native-image does not
-support code compression on macOS, or together with runtime compilation, which
-the two images that embed GraalPy need. Profiles are never committed: every release
+built with profile-guided optimization (PGO). On Linux amd64, `pyronaut-run`
+also uses code compression (`-H:+EnableCodeCompression`). Compression is disabled
+on Windows and macOS, on Linux ARM64 because of a GraalVM GOT address-generation
+failure, and with the runtime compilation that the two GraalPy images need.
+PGO remains enabled on those targets. Profiles are never committed: every release
 regenerates them on every platform, because a profile only matches the image
 it was collected from. The bundles are built in GitLab CI, because GitHub-hosted
 runners are too small; see [GitLab CI](#gitlab-ci) for the pipeline.
@@ -792,8 +793,14 @@ Keep these with the CI run. They are not release assets.
 - the native-image build output of each optimized build
 
 Before uploading a bundle, check that its `pgo-report.txt` contains
-`pgo: applied` (and, for `pyronaut-run` on Linux, `code-compression: enabled`), then run the clean Linux
+`pgo: applied` (and, for `pyronaut-run` on Linux amd64, `code-compression: enabled`), then run the clean Linux
 release validation above against the optimized bundles.
+
+Check the compression platform defaults and overrides without building a native image:
+
+```bash
+./gradlew -I gradle/tests/pgo-code-compression.init.gradle help
+```
 
 ### GitLab CI
 

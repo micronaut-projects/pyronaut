@@ -71,10 +71,12 @@ final class PyronautPgo {
             return false
         }
         Boolean requested = project.providers.gradleProperty(CODE_COMPRESSION_PROPERTY).map { it.toBoolean() }.getOrNull()
-        // native-image rejects -H:+EnableCodeCompression on macOS ("not supported on darwin platform").
-        if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac")) {
+        // Windows/macOS reject compression; ARM64 currently fails in GraalVM's GOT address generation.
+        String os = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+        String arch = System.getProperty("os.arch").toLowerCase(Locale.ROOT)
+        if (!os.contains("linux") || !(arch in ["amd64", "x86_64"])) {
             if (requested) {
-                throw new GradleException("-P${CODE_COMPRESSION_PROPERTY}=true is not supported on macOS: native-image does not support code compression on darwin.")
+                throw new GradleException("-P${CODE_COMPRESSION_PROPERTY}=true is only supported for Pyronaut builds on Linux amd64.")
             }
             return false
         }
