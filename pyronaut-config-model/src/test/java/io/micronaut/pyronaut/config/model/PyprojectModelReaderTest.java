@@ -88,6 +88,13 @@ class PyprojectModelReaderTest {
     }
 
     @Test
+    void processorExcludeDefaultsToEmpty() {
+        assertEquals(List.of(), new PyprojectModel.Processor("jvm", false, "conservative", false).exclude());
+        assertEquals(List.of(), new PyprojectModel.Processor("jvm", false, "conservative", false, null).exclude());
+        assertEquals(List.of(), new PyprojectModel.Processor("jvm").exclude());
+    }
+
+    @Test
     void parsesPythonBytecodeConfiguration() throws IOException {
         Path file = tempDir.resolve("pyproject.toml");
         Files.writeString(file, """

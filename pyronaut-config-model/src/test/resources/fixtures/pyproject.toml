@@ -21,6 +21,7 @@ mode = "jvm"
 incremental = false
 python-incremental-mode = "conservative"
 daemon = false
+exclude = ["pyronaut_demo.internal.*"]
 
 [tool.pyronaut.dependencies]
 runtime = [ "io.micronaut:micronaut-inject-python",
