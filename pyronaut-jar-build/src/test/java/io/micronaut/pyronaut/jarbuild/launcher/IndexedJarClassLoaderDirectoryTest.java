@@ -54,7 +54,8 @@ class IndexedJarClassLoaderDirectoryTest {
 
     @BeforeEach
     void packageArchive() throws IOException {
-        Path classes = Files.createDirectories(temporaryDirectory.resolve("classes"));
+        Path classes = temporaryDirectory.resolve("classes");
+        write(classes.resolve("app/data.txt"), "app");
         Path first = temporaryDirectory.resolve("resources-1");
         write(first.resolve("db/migration/V1__first.sql"), "first");
         write(first.resolve("db/migration/nested/V2__nested.sql"), "nested");

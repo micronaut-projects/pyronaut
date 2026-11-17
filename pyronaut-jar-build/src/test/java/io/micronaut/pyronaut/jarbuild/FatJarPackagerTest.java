@@ -101,7 +101,6 @@ class FatJarPackagerTest {
                 }
             }
             """));
-        write(applicationClasses.resolve("META-INF/pyronaut/application-classes.idx"), "stale.Application\n");
         Path applicationResources = temporaryDirectory.resolve("application-resources");
         write(applicationResources.resolve("message.txt"), "application");
 
@@ -120,12 +119,6 @@ class FatJarPackagerTest {
             assertEquals(entryNames.stream().sorted().toList(), entryNames);
             assertTrue(jar.stream().allMatch(entry -> entry.getTime() == 0L));
             assertTrue(jar.getEntry("PYRONAUT-INF/classpath.idx") != null);
-            assertTrue(jar.getEntry("PYRONAUT-INF/app/classes/META-INF/pyronaut/application-classes.idx") != null);
-            try (var input = jar.getInputStream(jar.getJarEntry(
-                "PYRONAUT-INF/app/classes/META-INF/pyronaut/application-classes.idx"
-            ))) {
-                assertEquals("app.Main\n", new String(input.readAllBytes(), StandardCharsets.UTF_8));
-            }
             assertFalse(jar.stream().anyMatch(entry -> entry.getName().endsWith(".SF") || entry.getName().endsWith(".RSA")));
             assertFalse(jar.stream().anyMatch(entry -> entry.getName().endsWith("INDEX.LIST")));
             try (var input = jar.getInputStream(jar.getJarEntry("PYRONAUT-INF/lib/0000/META-INF/MANIFEST.MF"))) {
@@ -438,21 +431,30 @@ class FatJarPackagerTest {
     @Test
     void launchesTheRealProductionRuntimeMain() throws Exception {
         Path classes = temporaryDirectory.resolve("real-application");
-        compile(classes, List.of(), source("real/Application.java", """
-            package real;
-            public final class Application {
-                static {
-                    System.out.println("packaged-application-discovered");
-                    System.exit(0);
-                }
-            }
-            """));
         LinkedHashSet<Path> classpath = new LinkedHashSet<>();
         classpath.add(Path.of(PyronautRunMain.class.getProtectionDomain().getCodeSource().getLocation().toURI()));
         Arrays.stream(System.getProperty("java.class.path").split(System.getProperty("path.separator")))
             .map(Path::of)
             .filter(Files::exists)
             .forEach(classpath::add);
+        compile(classes, List.copyOf(classpath), source("real/Application.java", """
+            package real;
+            public final class Application implements io.micronaut.context.ApplicationContextConfigurer {
+                @Override
+                public void configure(io.micronaut.context.ApplicationContextBuilder builder) {
+                    System.out.println("packaged-application-discovered");
+                    System.exit(0);
+                }
+            }
+            """), source("real/Unused.java", """
+            package real;
+            public final class Unused {
+                static {
+                    System.out.println("unused-class-initialized");
+                }
+            }
+            """));
+        write(classes.resolve("META-INF/services/io.micronaut.context.ApplicationContextConfigurer"), "real.Application\n");
         Path output = temporaryDirectory.resolve("runtime.jar");
         new FatJarPackager().packageApplication(
             FatJarRequest.builder(output, classes, PyronautRunMain.class.getName())
@@ -465,13 +467,14 @@ class FatJarPackagerTest {
         Path runDirectory = Files.createDirectory(temporaryDirectory.resolve("real-run-directory"));
         write(runDirectory.resolve("pom.xml"), "<project/>");
         write(runDirectory.resolve("__pyronaut__/classes/rogue/Stale.class"), "not-a-class");
-        Process process = new ProcessBuilder(javaExecutable(), "-jar", output.toString())
+        Process process = new ProcessBuilder(javaExecutable(), "-Dmicronaut.server.port=-1", "-jar", output.toString())
             .directory(runDirectory.toFile())
             .redirectErrorStream(true)
             .start();
         String processOutput = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertEquals(0, process.waitFor(), processOutput);
         assertTrue(processOutput.contains("packaged-application-discovered"), processOutput);
+        assertFalse(processOutput.contains("unused-class-initialized"), processOutput);
     }
 
     @Test
