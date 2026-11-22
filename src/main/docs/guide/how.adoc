@@ -17,14 +17,20 @@ def index() -> str:
     return "Hello from Pyronaut"
 ----
 
-Pyronaut omits the `io.` prefix because `io` is a Python standard-library module and a package cannot shadow it. When the
-https://docs.micronaut.io/latest/api/[Micronaut API reference] lists `io.micronaut.http.annotation.Get`, import it as
-`micronaut.http.annotation.Get`. Packages that do not start with `io.micronaut` keep their original names, such as
-`jakarta.inject.Singleton` and `jakarta.validation.constraints.NotBlank`.
+NOTE: Decorator names retain the capitalization of their corresponding Micronaut annotations. For example, use `@Get`,
+not `@get`.
+
+NOTE: Pyronaut omits the `io.` prefix because `io` is a Python standard-library module and a package cannot shadow it.
+For example, when the https://docs.micronaut.io/latest/api/[Micronaut API reference] lists
+`io.micronaut.http.annotation.Get`, import it as `micronaut.http.annotation.Get`. Packages that do not start with
+`io.micronaut` keep their original names, such as `jakarta.inject.Singleton` and
+`jakarta.validation.constraints.NotBlank`.
 
 Pass annotation members as keyword arguments, for example `@Get(value="/", produces="text/plain")`, or pass a single
-positional argument for the `value` member, as in `@Get("/")`. A decorator on a Python class corresponds to a type-level
-annotation. A decorator on a function or method corresponds to a method-level annotation.
+positional argument for the `value` member, as in `@Get("/")`.
+
+NOTE: A decorator on a Python class corresponds to a type-level annotation. A decorator on a function or method
+corresponds to a method-level annotation.
 
 Use `typing.Annotated` for annotations that Java applies to fields or parameters. It keeps the type hint and annotation
 together:
@@ -46,8 +52,8 @@ to pass members.
 
 === Names that clash with Python keywords
 
-Some Java members and methods use names that Python reserves as keywords. Append an underscore to the Python name, and
-Pyronaut maps it back to the Java name:
+NOTE: When a Java member, method, or package name conflicts with a Python keyword, append an underscore to the Python
+name. Pyronaut removes the trailing underscore when mapping it back to the corresponding Java name.
 
 [source,python]
 ----
