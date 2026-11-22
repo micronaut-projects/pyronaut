@@ -1429,16 +1429,51 @@ def index() -&gt; str:
     return "Hello from Pyronaut"</code></pre>
 </div>
 </div>
-<div class="paragraph">
-<p>Pyronaut omits the <code>io.</code> prefix because <code>io</code> is a Python standard-library module and a package cannot shadow it. When the
-<a href="https://docs.micronaut.io/latest/api/">Micronaut API reference</a> lists <code>io.micronaut.http.annotation.Get</code>, import it as
-<code>micronaut.http.annotation.Get</code>. Packages that do not start with <code>io.micronaut</code> keep their original names, such as
-<code>jakarta.inject.Singleton</code> and <code>jakarta.validation.constraints.NotBlank</code>.</p>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Decorator names retain the capitalization of their corresponding Micronaut annotations. For example, use <code>@Get</code>,
+not <code>@get</code>.
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Pyronaut omits the <code>io.</code> prefix because <code>io</code> is a Python standard-library module and a package cannot shadow it.
+For example, when the <a href="https://docs.micronaut.io/latest/api/">Micronaut API reference</a> lists
+<code>io.micronaut.http.annotation.Get</code>, import it as <code>micronaut.http.annotation.Get</code>. Packages that do not start with
+<code>io.micronaut</code> keep their original names, such as <code>jakarta.inject.Singleton</code> and
+<code>jakarta.validation.constraints.NotBlank</code>.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>Pass annotation members as keyword arguments, for example <code>@Get(value="/", produces="text/plain")</code>, or pass a single
-positional argument for the <code>value</code> member, as in <code>@Get("/")</code>. A decorator on a Python class corresponds to a type-level
-annotation. A decorator on a function or method corresponds to a method-level annotation.</p>
+positional argument for the <code>value</code> member, as in <code>@Get("/")</code>.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+A decorator on a Python class corresponds to a type-level annotation. A decorator on a function or method
+corresponds to a method-level annotation.
+</td>
+</tr>
+</table>
 </div>
 <div class="paragraph">
 <p>Use <code>typing.Annotated</code> for annotations that Java applies to fields or parameters. It keeps the type hint and annotation
@@ -1462,9 +1497,18 @@ to pass members.</p>
 </div>
 <div class="sect2">
 <h3 id="_names_that_clash_with_python_keywords">Names that clash with Python keywords</h3>
-<div class="paragraph">
-<p>Some Java members and methods use names that Python reserves as keywords. Append an underscore to the Python name, and
-Pyronaut maps it back to the Java name:</p>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+When a Java member, method, or package name conflicts with a Python keyword, append an underscore to the Python
+name. Pyronaut removes the trailing underscore when mapping it back to the corresponding Java name.
+</td>
+</tr>
+</table>
 </div>
 <div class="listingblock">
 <div class="content">
