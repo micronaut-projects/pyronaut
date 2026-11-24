@@ -24,6 +24,11 @@ import java.util.function.Function;
 import java.util.zip.ZipFile;
 
 final class NativeImageConfigurationSupport {
+    private static final Set<String> MICRONAUT_NATIVE_IMAGE_MODULES = Set.of(
+        "io.micronaut:micronaut-core",
+        "io.micronaut:micronaut-inject"
+    );
+
     private NativeImageConfigurationSupport() {
     }
 
@@ -35,14 +40,18 @@ final class NativeImageConfigurationSupport {
         int exclusions = 0;
         for (Path entry : runtimeClasspath) {
             String gav = gavResolver.apply(entry);
-            if (gav == null || !selectedModules.contains(gav.substring(0, gav.lastIndexOf(':')))
-                || !hasBundledNativeImageConfiguration(entry)) {
+            if (gav == null) {
                 continue;
             }
-            command.add("--exclude-config");
-            command.add(".*\\Q" + entry.toAbsolutePath().normalize().getFileName() + "\\E.*");
-            command.add("^/META-INF/native-image/.*");
-            exclusions++;
+            String module = gav.substring(0, gav.lastIndexOf(':'));
+            // Keep Micronaut's feature registration and build-time initialization options.
+            if (selectedModules.contains(module) && !MICRONAUT_NATIVE_IMAGE_MODULES.contains(module)
+                && hasBundledNativeImageConfiguration(entry)) {
+                command.add("--exclude-config");
+                command.add(".*\\Q" + entry.toAbsolutePath().normalize().getFileName() + "\\E.*");
+                command.add("^/META-INF/native-image/.*");
+                exclusions++;
+            }
         }
         if (verbose) {
             System.err.println("Bundled native-image configurations excluded: " + exclusions + ", metadata modules: " + selectedModules);
