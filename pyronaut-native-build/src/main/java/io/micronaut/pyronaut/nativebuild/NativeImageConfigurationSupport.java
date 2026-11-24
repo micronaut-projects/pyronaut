@@ -24,6 +24,11 @@ import java.util.function.Function;
 import java.util.zip.ZipFile;
 
 final class NativeImageConfigurationSupport {
+    private static final Set<String> MICRONAUT_NATIVE_IMAGE_MODULES = Set.of(
+        "io.micronaut:micronaut-core",
+        "io.micronaut:micronaut-inject"
+    );
+
     private NativeImageConfigurationSupport() {
     }
 
@@ -35,7 +40,12 @@ final class NativeImageConfigurationSupport {
         int exclusions = 0;
         for (Path entry : runtimeClasspath) {
             String gav = gavResolver.apply(entry);
-            if (gav == null || !selectedModules.contains(gav.substring(0, gav.lastIndexOf(':')))
+            if (gav == null) {
+                continue;
+            }
+            String module = gav.substring(0, gav.lastIndexOf(':'));
+            // Keep Micronaut's feature registration and build-time initialization options.
+            if (MICRONAUT_NATIVE_IMAGE_MODULES.contains(module) || !selectedModules.contains(module)
                 || !hasBundledNativeImageConfiguration(entry)) {
                 continue;
             }

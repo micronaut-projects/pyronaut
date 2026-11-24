@@ -1,0 +1,46 @@
+name: Linux native wheels
+
+on:
+  pull_request:
+    branches: [master, '[0-9]+.[0-9]+.x']
+  push:
+    branches: [master, '[0-9]+.[0-9]+.x']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    name: Wheel startup (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [native, crema]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Set up CPython
+        id: cpython
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1.6.7
+        with:
+          distribution: graalvm
+          java-version: '25'
+          version: '25.4'
+          github-token: ${{ github.token }}
+      - name: Set up GraalPy
+        uses: ./.github/actions/setup-graalpy-pyenv
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Build, install, and launch the wheel
+        env:
+          WHEEL_MODE: ${{ matrix.mode }}
+          CPYTHON: ${{ steps.cpython.outputs.python-path }}
+        run: bash ci/test-native-wheel.sh "$WHEEL_MODE" "$CPYTHON"
