@@ -44,10 +44,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Add swap for the native-image builder
+        run: |
+          sudo install -m 600 /dev/null /mnt/pyronaut.swap
+          sudo fallocate -l 8G /mnt/pyronaut.swap
+          sudo mkswap /mnt/pyronaut.swap
+          sudo swapon /mnt/pyronaut.swap
+          free -h
       - name: Build, install, and launch the wheel
         env:
           WHEEL_MODE: ${{ matrix.mode }}
           CPYTHON: ${{ steps.cpython.outputs.python-path }}
-          # Encoding GraalPy's runtime metadata can exceed the 10-minute watchdog interval.
-          NATIVE_IMAGE_OPTIONS: -H:+UnlockExperimentalVMOptions -H:DeadlockWatchdogInterval=30 -H:-UnlockExperimentalVMOptions
+          # The hosted runner's default 13 GiB heap runs out while encoding GraalPy metadata.
+          NATIVE_IMAGE_OPTIONS: >-
+            -J-Xmx20g -J-XX:-UseParallelGC -J-XX:+UseG1GC
+            -H:+UnlockExperimentalVMOptions -H:DeadlockWatchdogInterval=30 -H:-UnlockExperimentalVMOptions
         run: bash ci/test-native-wheel.sh "$WHEEL_MODE" "$CPYTHON"
