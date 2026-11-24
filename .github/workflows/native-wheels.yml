@@ -14,7 +14,8 @@ jobs:
   startup:
     name: Wheel startup (${{ matrix.mode }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # GraalPy native-image generation can exceed an hour on the hosted runner.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
