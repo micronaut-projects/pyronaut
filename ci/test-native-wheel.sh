@@ -51,22 +51,32 @@ cd "$work/pyronaut-examples/hello-world/python"
 # a clean directory so the application has to use its installed wheel.
 mkdir "$work/launch"
 cd "$work/launch"
-port=18080
 log="$work/main.log"
-MICRONAUT_SERVER_PORT=$port "$work/.venv-wheel-$mode/bin/main" > "$log" 2>&1 &
+# Let the server allocate a free port and read it from this launcher's own log.
+MICRONAUT_SERVER_HOST=127.0.0.1 MICRONAUT_SERVER_PORT=-1 \
+  setsid "$work/.venv-wheel-$mode/bin/main" > "$log" 2>&1 &
 pid=$!
 cleanup() {
-  kill "$pid" 2>/dev/null || true
+  # The wheel entry point starts the native executable as a child.
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  for ((i = 0; i < 5; i++)); do
+    kill -0 -- "-$pid" 2>/dev/null || break
+    sleep 1
+  done
+  kill -KILL -- "-$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   cat "$log"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for ((attempt = 0; attempt < 120; attempt++)); do
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "$mode wheel launcher exited before serving /hello" >&2
     exit 1
   fi
-  if response=$(curl --fail --silent --noproxy '*' --max-time 2 "http://127.0.0.1:$port/hello"); then
+  port=$(sed -nE 's|.*Server Running: http://[^/ ]+:([0-9]+).*|\1|p' "$log" | tail -1)
+  if [[ -n $port ]] && response=$(curl --fail --silent --noproxy '*' --max-time 2 "http://127.0.0.1:$port/hello"); then
     [[ "$response" == 'Hello World' ]]
     printf '%s wheel returned %s\n' "$mode" "$response"
     exit 0

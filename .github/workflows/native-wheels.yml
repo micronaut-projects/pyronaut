@@ -7,6 +7,10 @@ on:
     branches: [master, '[0-9]+.[0-9]+.x']
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -15,7 +19,7 @@ jobs:
     name: Wheel startup (${{ matrix.mode }})
     runs-on: ubuntu-latest
     # GraalPy native-image generation can exceed an hour on the hosted runner.
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -44,4 +48,6 @@ jobs:
         env:
           WHEEL_MODE: ${{ matrix.mode }}
           CPYTHON: ${{ steps.cpython.outputs.python-path }}
+          # Encoding GraalPy's runtime metadata can exceed the 10-minute watchdog interval.
+          NATIVE_IMAGE_OPTIONS: -H:+UnlockExperimentalVMOptions -H:DeadlockWatchdogInterval=30 -H:-UnlockExperimentalVMOptions
         run: bash ci/test-native-wheel.sh "$WHEEL_MODE" "$CPYTHON"
