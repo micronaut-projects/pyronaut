@@ -119,7 +119,7 @@ jobs:
         run: git restore -- gradle.properties
       - name: Run post-release
         if: ${{ success() && !github.event.release.draft && !contains(github.event.release.tag_name, '-') }}
-        uses: micronaut-projects/github-actions/post-release@bd80048acde40b1c50534529f8160b0a6a19d63b # master
+        uses: micronaut-projects/github-actions/post-release@900cb794221efe2b99525efe0055bcac8dcc3d58 # master
         env:
           MICRONAUT_BUILD_EMAIL: ${{ secrets.MICRONAUT_BUILD_EMAIL }}
           RELEASE_VERSION: ${{ steps.release_version.outputs.release_version }}
