@@ -45,14 +45,13 @@ final class NativeImageConfigurationSupport {
             }
             String module = gav.substring(0, gav.lastIndexOf(':'));
             // Keep Micronaut's feature registration and build-time initialization options.
-            if (MICRONAUT_NATIVE_IMAGE_MODULES.contains(module) || !selectedModules.contains(module)
-                || !hasBundledNativeImageConfiguration(entry)) {
-                continue;
+            if (selectedModules.contains(module) && !MICRONAUT_NATIVE_IMAGE_MODULES.contains(module)
+                && hasBundledNativeImageConfiguration(entry)) {
+                command.add("--exclude-config");
+                command.add(".*\\Q" + entry.toAbsolutePath().normalize().getFileName() + "\\E.*");
+                command.add("^/META-INF/native-image/.*");
+                exclusions++;
             }
-            command.add("--exclude-config");
-            command.add(".*\\Q" + entry.toAbsolutePath().normalize().getFileName() + "\\E.*");
-            command.add("^/META-INF/native-image/.*");
-            exclusions++;
         }
         if (verbose) {
             System.err.println("Bundled native-image configurations excluded: " + exclusions + ", metadata modules: " + selectedModules);
