@@ -15,6 +15,7 @@
  */
 package io.micronaut.pyronaut.nativebuild;
 
+import io.micronaut.pyronaut.config.model.PyronautManagedVersions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -32,8 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class NativeImageConfigurationSupportTest {
     @Test
     void keepsMicronautNativeConfigurationWhenMetadataIsSelected(@TempDir Path directory) throws Exception {
+        String coreVersion = PyronautManagedVersions.micronautCoreVersion();
         for (String artifact : List.of("micronaut-core", "micronaut-inject")) {
-            Path frameworkJar = directory.resolve(artifact + "-5.2.23.jar");
+            Path frameworkJar = directory.resolve(artifact + "-" + coreVersion + ".jar");
             try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(frameworkJar))) {
                 zip.putNextEntry(new ZipEntry("META-INF/native-image/io.micronaut/" + artifact + "/native-image.properties"));
                 zip.write("Args=--features=io.micronaut.core.io.service.ServiceLoaderFeature\n".getBytes(StandardCharsets.UTF_8));
@@ -46,7 +48,7 @@ class NativeImageConfigurationSupportTest {
                 arguments,
                 List.of(frameworkJar),
                 Set.of(module),
-                ignored -> module + ":5.2.23",
+                ignored -> module + ":" + coreVersion,
                 false
             );
 
