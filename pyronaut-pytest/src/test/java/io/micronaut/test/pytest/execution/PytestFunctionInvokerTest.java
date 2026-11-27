@@ -15,6 +15,7 @@
  */
 package io.micronaut.test.pytest.execution;
 
+import io.micronaut.context.python.GraalPyContextFactory;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.Source;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -224,12 +226,37 @@ class PytestFunctionInvokerTest {
         }
     }
 
+    @Test
+    void applicationContextWrapperResolvesAPythonClassThroughCoreHostAccess() throws Exception {
+        // The host access Core builds for the GraalPy context running pytest.
+        Method bootstrapHostAccess = GraalPyContextFactory.class.getDeclaredMethod("bootstrapHostAccess", ClassLoader.class);
+        bootstrapHostAccess.setAccessible(true);
+        HostAccess hostAccess = (HostAccess) bootstrapHostAccess.invoke(null, getClass().getClassLoader());
+        io.micronaut.test.pytest.bookshelf.BookRepository repository = () -> "core";
+        try (Context context = contextWithTestSupport(hostAccess)) {
+            context.getBindings("python").putMember("beanContext", new SingleBeanContext(repository));
+
+            context.eval("python", """
+                BookRepository = type("BookRepository", (), {"__module__": "io.micronaut.test.pytest.bookshelf.repository"})
+                wrapper = ApplicationContextWrapper(beanContext)
+                generated = wrapper._generated_java_class(BookRepository)
+                generated_name = None if generated is None else generated.getName()
+                repository_title = wrapper[BookRepository].title()
+                """);
+
+            Value bindings = context.getBindings("python");
+            assertEquals(io.micronaut.test.pytest.bookshelf.BookRepository.class.getName(),
+                bindings.getMember("generated_name").asString());
+            assertEquals("core", bindings.getMember("repository_title").asString());
+        }
+    }
+
     /**
      * A context whose host access maps the Python class {@code BookRepository} to its "generated"
      * Java class the way Core's GraalPyHostAccessFactory does, with test.py loaded.
      */
     private Context contextWithGeneratedTypeMapping() throws Exception {
-        HostAccess hostAccess = HostAccess.newBuilder(HostAccess.ALL)
+        return contextWithTestSupport(HostAccess.newBuilder(HostAccess.ALL)
             .targetTypeMapping(
                 Value.class,
                 Class.class,
@@ -238,7 +265,10 @@ class PytestFunctionInvokerTest {
                     && "BookRepository".equals(value.getMember("__name__").asString()),
                 value -> BookRepository.class
             )
-            .build();
+            .build());
+    }
+
+    private Context contextWithTestSupport(HostAccess hostAccess) throws Exception {
         Context context = Context.newBuilder("python")
             .allowAllAccess(true)
             .allowHostAccess(hostAccess)
