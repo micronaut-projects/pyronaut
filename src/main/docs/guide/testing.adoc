@@ -156,6 +156,11 @@ the collapsible sections of `index.html`, and `test_output` events in
 banner and application bootstrap logging, is kept in `console.log` next to
 the other reports.
 
+When a pytest test fails, the exceptions that the application logged at error level while the test ran are added to the
+failure under *Server-side exceptions logged during the test*. A route that raises therefore shows its exception and
+Python traceback beneath the failed assertion, rather than only the HTTP 500 that the client received. The exceptions are
+observed through Logback, the logging backend of Pyronaut applications.
+
 To stream that output to the console instead, pass `--verbose` (which also
 enables trace logging) or set:
 
