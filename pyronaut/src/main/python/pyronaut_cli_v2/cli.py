@@ -11997,7 +11997,7 @@ def _ensure_project_virtualenv(
         if venv_python is None or not _virtualenv_is_graalpy(venv_python):
             print(
                 f"{venv_dir} was not created with GraalPy, so the embedded runtime cannot use its packages. "
-                f"Remove {venv_dir} and run pyronaut install again.",
+                f"{_non_graalpy_virtualenv_fix(venv_dir, sentence=True)}",
                 file=sys.stderr,
             )
             return PRECONDITION_FAILED
@@ -12568,6 +12568,40 @@ def _find_global_graalpy() -> tuple[Path, str] | None:
     return None
 
 
+def _virtualenv_created_by_uv(venv_dir: Path) -> bool:
+    """Whether uv created ``venv_dir`` (uv records its version in ``pyvenv.cfg``)."""
+    try:
+        lines = (venv_dir / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    return any(line.partition("=")[0].strip() == "uv" for line in lines)
+
+
+def _non_graalpy_virtualenv_fix(venv_dir: Path, *, sentence: bool = False) -> str:
+    """How to replace a project ``.venv`` that another interpreter created.
+
+    Removing the environment does not help under ``uv run``, which recreates it
+    with its own interpreter choice (usually CPython) before Pyronaut starts.
+    uv keeps a GraalPy ``.venv`` that satisfies the project's requirements, so
+    the fix recreates it with ``uv venv --python <graalpy>``; a
+    ``.python-version`` pin to a path would also work but breaks pyenv, which
+    reads the same file. ``sentence`` ends prose with a period, but leaves a
+    trailing command copyable.
+    """
+    if not (_virtualenv_created_by_uv(venv_dir) or os.environ.get("UV")):
+        return f"Remove {venv_dir} and run pyronaut install again" + ("." if sentence else "")
+    graalpy = _graalpy_for_project_environment()
+    if graalpy is None:
+        return (
+            "Run pyronaut setup to provision GraalPy, recreate the environment with "
+            "uv venv --clear --python <path-to-graalpy>, and run uv run pyronaut install again" + ("." if sentence else "")
+        )
+    return (
+        f"uv recreates it with the same interpreter when it is removed, so recreate it with GraalPy instead: "
+        f"uv venv --clear --python {shlex.quote(str(graalpy))} {shlex.quote(str(venv_dir))} && uv run pyronaut install"
+    )
+
+
 def _virtualenv_is_graalpy(venv_python: Path) -> bool:
     """Whether a project ``.venv`` was created by GraalPy (see prerequisites)."""
     try:
@@ -12624,7 +12658,7 @@ def _doctor_check_graalpy(project_dir: Path | None) -> _doctor.CheckResult:
                 return _doctor.CheckResult(
                     "graalpy", "GraalPy", _doctor.FAIL,
                     f"{venv_dir} was not created with GraalPy, so its packages cannot be used by the embedded runtime",
-                    f"Remove {venv_dir} and run pyronaut install", data,
+                    _non_graalpy_virtualenv_fix(venv_dir), data,
                 )
             version_line = _probe_python_version(venv_python)
             data["executable"] = str(venv_python)

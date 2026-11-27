@@ -552,6 +552,15 @@ class DoctorChecksTest(unittest.TestCase):
         self.assertIn("was not created with GraalPy", cpython.detail)
         self.assertIn(f"Remove {project / '.venv'} and run pyronaut install", cpython.fix)
 
+        (project / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\nuv = 0.12.19\nversion_info = 3.13.7\n", encoding="utf-8")
+        with (
+            patch.object(cli, "_read_version_properties", return_value={}),
+            patch.object(cli, "_graalpy_for_project_environment", return_value=Path("/opt/graalpy/bin/graalpy")),
+        ):
+            uv_cpython = cli._doctor_check_graalpy(project)
+        self.assertEqual(doctor.FAIL, uv_cpython.status)
+        self.assertIn(f"uv venv --clear --python /opt/graalpy/bin/graalpy {project / '.venv'} && uv run pyronaut install", uv_cpython.fix)
+
     def test_graalpy_check_warns_when_project_has_no_virtualenv_but_graalpy_exists(self):
         project = self.root / "app"
         project.mkdir()

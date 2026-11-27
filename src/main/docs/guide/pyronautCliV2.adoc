@@ -253,7 +253,7 @@ Before resolving Java dependencies, `pyronaut install` prepares the project Pyth
 - It runs `pip install` inside `.venv` for every declared requirement, `requirements.txt` and `requirements-test.txt`. When the project has Python tests but does not declare `pytest`, Pyronaut adds `pytest` because `pyronaut test` imports it from `.venv`.
 - It records the installed declarations in `.venv/.pyronaut-requirements.json` and skips `pip` until they change. `--refresh` reinstalls; `--offline` skips `pip`.
 
-An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again.
+An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again, or, when uv created it, recreate it with GraalPy as described in <<python-uv-run,Running Pyronaut with uv run>>.
 
 [[python-uv-projects]]
 ==== uv projects
@@ -271,6 +271,23 @@ uv resolves `[tool.uv.sources]` (including `{ workspace = true }` members), `[[t
 Pyronaut records the lock file's hash and syncs again when it changes; `--refresh` always syncs and `--offline` skips the sync.
 uv installs only what the project declares (including its default dependency groups) and ignores `requirements.txt` and `requirements-test.txt`, so declare `pytest` and other test-only packages in a dependency group if the project has Python tests.
 Without `uv` on the `PATH`, Pyronaut falls back to `pip`.
+
+[[python-uv-run]]
+==== Running Pyronaut with `uv run`
+
+`uv run` creates the project's `.venv` before it starts Pyronaut when it does not exist, and it picks CPython for it unless told otherwise, which Pyronaut rejects.
+Removing `.venv` does not help, because the next `uv run` creates it with CPython again.
+Create `.venv` with the GraalPy interpreter that `pyronaut setup` provisioned instead:
+
+[source,bash]
+----
+uv venv --clear --python <path-to-graalpy> .venv
+uv run pyronaut install
+----
+
+`uv run` keeps a GraalPy `.venv` as long as it satisfies the project's `requires-python` and any `.python-version` pin, so later `uv run pyronaut dev`, `run` and `test` commands use it too.
+When `pyronaut install` finds a `.venv` that uv created with another interpreter, or runs under `uv run`, its error message prints this command with the GraalPy path filled in; `pyronaut doctor` prints it as well.
+A project that starts with `pyronaut install` rather than `uv run` gets a GraalPy `.venv` from the start.
 
 [[python-self-managed-venv]]
 ==== Managing `.venv` yourself

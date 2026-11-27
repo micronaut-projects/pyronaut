@@ -281,7 +281,17 @@ class PyronautProcessorMainTest {
         PyronautProcessorMain command = new PyronautProcessorMain(new PyprojectModelReader(), new CapturingExecutor());
         command.projectDir = project;
 
-        assertEquals(PyronautProcessorExitCode.PRECONDITION_FAILED.code(), command.call());
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(stderr, true, StandardCharsets.UTF_8));
+        try {
+            assertEquals(PyronautProcessorExitCode.PRECONDITION_FAILED.code(), command.call());
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        // Name the command users run, not the internal pyronaut-install tool.
+        assertTrue(stderr.toString(StandardCharsets.UTF_8).contains("Missing build scope cache. Run pyronaut install first"));
     }
 
     @Test

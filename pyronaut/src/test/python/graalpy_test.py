@@ -355,8 +355,46 @@ class ProjectVirtualenvTest(unittest.TestCase):
         cpython.write_text("#!/bin/sh\n", encoding="utf-8")
         (venv_bin / "python").write_text("# fake CPython interpreter\n", encoding="utf-8")
         (self.project / ".venv" / "pyvenv.cfg").write_text(f"home = {cpython.parent}\n", encoding="utf-8")
-        self.assertEqual(cli.PRECONDITION_FAILED, self.ensure())
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {}, clear=False), redirect_stderr(stderr):
+            os.environ.pop("UV", None)
+            self.assertEqual(cli.PRECONDITION_FAILED, cli._ensure_project_virtualenv(self.project, self.runner))
         self.assertEqual([], self.commands)
+        self.assertIn(f"Remove {self.project / '.venv'} and run pyronaut install again.", stderr.getvalue())
+
+    def test_rejects_uv_created_cpython_venv_with_a_uv_venv_command(self):
+        # uv run recreates a removed .venv with its own interpreter choice, so
+        # the fix recreates it with GraalPy instead of asking to remove it.
+        (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")
+        venv_bin = self.project / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        cpython = self.root / "cpython" / "bin" / "python3"
+        cpython.parent.mkdir(parents=True)
+        cpython.write_text("#!/bin/sh\n", encoding="utf-8")
+        (venv_bin / "python").write_text("# fake CPython interpreter\n", encoding="utf-8")
+        (self.project / ".venv" / "pyvenv.cfg").write_text(
+            f"home = {cpython.parent}\nimplementation = CPython\nuv = 0.12.19\nversion_info = 3.13.7\n", encoding="utf-8"
+        )
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {}, clear=False), redirect_stderr(stderr):
+            os.environ.pop("UV", None)
+            self.assertEqual(cli.PRECONDITION_FAILED, cli._ensure_project_virtualenv(self.project, self.runner))
+        self.assertEqual([], self.commands)
+        message = stderr.getvalue()
+        self.assertIn("was not created with GraalPy", message)
+        self.assertIn(f"uv venv --clear --python {self.graalpy} {self.project / '.venv'} && uv run pyronaut install", message)
+        self.assertNotIn("Remove", message)
+
+    def test_rejects_cpython_venv_under_uv_run_with_a_uv_venv_command(self):
+        (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")
+        venv_bin = self.project / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "python").write_text("# fake CPython interpreter\n", encoding="utf-8")
+        (self.project / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"UV": "/usr/local/bin/uv"}), redirect_stderr(stderr):
+            self.assertEqual(cli.PRECONDITION_FAILED, cli._ensure_project_virtualenv(self.project, self.runner))
+        self.assertIn(f"uv venv --clear --python {self.graalpy} {self.project / '.venv'} && uv run pyronaut install", stderr.getvalue())
 
     def test_install_command_prepares_venv_before_resolving_java_dependencies(self):
         (self.project / "requirements.txt").write_text("attrs\n", encoding="utf-8")

@@ -207,7 +207,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
                 ? externalLayout != null ? (externalLayout.annotationProcessorClasspath().isEmpty() ? externalLayout.buildClasspath() : externalLayout.annotationProcessorClasspath()) : ClasspathManifestReader.read(
                 root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-build-dependencies"),
-                "Missing build scope cache. Run pyronaut-install first"
+                "Missing build scope cache. Run pyronaut install first"
                 )
                 : annotationProcessorPath;
             if (externalLayout != null) {
@@ -287,7 +287,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     List<Path> effectiveClasspath = classpath == null || classpath.isEmpty()
                         ? externalLayout != null ? externalLayout.runtimeClasspath() : ClasspathManifestReader.read(
                         root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"),
-                        "Missing runtime scope cache. Run pyronaut-install first"
+                        "Missing runtime scope cache. Run pyronaut install first"
                         )
                         : classpath;
                     if (externalLayout != null) {
@@ -380,7 +380,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                     List<Path> effectiveTestClasspath = testClasspath == null || testClasspath.isEmpty()
                         ? externalLayout != null ? externalTestClasspath(externalLayout, resolvedMainTargetDir) : ClasspathManifestReader.read(
                         root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"),
-                        "Missing test scope cache. Run pyronaut-install first"
+                        "Missing test scope cache. Run pyronaut install first"
                     )
                         : testClasspath;
                     if (externalLayout != null) {
