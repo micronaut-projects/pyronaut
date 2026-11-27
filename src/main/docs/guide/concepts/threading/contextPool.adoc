@@ -38,6 +38,32 @@ Disable the pool for applications that deliberately keep everything in one conte
 enabled = false
 ----
 
+[[pooled-c-extensions]]
+== C extensions such as NumPy
+
+A package with C extension modules, such as NumPy or `pydantic-core`, loads only when the contexts are allowed native access:
+
+[source,toml]
+----
+[graalpy.context]
+allow-native-access = true
+----
+
+GraalPy then lets only one context in the process load C extensions, for as long as the process runs. The first context that imports one (NumPy, or even `sqlite3` or `ctypes` from the standard library) keeps them, and importing one in any other pooled context fails with `SystemError: Option python.IsolateNativeModules is set to 'false' and a second GraalPy context attempted to load a native module`. Which context imports first depends on the traffic, so a pooled application fails only some of its requests. Pyronaut logs a warning at startup when native access is allowed with the pool enabled and native module isolation is not configured.
+
+On Linux, the experimental GraalPy option `python.IsolateNativeModules` lets every context load C extensions. GraalPy copies the C API library and each extension module it loads once per context, which needs `patchelf` on the `PATH` or in `.venv` (`pip install patchelf`; `delvewheel` on Windows):
+
+[source,toml]
+----
+[graalpy.context]
+allow-native-access = true
+
+[graalpy.context.options]
+"python.IsolateNativeModules" = "true"
+----
+
+GraalPy cannot copy macOS libraries, and with the option set every C extension import fails there. On macOS, disable the pool when the application uses C extensions. Whether a given extension works in several isolated contexts also depends on the extension, so test the exact packages under concurrent load.
+
 == The first request
 
 Preparing a GraalPy context takes far longer than serving a request: the interpreter starts and imports the runtime module every Python call goes through, which loads `asyncio` among others. Without pre-starting, the first request that needs a pooled context pays for that, about two seconds on the JVM for a small application. With the default `prestart = 1`, Pyronaut creates and warms up that context in the background right after startup, so a request that arrives a moment later finds it ready. A request that arrives while the context is still being created waits for it instead of creating a second one, and stopping the application during pre-start closes the context once it is built.
