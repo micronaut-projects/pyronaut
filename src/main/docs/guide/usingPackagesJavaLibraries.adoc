@@ -34,6 +34,7 @@ WARNING: Package compatibility depends on the GraalPy version, native extensions
 Support for packages containing native extensions remains experimental.
 Native wheels that target CPython are not binary-compatible with GraalPy. Use a GraalPy-specific wheel for native extensions or build the extensions with GraalPy.
 See the https://www.graalvm.org/python/compatibility/[GraalPy package compatibility checker] and https://www.graalvm.org/reference-manual/graalpy/[GraalPy reference documentation] for current compatibility and native-extension guidance.
+Native extensions need `allow-native-access = true` under `[graalpy.context]`, and GraalPy loads them in only one context per process unless native module isolation is enabled, which affects the context pool (see <<pooled-c-extensions,C extensions such as NumPy>>).
 
 Pydantic 2 depends on `pydantic-core`, which is partially written in Rust and exposed to Python as native code.
 Because native-extension support remains experimental, test the exact Pydantic, GraalPy, and Pyronaut versions under the threading and deployment model your application uses. A passing compatibility-checker result covers only its tested configuration.
