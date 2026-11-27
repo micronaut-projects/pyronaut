@@ -10032,6 +10032,11 @@ def _looks_like_direct_source_invocation(argv: Sequence[str]) -> bool:
             else:
                 index += 1
             continue
+        if arg.startswith("-"):
+            # Any other option belongs to the project-based command. Its value
+            # may name a Python file, as in `--tests=test_books.py`, but that
+            # is a project test selector rather than a direct source.
+            return False
         if arg.endswith((".py", ".java")):
             return True
         try:
