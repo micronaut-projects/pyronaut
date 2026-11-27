@@ -110,12 +110,32 @@ output and process a smaller source set. Processing can report source and genera
 starts. The processor must be able to see decorators statically; see <<incrementalProcessing,Incremental processing>>
 for the constructs it can and cannot follow.
 
+[[generatedJavaNames]]
 Each generated Java class is named after the Python definition it comes from. A top-level class keeps its name, and a
 module with decorated functions becomes a class named after the module in upper camel case: the routes of
-`bookshelf/widget_routes.py` are bridged through `bookshelf.WidgetRoutes`. A module and a class therefore map to the same
-Java name when the class is named like its module, such as `bookshelf/widget.py` defining `Widget`. That is fine while
-the module's functions are plain helpers, but when they carry decorators, such as a route, processing fails and names
-both definitions. Rename the module, for example to `widget_api.py`, or the class.
+`bookshelf/widget_routes.py` are bridged through `bookshelf.WidgetRoutes`.
+
+When a module defines a top-level class with the Java name the module would get, such as `bookshelf/widget.py` defining
+`Widget`, the class keeps its name and the module's Java class gets a `Module` suffix: the routes of `bookshelf/widget.py`
+are bridged through `bookshelf.WidgetModule`, and `bookshelf.Widget` is the class. The rule only looks at the classes the
+module itself defines, so the name stays the same when you add or remove a decorator and on every incremental build.
+Processing logs a note for each module it renames, for example
+`Python module [.../bookshelf/widget.py] is generated as the Java class [bookshelf.WidgetModule] because it defines the class [Widget]`.
+
+The rename changes only Java-side names. Python code still imports `bookshelf.widget` and `Widget` as before, and
+`logging.getLogger(__name__)` in the module is still the logger `bookshelf.widget`. Use the suffixed name wherever a
+Java class name refers to the module:
+
+* Lookups by class name, such as `app["bookshelf.WidgetModule"]` for the module's bean in a test. A lookup of
+  `"bookshelf.Widget"` finds the class.
+* Logger configuration and output that name the generated class: a `logback.xml` logger or a loggers-endpoint level
+  for the module's Java class, and the class in Micronaut's own log messages, stack traces and the `beans` and
+  `routes` management endpoints.
+* Java code that calls the module's functions, which calls `bookshelf.WidgetModule`.
+
+If the module also defines a class named like the suffixed name, such as `bookshelf/widget.py` defining both `Widget` and
+`WidgetModule`, processing fails and names both classes. Rename one of the classes or the module. A class with the same
+name in another module of the package is reported like any other duplicate Java name.
 
 To see how processing handles serialization and validation, define a data class:
 
