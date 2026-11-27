@@ -16,6 +16,7 @@
 package io.micronaut.pyronaut.test;
 
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.test.pytest.ApplicationGraalPyContextSettings;
 import io.micronaut.pyronaut.config.terminal.Terminal;
 import io.micronaut.test.pytest.execution.ConsoleCapture;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
@@ -174,7 +175,7 @@ public final class PyronautTestMain implements Callable<Integer> {
 
     public PyronautTestMain() {
         this(new PyprojectModelReader(), (classLoader, applicationMain) ->
-            GraalPyContextFactory.bootstrapReusableContext(classLoader, Map.of(), applicationMain)
+            ApplicationGraalPyContextSettings.bootstrapReusableContext(classLoader, Map.of(), applicationMain)
         );
     }
 

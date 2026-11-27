@@ -19,6 +19,7 @@ import io.micronaut.context.ApplicationContextBuilder;
 import io.micronaut.context.BeanDefinitionsProvider;
 import io.micronaut.context.BeanResolutionTraceMode;
 import io.micronaut.context.python.GraalPyContextFactory;
+import io.micronaut.test.pytest.ApplicationGraalPyContextSettings;
 import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.core.beans.BeanIntrospectionProviders;
 import io.micronaut.core.beans.BeanIntrospectionsProvider;
@@ -917,7 +918,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             // classes load: its "Starting test runtime" row covers that wait too.
             try (TestProgressReporter reporter = TestProgressReporter.create(originalErr, invocation.verbose())) {
                 if (pythonSource) {
-                    GraalPyContextFactory.bootstrapReusableContext(
+                    ApplicationGraalPyContextSettings.bootstrapReusableContext(
                         InMemoryTargetTypeMappings.expose(applicationClassLoader),
                         Map.of(),
                         GraalPyContextFactory.APPLICATION_MAIN
@@ -1069,7 +1070,7 @@ public final class PyronautDevMain implements Callable<Integer> {
             ClassLoader classLoader = previous.classLoader() == null
                 ? PyronautDevMain.class.getClassLoader()
                 : previous.classLoader();
-            GraalPyContextFactory.bootstrapReusableContext(
+            ApplicationGraalPyContextSettings.bootstrapReusableContext(
                 classLoader,
                 Map.of(),
                 GraalPyContextFactory.APPLICATION_MAIN
