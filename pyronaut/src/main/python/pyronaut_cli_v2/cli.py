@@ -284,7 +284,19 @@ def main() -> None:
     # the resolved config, cache and data directories are handed to every
     # child process explicitly. setup --xdg re-exports them.
     _export_pyronaut_home()
-    code = run(sys.argv[1:])
+    # SIGTERM reaches only this process, unlike a terminal's Ctrl-C, which
+    # the whole foreground process group receives. Route it through the
+    # interrupt path so launchers, the Test Resources server and atexit
+    # cleanup are stopped instead of being re-parented to init.
+    try:
+        with _sigterm_as_keyboard_interrupt():
+            code = run(sys.argv[1:])
+    except KeyboardInterrupt:
+        if _terminating_signal is None:
+            raise
+        code = 130
+    if _terminating_signal is not None and code == 130:
+        code = 128 + int(_terminating_signal)
     raise SystemExit(code)
 
 
@@ -1249,19 +1261,35 @@ def _apply_debug_vm_env(env: dict[str, str] | None) -> dict[str, str]:
     return updated
 
 
+# The signal that is stopping this process, when it is SIGTERM rather than
+# a terminal's Ctrl-C. Child processes did not receive it, so whoever stops
+# them on the interrupt path has to pass it on.
+_terminating_signal: int | None = None
+# Time a launcher gets to stop the application and its own children after
+# SIGTERM is passed on, before it is killed.
+_SIGTERM_STOP_TIMEOUT_SECONDS = 15.0
+
+
 @contextlib.contextmanager
 def _sigterm_as_keyboard_interrupt() -> Iterator[None]:
     """Route SIGTERM through the Ctrl-C path so child processes and atexit cleanup run.
 
     The default SIGTERM action terminates the interpreter without running atexit
-    handlers, which leaks the Test Resources server retained across direct-source
-    restarts when an IDE, process manager or ``kill`` stops ``pyronaut dev``.
+    handlers, which leaks the Test Resources server and leaves launchers running
+    when an IDE, process manager or ``kill`` stops a Pyronaut command.
     """
+    global _terminating_signal
     if threading.current_thread() is not threading.main_thread():
         yield
         return
+    _terminating_signal = None
 
     def _interrupt(signum, frame):  # noqa: ARG001
+        global _terminating_signal
+        if _terminating_signal is not None:
+            # Already stopping; let the cleanup in progress finish.
+            return
+        _terminating_signal = signum
         raise KeyboardInterrupt
 
     previous = signal.signal(signal.SIGTERM, _interrupt)
@@ -5261,11 +5289,59 @@ def _remove_existing_built_wheels(dist_dir: Path, project_name: str) -> None:
             wheel.unlink()
 
 
+# Shared by the wheel launchers. A plain subprocess.run would leave the
+# application running, re-parented to init, when a process manager or
+# ``kill`` sends SIGTERM to the console script: the signal reaches only the
+# launcher, whose default action ends it without stopping the child.
+_BUILD_LAUNCHER_PROCESS_CODE = """\
+
+
+def _run_application(command_line, env=None):
+    started = []
+    pending = []
+
+    def forward(signum, frame):
+        if not started:
+            pending.append(signum)
+            return
+        try:
+            started[0].send_signal(signum)
+        except OSError:
+            pass
+
+    for name in ("SIGTERM", "SIGHUP"):
+        signum = getattr(signal, name, None)
+        if signum is not None:
+            try:
+                signal.signal(signum, forward)
+            except (OSError, ValueError):
+                pass
+    process = subprocess.Popen(command_line, env=env)
+    started.append(process)
+    for signum in pending:
+        forward(signum, None)
+    interrupted = False
+    while True:
+        try:
+            code = process.wait()
+            break
+        except KeyboardInterrupt:
+            # The application got the same Ctrl-C; wait for it to stop,
+            # and stop waiting on a second one.
+            if interrupted:
+                process.kill()
+            interrupted = True
+    # Report a child ended by a signal the way a shell does.
+    return 128 - code if code < 0 else code
+"""
+
+
 def _jvm_build_launcher_code(main_class: str) -> str:
     return f"""\
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -5303,14 +5379,15 @@ def main() -> None:
     java = pyronaut_cli._resolve_java_executable(env)
     command_line = [java, "-cp", os.pathsep.join(dict.fromkeys(entries)), MAIN_CLASS,
                     "--project-dir", str(PROJECT_DIR), *sys.argv[1:]]
-    raise SystemExit(subprocess.run(command_line, env=env).returncode)
-"""
+    raise SystemExit(_run_application(command_line, env))
+""" + _BUILD_LAUNCHER_PROCESS_CODE
 
 
 def _native_build_launcher_code(binary_name: str) -> str:
     return f"""\
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -5322,8 +5399,8 @@ BINARY = PROJECT_DIR / "__pyronaut__" / "native" / {binary_name!r}
 def main() -> None:
     if not BINARY.exists():
         raise SystemExit(f"Error: binary '{{BINARY.name}}' not found")
-    raise SystemExit(subprocess.run([str(BINARY), "--project-dir", str(PROJECT_DIR), *sys.argv[1:]]).returncode)
-"""
+    raise SystemExit(_run_application([str(BINARY), "--project-dir", str(PROJECT_DIR), *sys.argv[1:]]))
+""" + _BUILD_LAUNCHER_PROCESS_CODE
 
 
 def _run_lifecycle_validation(
@@ -6605,8 +6682,28 @@ def _control_panel_dependency_declared(project_dir: Path) -> bool:
     )
 
 
+def _forward_terminating_signal(process: ManagedProcess) -> bool:
+    """Pass a SIGTERM this process received on to ``process``; True when one was forwarded."""
+    if _terminating_signal is None:
+        return False
+    try:
+        process.terminate()
+    except Exception:
+        pass
+    return True
+
+
 def _stop_managed_process(process: ManagedProcess, *, interrupted: bool = False) -> bool:
     training = isinstance(process, _aot_cache.ManagedProcess)
+    terminated = interrupted and _forward_terminating_signal(process)
+    if terminated and not training:
+        # The child now has the SIGTERM; give a launcher time to stop the
+        # application and the processes it started itself.
+        try:
+            process.wait(timeout=_SIGTERM_STOP_TIMEOUT_SECONDS)
+            return True
+        except Exception:
+            pass
     if training and interrupted:
         # The child got the same Ctrl-C (SIGINT, or the console event on
         # Windows). Let a JVM training an AOT cache finish writing its
@@ -9315,6 +9412,7 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
         try:
             return int(process.wait())
         except KeyboardInterrupt:
+            terminated = _forward_terminating_signal(process)
             if aot.training is not None:
                 # The child got the same SIGINT; let a training JVM finish
                 # writing its AOT configuration before giving up on it.
@@ -9324,6 +9422,14 @@ def _run_subprocess(command_line: list[str], env: dict[str, str] | None = None) 
                     aot.abandon()
             else:
                 aot.abandon()
+            if terminated:
+                # Unlike Ctrl-C, SIGTERM reached only this process; the child
+                # has it now and needs time to stop its own children.
+                try:
+                    process.wait(timeout=_SIGTERM_STOP_TIMEOUT_SECONDS)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                    process.kill()
+                return 130
             # wait() already gave the child a moment to act on its own SIGINT.
             process.kill()
             return 130

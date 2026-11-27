@@ -1498,12 +1498,129 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual({"io.micronaut:micronaut-jdbc"}, coordinates)
 
     def test_direct_source_sigterm_takes_interrupt_path_and_restores_handler(self):
+        self.addCleanup(setattr, cli, "_terminating_signal", None)
         previous = signal.getsignal(signal.SIGTERM)
         with cli._sigterm_as_keyboard_interrupt():  # noqa: SLF001
             handler = signal.getsignal(signal.SIGTERM)
             with self.assertRaises(KeyboardInterrupt):
                 handler(signal.SIGTERM, None)
+            # A second SIGTERM must not interrupt the cleanup already running.
+            handler(signal.SIGTERM, None)
         self.assertIs(previous, signal.getsignal(signal.SIGTERM))
+
+    @staticmethod
+    def _sigterm_recording_child(directory: Path) -> Path:
+        """A child that records its PID once running and records SIGTERM before exiting."""
+        script = directory / "child.sh"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"trap 'echo stopped > \"{directory}/stopped\"; exit 0' TERM\n"
+            f"echo $$ > \"{directory}/ready.tmp\"\n"
+            f"mv \"{directory}/ready.tmp\" \"{directory}/ready\"\n"
+            "while :; do sleep 0.1; done\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return script
+
+    @staticmethod
+    def _await_file(path: Path, timeout: float = 30.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.exists():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def _sigterm_test_directory(self) -> Path:
+        """A temporary directory removed only after the recorded child is killed."""
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        # Cleanups run in reverse: kill a child that outlived the test while
+        # its PID file still exists, so it cannot hold the runner's output open.
+        self.addCleanup(self._kill_recorded_child, directory)
+        return directory
+
+    def _kill_recorded_child(self, directory: Path) -> None:
+        try:
+            os.kill(int((directory / "ready").read_text(encoding="utf-8").strip()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM forwarding is POSIX behavior")
+    def test_sigterm_is_passed_on_to_the_delegated_command(self):
+        self.addCleanup(setattr, cli, "_terminating_signal", None)
+        directory = self._sigterm_test_directory()
+        child = self._sigterm_recording_child(directory)
+
+        def send_sigterm():
+            if self._await_file(directory / "ready"):
+                os.kill(os.getpid(), signal.SIGTERM)
+
+        sender = threading.Thread(target=send_sigterm, daemon=True)
+        with cli._sigterm_as_keyboard_interrupt():  # noqa: SLF001
+            sender.start()
+            code = cli._run_subprocess([str(child)])  # noqa: SLF001
+        sender.join(timeout=5)
+
+        self.assertEqual(130, code)
+        self.assertEqual(signal.SIGTERM, cli._terminating_signal)  # noqa: SLF001
+        self.assertTrue((directory / "stopped").exists(), "the child never received SIGTERM")
+
+    def test_interrupted_managed_process_receives_forwarded_sigterm(self):
+        self.addCleanup(setattr, cli, "_terminating_signal", None)
+        cli._terminating_signal = signal.SIGTERM  # noqa: SLF001
+        process = Mock()
+
+        self.assertTrue(cli._stop_managed_process(process, interrupted=True))  # noqa: SLF001
+
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=cli._SIGTERM_STOP_TIMEOUT_SECONDS)  # noqa: SLF001
+        process.kill.assert_not_called()
+
+    def test_main_exits_with_sigterm_status_after_stopping_children(self):
+        self.addCleanup(setattr, cli, "_terminating_signal", None)
+        previous = signal.getsignal(signal.SIGTERM)
+
+        def terminated_run(argv):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+            self.fail("SIGTERM did not interrupt the command")
+
+        with patch.object(cli, "_export_pyronaut_home"), patch.object(cli, "run", side_effect=terminated_run):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main()
+
+        self.assertEqual(128 + signal.SIGTERM, raised.exception.code)
+        self.assertIs(previous, signal.getsignal(signal.SIGTERM))
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM forwarding is POSIX behavior")
+    def test_wheel_launcher_passes_sigterm_on_to_the_application(self):
+        directory = self._sigterm_test_directory()
+        native_dir = directory / "app" / "__pyronaut__" / "native"
+        native_dir.mkdir(parents=True)
+        child = self._sigterm_recording_child(directory)
+        shutil.copy2(child, native_dir / "app-binary")
+        (directory / "launcher.py").write_text(cli._native_build_launcher_code("app-binary"), encoding="utf-8")  # noqa: SLF001
+
+        launcher = subprocess.Popen(
+            [__import__("sys").executable, "-c", "import launcher; launcher.main()"],
+            cwd=directory,
+            env={**os.environ, "PYTHONPATH": str(directory)},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            self.assertTrue(self._await_file(directory / "ready", timeout=60), "the application never started")
+            launcher.send_signal(signal.SIGTERM)
+            code = launcher.wait(timeout=30)
+        finally:
+            if launcher.poll() is None:
+                launcher.kill()
+                launcher.wait()
+
+        self.assertTrue(self._await_file(directory / "stopped", timeout=5), "the application never received SIGTERM")
+        self.assertEqual(0, code)
 
     def test_native_dev_command_passes_provided_jar_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
