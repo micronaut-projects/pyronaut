@@ -84,6 +84,72 @@ class PyronautRunMainTest {
     }
 
     @Test
+    void exposesOpenApiViewsForProjectsInTheDevEnvironment() throws Exception {
+        List<String> properties = List.of(
+            "micronaut.environments",
+            "micronaut.router.static-resources.swagger.paths",
+            "micronaut.router.static-resources.swagger.mapping",
+            "micronaut.router.static-resources.swagger-ui.paths",
+            "micronaut.router.static-resources.swagger-ui.mapping",
+            "micronaut.router.static-resources.redoc.paths",
+            "micronaut.router.static-resources.redoc.mapping"
+        );
+        Map<String, String> previous = new java.util.HashMap<>();
+        properties.forEach(name -> previous.put(name, System.getProperty(name)));
+        try {
+            properties.forEach(System::clearProperty);
+            Path project = tempDir.resolve("project-openapi-dev");
+            Files.createDirectories(project.resolve("__pyronaut__/classes"));
+            Files.createDirectories(project.resolve("config"));
+            Files.writeString(project.resolve("config/application.toml"), "[micronaut.application]\nname = 'demo'\n");
+            writeMinimalPyproject(project);
+
+            System.setProperty("micronaut.environments", "dev");
+            Map<String, String> duringStart = startAndCaptureProperties(project, properties);
+            assertEquals("/swagger/**", duringStart.get("micronaut.router.static-resources.swagger.mapping"));
+            assertEquals("classpath:META-INF/swagger", duringStart.get("micronaut.router.static-resources.swagger.paths"));
+            assertEquals("/swagger-ui/**", duringStart.get("micronaut.router.static-resources.swagger-ui.mapping"));
+            assertEquals("classpath:META-INF/swagger/views/swagger-ui", duringStart.get("micronaut.router.static-resources.swagger-ui.paths"));
+            assertEquals("/redoc/**", duringStart.get("micronaut.router.static-resources.redoc.mapping"));
+            assertEquals("classpath:META-INF/swagger/views/redoc", duringStart.get("micronaut.router.static-resources.redoc.paths"));
+
+            // Production runs keep the routes opt-in.
+            properties.forEach(System::clearProperty);
+            duringStart = startAndCaptureProperties(project, properties);
+            assertNull(duringStart.get("micronaut.router.static-resources.swagger-ui.mapping"));
+
+            // Application configuration that already exposes the views wins.
+            properties.forEach(System::clearProperty);
+            System.setProperty("micronaut.environments", "dev");
+            Files.writeString(project.resolve("config/application.toml"), """
+                [micronaut.router.static-resources.swagger-ui]
+                mapping = "/docs/**"
+                paths = ["classpath:META-INF/swagger/views/swagger-ui"]
+                """);
+            duringStart = startAndCaptureProperties(project, properties);
+            assertNull(duringStart.get("micronaut.router.static-resources.swagger-ui.mapping"));
+            assertNull(duringStart.get("micronaut.router.static-resources.redoc.mapping"));
+        } finally {
+            previous.forEach(PyronautRunMainTest::restoreProperty);
+        }
+    }
+
+    private static Map<String, String> startAndCaptureProperties(Path project, List<String> names) {
+        Map<String, String> captured = new java.util.HashMap<>();
+        PyronautRunMain runMain = new PyronautRunMain(
+            new PyprojectModelReader(),
+            classLoader -> { },
+            (loadedClass, appArgs) -> {
+                names.forEach(name -> captured.put(name, System.getProperty(name)));
+                return false;
+            }
+        );
+        runMain.projectDir = project;
+        assertEquals(0, runMain.call());
+        return captured;
+    }
+
+    @Test
     void failsWhenProcessedClassesDirectoryMissing() throws Exception {
         Path project = tempDir.resolve("project-missing-classes");
         Files.createDirectories(project.resolve("__pyronaut__/classes"));

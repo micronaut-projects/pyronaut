@@ -20,7 +20,6 @@ import io.micronaut.pyronaut.run.PyronautRunMain;
 
 import java.io.IOException;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -29,12 +28,6 @@ import java.util.List;
 import java.util.Map;
 
 public class PyronautDevRun extends PyronautRunMain {
-    private static final String OPENAPI_SWAGGER_PATHS = "micronaut.router.static-resources.swagger.paths";
-    private static final String OPENAPI_SWAGGER_MAPPING = "micronaut.router.static-resources.swagger.mapping";
-    private static final String OPENAPI_SWAGGER_UI_PATHS = "micronaut.router.static-resources.swagger-ui.paths";
-    private static final String OPENAPI_SWAGGER_UI_MAPPING = "micronaut.router.static-resources.swagger-ui.mapping";
-    private static final String OPENAPI_REDOC_PATHS = "micronaut.router.static-resources.redoc.paths";
-    private static final String OPENAPI_REDOC_MAPPING = "micronaut.router.static-resources.redoc.mapping";
     private static final List<TestResourcesProperty> TEST_RESOURCES_PROPERTIES = List.of(
             new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_URI", "micronaut.test.resources.server.uri"),
             new TestResourcesProperty("MICRONAUT_TEST_RESOURCES_SERVER_ACCESS_TOKEN", "micronaut.test.resources.server.access.token"),
@@ -42,11 +35,6 @@ public class PyronautDevRun extends PyronautRunMain {
     );
     private static final String EXTERNAL_DEVELOPMENT_MODE = "pyronaut.external.development";
     private static final String DEVELOPMENT_RUNTIME_DEPENDENCIES_MANIFEST = "resolved-development-runtime-dependencies";
-
-    @Override
-    protected void resolveDefaultConfiguration(Path root, Path configDir) {
-        applyDevelopmentOpenApiExposure(root, configDir);
-    }
 
     @Override
     protected void configureEnv(Map<String, String> env) {
@@ -130,40 +118,6 @@ public class PyronautDevRun extends PyronautRunMain {
                 layout.processedClassesRoot(),
                 urls
         );
-    }
-
-    private static void applyDevelopmentOpenApiExposure(Path projectDir, Path configuredConfigDir) {
-        String environments = System.getProperty(MICRONAUT_ENVIRONMENTS, "");
-        boolean development = java.util.Arrays.stream(environments.split(","))
-                .map(String::trim)
-                .anyMatch("dev"::equalsIgnoreCase);
-        if (!development || hasExplicitOpenApiExposure(projectDir, configuredConfigDir)) {
-            return;
-        }
-        setDefaultProperty(OPENAPI_SWAGGER_PATHS, "classpath:META-INF/swagger");
-        setDefaultProperty(OPENAPI_SWAGGER_MAPPING, "/swagger/**");
-        setDefaultProperty(OPENAPI_SWAGGER_UI_PATHS, "classpath:META-INF/swagger/views/swagger-ui");
-        setDefaultProperty(OPENAPI_SWAGGER_UI_MAPPING, "/swagger-ui/**");
-        setDefaultProperty(OPENAPI_REDOC_PATHS, "classpath:META-INF/swagger/views/redoc");
-        setDefaultProperty(OPENAPI_REDOC_MAPPING, "/redoc/**");
-    }
-
-    private static boolean hasExplicitOpenApiExposure(Path projectDir, Path configuredConfigDir) {
-        Path configDir = configuredConfigDir.isAbsolute() ? configuredConfigDir : projectDir.resolve(configuredConfigDir);
-        for (String name : List.of("application.toml", "application.yml", "application.yaml", "application.properties")) {
-            Path config = configDir.resolve(name);
-            try {
-                if (Files.isRegularFile(config)) {
-                    String content = Files.readString(config, StandardCharsets.UTF_8);
-                    if (content.contains("static-resources") && content.contains("swagger")) {
-                        return true;
-                    }
-                }
-            } catch (IOException ignored) {
-                // Defaults remain best effort when configuration cannot be read.
-            }
-        }
-        return false;
     }
 
     private record TestResourcesProperty(String environmentVariable, String systemProperty) {

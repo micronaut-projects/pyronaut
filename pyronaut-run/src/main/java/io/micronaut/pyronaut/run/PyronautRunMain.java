@@ -66,6 +66,12 @@ public class PyronautRunMain implements Callable<Integer> {
     private static final String LOGGER_CONFIG_PROPERTY = "logger.config";
     private static final String CONFIGURATION_VALIDATOR_FAIL_ON_NOT_PRESENT = "micronaut.jsonschema.configuration.validator.fail-on-not-present";
     private static final String CONFIGURATION_VALIDATOR_SUPPRESSIONS = "micronaut.jsonschema.configuration.validator.suppressions";
+    private static final String OPENAPI_SWAGGER_PATHS = "micronaut.router.static-resources.swagger.paths";
+    private static final String OPENAPI_SWAGGER_MAPPING = "micronaut.router.static-resources.swagger.mapping";
+    private static final String OPENAPI_SWAGGER_UI_PATHS = "micronaut.router.static-resources.swagger-ui.paths";
+    private static final String OPENAPI_SWAGGER_UI_MAPPING = "micronaut.router.static-resources.swagger-ui.mapping";
+    private static final String OPENAPI_REDOC_PATHS = "micronaut.router.static-resources.redoc.paths";
+    private static final String OPENAPI_REDOC_MAPPING = "micronaut.router.static-resources.redoc.mapping";
     @CommandLine.Option(names = "--project-dir", defaultValue = ".", description = "Project directory")
     Path projectDir = Path.of(".");
 
@@ -154,6 +160,7 @@ public class PyronautRunMain implements Callable<Integer> {
         Path root = projectDir.toAbsolutePath().normalize();
         ResolvedProjectLayout layout;
         PyprojectModel model;
+        Path effectiveConfigDir = configDir;
         try {
             configureEnv(System.getenv());
             if (isPackagedJar()) {
@@ -173,6 +180,7 @@ public class PyronautRunMain implements Callable<Integer> {
                 if (Files.isRegularFile(projectFile)) {
                     model = modelReader.readFile(projectFile);
                     Path resolvedConfigDir = resolveConfiguredPath(root, configDir, DEFAULT_CONFIG_DIR, model.pyronaut().sources().resources(), "--config-dir");
+                    effectiveConfigDir = resolvedConfigDir;
                     layout = resolveProjectLayout(root, classesDir, resolvedConfigDir, resolveConfiguredPaths(root, model.pyronaut().sources().additionalResources()));
                 } else {
                     // Packaged wheels and Docker images contain compiled output
@@ -181,7 +189,7 @@ public class PyronautRunMain implements Callable<Integer> {
                     layout = resolveProjectLayout(root, classesDir, root.resolve(configDir).normalize(), List.of());
                 }
             }
-            resolveDefaultConfiguration(root, configDir);
+            resolveDefaultConfiguration(root, effectiveConfigDir);
             applyConfigurationValidationDefaults();
         } catch (IllegalStateException e) {
             System.err.println(e.getMessage());
@@ -286,7 +294,54 @@ public class PyronautRunMain implements Callable<Integer> {
 
     }
 
+    /**
+     * Apply defaults that depend on the project before the application starts.
+     *
+     * <p>In the {@code dev} environment the generated OpenAPI YAML, Swagger UI
+     * and ReDoc views are exposed under {@code /swagger/**},
+     * {@code /swagger-ui/**} and {@code /redoc/**}, as they are for direct
+     * sources. {@code pyronaut dev} launches this runner for projects that use
+     * the JVM toolchain, so the defaults cannot live in the dev launcher alone.
+     *
+     * @param root the project directory
+     * @param configDir the configuration directory, absolute or relative to {@code root}
+     */
     protected void resolveDefaultConfiguration(Path root, Path configDir) {
+        applyDevelopmentOpenApiExposure(root, configDir);
+    }
+
+    static void applyDevelopmentOpenApiExposure(Path projectDir, Path configuredConfigDir) {
+        String environments = System.getProperty(MICRONAUT_ENVIRONMENTS, "");
+        boolean development = Arrays.stream(environments.split(","))
+                .map(String::trim)
+                .anyMatch("dev"::equalsIgnoreCase);
+        if (!development || hasExplicitOpenApiExposure(projectDir, configuredConfigDir)) {
+            return;
+        }
+        setDefaultProperty(OPENAPI_SWAGGER_PATHS, "classpath:META-INF/swagger");
+        setDefaultProperty(OPENAPI_SWAGGER_MAPPING, "/swagger/**");
+        setDefaultProperty(OPENAPI_SWAGGER_UI_PATHS, "classpath:META-INF/swagger/views/swagger-ui");
+        setDefaultProperty(OPENAPI_SWAGGER_UI_MAPPING, "/swagger-ui/**");
+        setDefaultProperty(OPENAPI_REDOC_PATHS, "classpath:META-INF/swagger/views/redoc");
+        setDefaultProperty(OPENAPI_REDOC_MAPPING, "/redoc/**");
+    }
+
+    private static boolean hasExplicitOpenApiExposure(Path projectDir, Path configuredConfigDir) {
+        Path configDir = configuredConfigDir.isAbsolute() ? configuredConfigDir : projectDir.resolve(configuredConfigDir);
+        for (String name : List.of("application.toml", "application.yml", "application.yaml", "application.properties")) {
+            Path config = configDir.resolve(name);
+            try {
+                if (Files.isRegularFile(config)) {
+                    String content = Files.readString(config, StandardCharsets.UTF_8);
+                    if (content.contains("static-resources") && content.contains("swagger")) {
+                        return true;
+                    }
+                }
+            } catch (IOException _) {
+                // Defaults remain best effort when configuration cannot be read.
+            }
+        }
+        return false;
     }
 
     static void enableContextClassLoaderIntrospections() {
