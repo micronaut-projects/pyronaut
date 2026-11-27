@@ -42,6 +42,9 @@ dependencies {
     testRuntimeOnly(libs.micronaut.toml)
     testRuntimeOnly(libs.micronaut.test.resources.client)
     testRuntimeOnly("io.projectreactor:reactor-core")
+    // the pytest fixture of the smoke projects starts the embedded Netty server, which needs a JSON
+    // implementation like any application does
+    testRuntimeOnly(mn.micronaut.jackson.databind)
     testRuntimeOnly(mnTest.micronaut.test.junit5) {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
     }
@@ -63,6 +66,9 @@ tasks {
 
     withType<Test>().configureEach {
         useJUnitPlatform()
+        // No test here uses Test Resources. Without this the client on the test class path falls back to
+        // the shared server settings in ~/.micronaut, which may name a server that is no longer running.
+        systemProperty("micronaut.test.resources.enabled", "false")
         val pyEnv = PyenvVersions.provider(project)
         val vEnv = providers.environmentVariable("VIRTUAL_ENV")
         val virtualEnv = vEnv.orNull?.let(::File)
