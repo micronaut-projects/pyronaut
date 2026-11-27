@@ -14,6 +14,7 @@ import java
 from typing import get_origin, get_args
 
 PytestFunctionInvoker = java.type("io.micronaut.test.pytest.execution.PytestFunctionInvoker")
+ServerErrorCapture = java.type("io.micronaut.test.pytest.execution.ServerErrorCapture")
 
 _INTERNAL_TRACE_MARKERS = (
     "com.oracle.truffle.",
@@ -293,6 +294,10 @@ class MicronautPytestPlugin:
         Java lifecycle callbacks run for a test that will not execute.
         """
         test_id = self._get_test_id(item)
+        try:
+            ServerErrorCapture.begin()
+        except Exception:
+            pass
         outcome = yield
         setup_ok = getattr(outcome, 'excinfo', None) is None
         self.listener.beforeTest(test_id, item if setup_ok else None)
@@ -344,7 +349,8 @@ class MicronautPytestPlugin:
         """
         test_id = self._get_test_id(item)
         self._attach_console_output(item, call.when, test_id)
-        yield
+        outcome = yield
+        self._attach_server_errors(outcome.get_result())
         self._record_call_result(test_id, call)
 
     def _attach_console_output(self, item, when, test_id):
@@ -355,6 +361,27 @@ class MicronautPytestPlugin:
                 text = None
             if text:
                 item.add_report_section(when, key, str(text))
+
+    def _attach_server_errors(self, report):
+        """Show the exceptions the application logged during a failing test
+        with its failure: an HTTP 500 is rarely enough to tell what went wrong
+        on the server."""
+        if not getattr(report, "failed", False):
+            return
+        try:
+            text = ServerErrorCapture.drain()
+        except Exception:
+            return
+        if not text:
+            return
+        title = "Server-side exceptions logged during the test"
+        text = str(text)
+        longrepr = getattr(report, "longrepr", None)
+        if hasattr(longrepr, "addsection"):
+            longrepr.addsection(title, text)
+            return
+        failure = report.longreprtext if longrepr is not None else ""
+        report.longrepr = f"{failure}\n{title}:\n{text}".lstrip("\n")
 
     def _record_call_result(self, test_id, call):
 
@@ -470,6 +497,10 @@ class MicronautPytestPlugin:
             result = self.listener.successfulResult()
 
         self.listener.afterTest(test_id, item, result)
+        try:
+            ServerErrorCapture.end()
+        except Exception:
+            pass
 
         # Clean up stored result
         self.test_results.pop(test_id, None)

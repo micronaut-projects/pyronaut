@@ -15,6 +15,8 @@ dependencies {
     implementation(project(":micronaut-pyronaut-config-model"))
     implementation(libs.micronaut.test.core)
     compileOnly(libs.micronaut.data.connection)
+    // Observes the application's error logs for test failure reports when Logback is the backend.
+    compileOnly(libs.logback.classic)
     implementation(mnTest.junit.platform.engine)
     implementation(mnTest.junit.platform.launcher)
     implementation(mn.graalpy) {
@@ -25,6 +27,7 @@ dependencies {
     implementation(mn.graalpy.embedding)
 
     testImplementation(project(":micronaut-pyronaut-requests"))
+    testImplementation(libs.logback.classic)
     testImplementation(mn.micronaut.http.server.netty)
     testImplementation(mn.micronaut.management)
     testImplementation(mnTest.junit.platform.engine)
