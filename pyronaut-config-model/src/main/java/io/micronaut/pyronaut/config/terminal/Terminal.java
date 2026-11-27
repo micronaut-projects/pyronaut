@@ -97,11 +97,28 @@ public final class Terminal {
      */
     public static boolean isInteractive() {
         Console console = System.console();
-        if (console == null || !console.isTerminal()) {
+        return supportsCursorMovement(console != null && console.isTerminal(), System.getenv("TERM"),
+            System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows"));
+    }
+
+    /**
+     * Decide whether live progress may repaint the terminal. Outside Windows
+     * a terminal without {@code TERM} (a build sandbox's pseudo-terminal, for
+     * example) gets plain lines, matching the orchestrating CLI.
+     *
+     * @param terminal whether the standard streams are a terminal
+     * @param term the {@code TERM} environment variable
+     * @param windows whether this is Windows, whose consoles do not set {@code TERM}
+     * @return whether the terminal is capable of cursor movement
+     */
+    static boolean supportsCursorMovement(boolean terminal, String term, boolean windows) {
+        if (!terminal) {
             return false;
         }
-        String term = System.getenv("TERM");
-        return term == null || !term.equalsIgnoreCase("dumb");
+        if (term == null || term.isBlank()) {
+            return windows;
+        }
+        return !term.equalsIgnoreCase("dumb");
     }
 
     /**

@@ -573,6 +573,43 @@ class OrchestratorTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual("", stderr.getvalue())
 
+    def test_progress_off_silences_the_launch_indicator_of_delegated_tools(self):
+        class TerminalStream(io.StringIO):
+            encoding = "utf-8"
+
+            def isatty(self):
+                return True
+
+        observed = []
+
+        def runner(command_line, env=None):
+            # What _run_subprocess would show while this tool starts.
+            animated = cli._progress_console().animated  # noqa: SLF001
+            if not animated:
+                launched_env = {"KEEP": "1"}
+                # No spinner and no handshake: the environment is passed through.
+                self.assertIs(launched_env, cli._launch_indicator(command_line).environment(launched_env))  # noqa: SLF001
+            observed.append(animated)
+            return 0
+
+        stderr = TerminalStream()
+        try:
+            with redirect_stderr(stderr), patch.dict(os.environ, {"TERM": "xterm-256color"}):
+                for progress in (["--progress", "off"], ["--progress=off"], []):
+                    exit_code = cli.run(
+                        ["install", "--project-dir", "/tmp/demo", *progress],
+                        runner_with_env=runner,
+                        resolver=self._resolver(),
+                        platform_name="linux",
+                    )
+                    self.assertEqual(0, exit_code)
+        finally:
+            cli._progress_console().configure(None)  # noqa: SLF001
+
+        # --progress off silences the CLI's own spinner; auto on a terminal animates.
+        self.assertEqual([False, False, True], observed)
+        self.assertNotIn("Starting dependency installer", stderr.getvalue())
+
     def test_trace_delegation_prints_command_line_when_enabled(self):
         stderr = io.StringIO()
         original = os.environ.get("PYRONAUT_TRACE_DELEGATION")

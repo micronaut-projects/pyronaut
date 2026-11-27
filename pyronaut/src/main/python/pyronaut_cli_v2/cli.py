@@ -342,6 +342,10 @@ def run(
         return SUCCESS
 
     command = argv[0]
+    # The CLI draws its own progress (launch indicators of delegated tools,
+    # Docker and download steps) besides what it forwards with --progress, so
+    # the selection applies here before anything is delegated.
+    _progress_console().configure(_progress_option(option_argv[1:]))
     _aot_cache_project_dir = _aot_cache_project(argv[1:])
     if command == "setup":
         setup_args = list(argv[1:])
@@ -8680,6 +8684,14 @@ def _extract_option_value(args: Sequence[str], option: str) -> str | None:
         if token.startswith(option + "="):
             return token.split("=", 1)[1]
     return None
+
+
+def _progress_option(args: Sequence[str]) -> str | None:
+    """The ``--progress`` value among orchestrator options; command parsing reports a malformed one."""
+    try:
+        return _extract_option_value(_orchestrator_args(args), "--progress")
+    except ValueError:
+        return None
 
 
 def _strip_local_repository_args(args: Sequence[str]) -> list[str]:
