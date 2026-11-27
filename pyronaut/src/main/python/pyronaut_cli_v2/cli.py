@@ -652,6 +652,7 @@ def run(
             )
             if install_code != SUCCESS:
                 return install_code
+            _warn_native_extensions_without_native_access(Path(project_dir).resolve())
         disable_test_resources_requested = _extract_flag(forwarded_args, "--disable-test-resources")
         test_resources_enabled = (
             not disable_test_resources_requested
@@ -6234,6 +6235,7 @@ def _run_test_cycle(
         )
         if install_code != SUCCESS:
             return install_code, test_resources_env_overrides
+        _warn_native_extensions_without_native_access(project_dir.resolve())
         # The validator reads the configuration metadata processing generates:
         # validating first checks the configuration against the previous pass.
         preflight_code = _run_preflight(
@@ -12953,6 +12955,18 @@ _DOCTOR_PROBE_TIMEOUT = 180.0
 _DOCTOR_MAX_PROBE_THREADS = 16
 _GRAALPY_COMPATIBILITY_URL = "https://graalpy.org/module_results/python-module-testing-{release}.csv"
 _GRAALPY_COMPATIBILITY_PAGE = "https://graalpy.org/python-developers/compatibility/"
+_C_EXTENSIONS_DOCS = "https://pyronaut.io/docs/#packagesWithCExtensions"
+
+
+def _native_access_snippet(config_file: Path) -> str:
+    """``graalpy.context.allow-native-access = true`` in the format of ``config_file``."""
+    if config_file.suffix == ".properties":
+        return "graalpy.context.allow-native-access=true"
+    if config_file.suffix in {".yml", ".yaml"}:
+        return "graalpy:\n  context:\n    allow-native-access: true"
+    if config_file.suffix == ".json":
+        return '{"graalpy": {"context": {"allow-native-access": true}}}'
+    return "[graalpy.context]\nallow-native-access = true"
 _GRAALPY_COMPATIBILITY_MAX_AGE = 7 * 24 * 60 * 60
 _GRAALPY_COMPATIBLE_PERCENT = 90.0
 _NATIVE_PACKAGING_FORMATS = {"wheel-native", "wheel-crema", "docker-native", "docker-crema"}
@@ -13055,6 +13069,8 @@ class _DoctorRuntimeConfig(NamedTuple):
     executors: dict[str, dict[str, object]]
     problems: tuple[str, ...]
     unparsed: tuple[str, ...]
+    # "enabled", "disabled" or "unknown" (only YAML/JSON configuration, which doctor does not parse)
+    native_access: str = "disabled"
 
 
 def _canonical_package_name(name: str) -> str:
@@ -13190,6 +13206,8 @@ def _doctor_runtime_config(project_dir: Path) -> _DoctorRuntimeConfig:
             if isinstance(settings, dict):
                 executors[str(name)] = dict(settings)
 
+    native_access = _configured_native_access(config, config_file, unparsed)
+
     if not pool_enabled:
         probe_threads = 1
     elif pool_size:
@@ -13208,7 +13226,28 @@ def _doctor_runtime_config(project_dir: Path) -> _DoctorRuntimeConfig:
         executors,
         tuple(problems),
         tuple(unparsed),
+        native_access,
     )
+
+
+def _truthy_setting(value: object) -> bool:
+    return value is True or (isinstance(value, str) and value.strip().lower() == "true")
+
+
+def _configured_native_access(config: dict[str, object], config_file: Path | None, unparsed: Sequence[str]) -> str:
+    """Whether the application lets GraalPy load C extensions (``graalpy.context.allow-native-access``).
+
+    ``allow-all-access`` implies native access, and the environment variables Micronaut maps to the
+    same properties count too. Returns ``"unknown"`` when only YAML/JSON configuration exists.
+    """
+    for key in ("allow-native-access", "allow-all-access"):
+        if _truthy_setting(_config_value(config, "graalpy", "context", key)):
+            return "enabled"
+        if _truthy_setting(os.environ.get("GRAALPY_CONTEXT_" + key.upper().replace("-", "_"))):
+            return "enabled"
+    if config_file is None and unparsed:
+        return "unknown"
+    return "disabled"
 
 
 def _deployment_label(config: _DoctorRuntimeConfig) -> str:
@@ -13468,6 +13507,28 @@ def _doctor_check_packages(project_dir: Path, config: _DoctorRuntimeConfig) -> _
             f"Reinstall the package with GraalPy ({venv_python} -m pip install --force-reinstall <name>) and check {_GRAALPY_COMPATIBILITY_PAGE}", data,
         )
     detail = f"{len(packages)} declared package{'s' if len(packages) != 1 else ''} import cleanly under {threads_note} ({_deployment_label(config)})"
+    if native and config.native_access != "enabled":
+        failure = "\"Cannot run any C extensions because native access is not allowed\""
+        if config.native_access == "unknown":
+            where = Path(config.unparsed[0])
+            state = (
+                f"doctor cannot tell whether {where.name} sets graalpy.context.allow-native-access = true; "
+                f"without it, importing them in the application fails with {failure}"
+            )
+        else:
+            where = _native_access_config_target(project_dir, config.config_file)
+            state = (
+                f"{where} does not set graalpy.context.allow-native-access = true, so importing them "
+                f"in the application fails with {failure}"
+            )
+        data["nativeAccess"] = config.native_access
+        return _doctor.CheckResult(
+            "packages", "Python packages", _doctor.WARN,
+            detail + f"; {', '.join(native)} contain native extensions, but {state}",
+            f"Add to {where}:\n{_native_access_snippet(where)}\n"
+            f"C extensions load in one GraalPy context per process; see {_C_EXTENSIONS_DOCS}",
+            data,
+        )
     if native:
         mode = "the native image" if config.native else "GraalPy"
         return _doctor.CheckResult(
@@ -13476,6 +13537,72 @@ def _doctor_check_packages(project_dir: Path, config: _DoctorRuntimeConfig) -> _
             "Verify these packages under load and at build time; prefer pure-Python alternatives or GraalPy-specific wheels", data,
         )
     return _doctor.CheckResult("packages", "Python packages", _doctor.PASS, detail, data=data)
+
+
+_NATIVE_EXTENSION_SUFFIXES = (".so", ".pyd", ".dylib")
+
+
+def _installed_native_distributions(venv_dir: Path) -> list[str]:
+    """Name the distributions in ``venv_dir`` whose RECORD lists a native extension module.
+
+    Reads only the ``*.dist-info/RECORD`` files, so it is cheap enough to run before every launch.
+    """
+    site_dirs = [*venv_dir.glob("lib/*/site-packages"), venv_dir / "Lib" / "site-packages"]
+    names: list[str] = []
+    for site_dir in site_dirs:
+        if not site_dir.is_dir():
+            continue
+        for record in sorted(site_dir.glob("*.dist-info/RECORD")):
+            try:
+                lines = record.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            if any(line.split(",", 1)[0].endswith(_NATIVE_EXTENSION_SUFFIXES) for line in lines):
+                name = record.parent.name[: -len(".dist-info")].rsplit("-", 1)[0]
+                if name not in names:
+                    names.append(name)
+    return names
+
+
+def _native_access_config_target(project_dir: Path, config_file: Path | None) -> Path:
+    """The file to add ``allow-native-access`` to: the parsed config, else application.toml."""
+    if config_file is not None:
+        return config_file
+    try:
+        resources_dir = _resolve_layout_dir(project_dir, _read_pyproject_sources(project_dir).resources_dir)
+    except (RuntimeError, ValueError, TypeError):
+        resources_dir = project_dir / _DEFAULT_RESOURCES_DIR
+    return resources_dir / "application.toml"
+
+
+def _warn_native_extensions_without_native_access(project_dir: Path) -> None:
+    """Warn before dev, run and test when installed C extensions cannot load.
+
+    GraalPy refuses to load C extensions in a context built without native access and fails the
+    import with "Cannot run any C extensions because native access is not allowed", which only
+    shows up when the code path that imports the package runs.
+    """
+    try:
+        config, config_file, unparsed = _read_application_config(project_dir)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return
+    if _configured_native_access(config, config_file, unparsed) != "disabled":
+        return
+    native = _installed_native_distributions(project_dir / ".venv")
+    if not native:
+        return
+    where: Path = _native_access_config_target(project_dir, config_file)
+    try:
+        where = where.relative_to(project_dir)
+    except ValueError:
+        pass
+    console = _progress_console()
+    console.warn(
+        f"{', '.join(native)} {'ships' if len(native) == 1 else 'ship'} C extensions, but {where} does not set "
+        "graalpy.context.allow-native-access = true; importing "
+        f"{'it' if len(native) == 1 else 'them'} fails with \"Cannot run any C extensions because native access is not allowed\""
+    )
+    console.hint(f"fix: add [graalpy.context] allow-native-access = true to {where} (see {_C_EXTENSIONS_DOCS})")
 
 
 def _graalpy_release_tag(version_line: str | None, expected: str | None) -> str | None:

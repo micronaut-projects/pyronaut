@@ -1177,6 +1177,8 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         self.assertIn("not-installed-xyz (nix: ImportError: cannot import name 'x')", broken.detail)
 
         probe["not-installed-xyz"]["errors"] = {}
+        self._write_config("[graalpy.context]\nallow-native-access = true\n")
+        config = cli._doctor_runtime_config(self.project)
         with patch.object(cli, "_doctor_probe_packages", return_value=({"packages": probe}, "")):
             native = cli._doctor_check_packages(self.project, config)
         self.assertEqual(doctor.WARN, native.status)
@@ -1188,6 +1190,108 @@ class DoctorRuntimeChecksTest(unittest.TestCase):
         self.assertEqual(doctor.FAIL, crashed.status)
         self.assertIn("package probe failed", crashed.detail)
         self.assertIn("Segmentation fault", crashed.detail)
+
+    def test_packages_check_warns_when_native_extensions_meet_disabled_native_access(self):
+        self._fake_venv()
+        probe = {
+            "requests": {"installed": True, "version": "2.32.3", "modules": ["requests"], "native": False, "errors": {}},
+            "attrs": {"installed": True, "version": "25.1.0", "modules": ["attr"], "native": True, "errors": {}},
+            "not-installed-xyz": {"installed": True, "version": "1", "modules": ["nix"], "native": False, "errors": {}},
+        }
+        config_file = self.project / "config" / "application.toml"
+
+        def check():
+            with patch.object(cli, "_doctor_probe_packages", return_value=({"packages": probe}, "")):
+                return cli._doctor_check_packages(self.project, cli._doctor_runtime_config(self.project))
+
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GRAALPY_CONTEXT_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            self._write_config("[micronaut.python.pool]\nenabled = false\n")
+            blocked = check()
+            self.assertEqual(doctor.WARN, blocked.status)
+            self.assertIn(f"attrs contain native extensions, but {config_file} does not set graalpy.context.allow-native-access = true", blocked.detail)
+            self.assertIn("Cannot run any C extensions because native access is not allowed", blocked.detail)
+            self.assertTrue(blocked.fix.startswith(f"Add to {config_file}:\n[graalpy.context]\nallow-native-access = true\n"), blocked.fix)
+            self.assertIn("https://pyronaut.io/docs/#packagesWithCExtensions", blocked.fix)
+            self.assertEqual("disabled", blocked.data["nativeAccess"])
+
+            self._write_config("[graalpy.context]\nallow-all-access = true\n")
+            self.assertIn("which are experimental on GraalPy", check().detail)
+
+            config_file.unlink()
+            properties = self.project / "config" / "application.properties"
+            properties.write_text("micronaut.application.name=demo\n", encoding="utf-8")
+            self.assertTrue(check().fix.startswith(f"Add to {properties}:\ngraalpy.context.allow-native-access=true\n"))
+            properties.write_text("graalpy.context.allow-native-access=true\n", encoding="utf-8")
+            self.assertIn("which are experimental on GraalPy", check().detail)
+
+            properties.unlink()
+            yml = self.project / "config" / "application.yml"
+            yml.write_text("graalpy:\n  context:\n    allow-native-access: true\n", encoding="utf-8")
+            unknown = check()
+            self.assertEqual("unknown", unknown.data["nativeAccess"])
+            self.assertIn("doctor cannot tell whether application.yml sets graalpy.context.allow-native-access = true", unknown.detail)
+            self.assertTrue(unknown.fix.startswith(f"Add to {yml}:\ngraalpy:\n  context:\n    allow-native-access: true\n"), unknown.fix)
+
+            with patch.dict(os.environ, {"GRAALPY_CONTEXT_ALLOW_NATIVE_ACCESS": "true"}):
+                self.assertIn("which are experimental on GraalPy", check().detail)
+
+    def _native_record(self, venv_dir, dist_info, files):
+        site = venv_dir / "lib" / "python3.13" / "site-packages" / dist_info
+        site.mkdir(parents=True)
+        (site / "RECORD").write_text("".join(f"{name},,\n" for name in files), encoding="utf-8")
+
+    def test_launch_warns_when_installed_c_extensions_cannot_load(self):
+        venv_dir = self.project / ".venv"
+        self._native_record(venv_dir, "numpy-2.2.0.dist-info", ["numpy/__init__.py", "numpy/_core/_multiarray_umath.graalpy254-darwin.so"])
+        self._native_record(venv_dir, "requests-2.32.3.dist-info", ["requests/__init__.py"])
+        self.assertEqual(["numpy"], cli._installed_native_distributions(venv_dir))
+
+        class Console:
+            def __init__(self):
+                self.lines = []
+
+            def warn(self, message):
+                self.lines.append(("warn", message))
+
+            def hint(self, message):
+                self.lines.append(("hint", message))
+
+        def launch_messages():
+            console = Console()
+            with patch.object(cli, "_progress_console", return_value=console):
+                cli._warn_native_extensions_without_native_access(self.project)
+            return console.lines
+
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GRAALPY_CONTEXT_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            self._write_config("[micronaut.application]\nname = 'demo'\n")
+            messages = launch_messages()
+            self.assertEqual(2, len(messages), messages)
+            self.assertEqual("warn", messages[0][0])
+            self.assertIn("numpy ships C extensions, but config/application.toml does not set graalpy.context.allow-native-access = true", messages[0][1])
+            self.assertIn("Cannot run any C extensions because native access is not allowed", messages[0][1])
+            self.assertEqual(
+                ("hint", "fix: add [graalpy.context] allow-native-access = true to config/application.toml "
+                         "(see https://pyronaut.io/docs/#packagesWithCExtensions)"),
+                messages[1],
+            )
+
+            self._write_config("[graalpy.context]\nallow-native-access = true\n")
+            self.assertEqual([], launch_messages())
+
+    def test_multi_line_fix_renders_each_line_as_a_hint(self):
+        hints = []
+
+        class Console:
+            def warn(self, message):
+                pass
+
+            def hint(self, message):
+                hints.append(message)
+
+        doctor.render_row(Console(), doctor.CheckResult("packages", "Python packages", doctor.WARN, "detail", "Add:\n[a]\nb = true"))
+        self.assertEqual(["fix: Add:", "     [a]", "     b = true"], hints)
 
     # -- GraalPy compatibility ------------------------------------------------
 
