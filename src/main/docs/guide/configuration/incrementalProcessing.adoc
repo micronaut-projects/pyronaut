@@ -132,7 +132,7 @@ To keep the dependency graph precise:
 - keep type annotations and decorators explicit
 - avoid discovering classes or decorators through strings when they affect generated Micronaut metadata
 - avoid mutating module exports dynamically when processors depend on those exports
-- keep `__init__.py` re-exports straightforward; package initializers are shared outputs, so Pyronaut regenerates them when Python changes
+- do not write package `__init__.py` re-exports; Pyronaut generates package initializers as shared outputs and regenerates them when Python changes (see <<packageInitializers,Python packages and `__init__.py`>>)
 
 Runtime dynamism that cannot affect compiled or generated output does not require conservative processing.
 If a dynamic relationship does affect generated beans, routes, serialization metadata, or another processor output, keep `conservative` mode or arrange an explicit static dependency.

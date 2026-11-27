@@ -48,6 +48,33 @@ additional-test-resources = []
 `pyronaut process` compiles the configured Python and Java source trees into `__pyronaut__/classes`.
 For tests, Pyronaut also creates `__pyronaut__/test-classes` from the application and test source sets.
 
+[[packageInitializers]]
+== Python packages and `__init__.py`
+
+Organize application code into packages by creating directories under the Python source directory.
+You do not need an `__init__.py` file: Pyronaut generates the `__init__.py` of every package it processes.
+The generated initializer exports each top-level class defined in the modules of the package, so both of these imports work:
+
+[source,python]
+----
+from bookshelf.book import Book
+from bookshelf import Book
+----
+
+Pyronaut generates the initializer because packages can be shared between source roots and libraries.
+For example, an application and a library on its classpath can both add modules to the same package.
+The generated initializer merges every contribution, so one source root does not hide another.
+
+An `__init__.py` that is empty or contains only a docstring and comments is accepted.
+Pyronaut ignores the file and uses the generated initializer instead, so a package docstring is not kept at runtime.
+
+`pyronaut process` rejects an `__init__.py` that contains any other code, such as imports, functions, constants, or start-up logic.
+Move that code out of the initializer:
+
+* Classes need no re-export. The generated initializer already exports them from the package.
+* Move functions and constants into a module of the package, then import them from that module, for example `from bookshelf.util import slugify`.
+* Move package start-up work into a bean, for example a `@Context` bean or a `StartupEvent` listener, so that Micronaut runs it during application startup (see <<dependencyInjection,Dependency Injection>>).
+
 == Resource directories
 
 Pyronaut adds the `resources` directory to the runtime classpath for `run`, `test`, and build operations.
