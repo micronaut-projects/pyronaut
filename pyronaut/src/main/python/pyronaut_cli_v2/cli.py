@@ -10494,6 +10494,8 @@ def _setup_expectation(args: Sequence[str]) -> dict[str, object]:
             "releaseTag": release_tag,
         },
         "graalpyVersion": graalpy.name if (graalpy := _required_graalpy()) is not None else None,
+        # Changing PYRONAUT_GRAALPY or [graalpy] executable requires setup again.
+        "graalpyExecutable": _explicit_graalpy_executable() if graalpy is not None else None,
     }
 
 
@@ -10517,6 +10519,7 @@ def _read_valid_setup_manifest(args: Sequence[str]) -> dict[str, object]:
         "toolDescriptorSha256",
         "nativeImages",
         "graalpyVersion",
+        "graalpyExecutable",
     ):
         if manifest.get(key) != expected.get(key):
             raise RuntimeError(_SETUP_REQUIRED_MESSAGE)
@@ -11468,6 +11471,8 @@ def _remove_older_sdk_versions(keep: _SdkVersion, local_repository: Path) -> tup
 # standalone GraalPy. Setup locates that interpreter (the running Python, the
 # Pyronaut SDK cache, or pyenv) and otherwise installs it through pyenv or
 # downloads the release into ~/.pyronaut/sdks, the same place as the JDK.
+# PYRONAUT_GRAALPY or `[graalpy] executable` in settings.toml names the
+# interpreter explicitly instead; it is validated but never replaced.
 
 _GRAALPY_RELEASES_URL = "https://github.com/oracle/graalpython/releases/download"
 _GRAALPY_PROBE_TIMEOUT = 60.0
@@ -11552,7 +11557,7 @@ def _probe_graalpy(executable: Path, spec: _GraalPySpec) -> _GraalPyInstallation
     version_line = _last_line(version.stdout) or _last_line(version.stderr)
     if version.returncode != 0 or "graalpy" not in version_line.lower():
         return None
-    if not _graalpy_versions_match(version_line, spec.version, spec.name):
+    if (spec.version or spec.name) and not _graalpy_versions_match(version_line, spec.version, spec.name):
         return None
     try:
         probe = subprocess.run(
@@ -11688,11 +11693,72 @@ def _download_and_install_graalpy(spec: _GraalPySpec) -> _GraalPyInstallation | 
     return _probe_graalpy(executable, spec) if executable is not None else None
 
 
+GRAALPY_ENV = "PYRONAUT_GRAALPY"
+_GRAALPY_SETTINGS_TABLE = "graalpy"
+
+
+def _explicit_graalpy_setting() -> tuple[Path, str] | None:
+    """The GraalPy executable the user configured, and where it was set.
+
+    ``PYRONAUT_GRAALPY`` overrides ``[graalpy] executable`` in the user's
+    ``settings.toml``. A leading ``~`` is expanded.
+    """
+    value = _read_env(GRAALPY_ENV)
+    if value is not None:
+        return Path(value).expanduser(), GRAALPY_ENV
+    table = _read_pyronaut_user_settings().get(_GRAALPY_SETTINGS_TABLE)
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise RuntimeError(f"[graalpy] in {_settings_label()} must be a table")
+    executable = table.get("executable")
+    if executable is None:
+        return None
+    if not isinstance(executable, str) or not executable.strip():
+        raise RuntimeError(f"[graalpy].executable in {_settings_label()} must be a non-empty string")
+    return Path(executable.strip()).expanduser(), f"[graalpy] executable in {_settings_label()}"
+
+
+def _explicit_graalpy_executable() -> str | None:
+    """The configured GraalPy path recorded in, and compared against, setup.json."""
+    explicit = _explicit_graalpy_setting()
+    return str(explicit[0]) if explicit is not None else None
+
+
+def _validate_explicit_graalpy(executable: Path, source: str, spec: _GraalPySpec | None) -> _GraalPyInstallation:
+    """Validate a configured GraalPy, failing instead of falling back to discovery."""
+    if not _is_executable_file(executable):
+        raise RuntimeError(f"GraalPy executable {executable} configured by {source} is not an executable file")
+    # A source checkout pins no version, so any GraalPy is accepted there.
+    installation = _probe_graalpy(executable, spec or _GraalPySpec("", None, ""))
+    if installation is not None:
+        return installation
+    try:
+        version = subprocess.run(
+            [str(executable), "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GRAALPY_PROBE_TIMEOUT,
+        )
+        version_line = _last_line(version.stdout) or _last_line(version.stderr) or f"exit code {version.returncode}"
+    except (OSError, subprocess.SubprocessError) as exc:
+        version_line = str(exc)
+    expected = f"GraalPy {_graalpy_display_version(spec)}" if spec is not None else "a GraalPy interpreter"
+    raise RuntimeError(
+        f"GraalPy executable {executable} configured by {source} reports {version_line!r}, "
+        f"but this Pyronaut requires {expected}"
+    )
+
+
 def _ensure_graalpy(runner: RunnerWithEnv, *, offline: bool = False) -> _GraalPyInstallation | None:
     """Locate or provision the GraalPy interpreter this Pyronaut requires."""
     spec = _required_graalpy()
     if spec is None:
         return None
+    explicit = _explicit_graalpy_setting()
+    if explicit is not None:
+        return _validate_explicit_graalpy(explicit[0], explicit[1], spec)
     found = _find_graalpy(spec)
     if found is not None or offline:
         return found
@@ -11735,6 +11801,9 @@ def _graalpy_for_project_environment() -> Path | None:
     if graalpy is not None:
         return Path(graalpy["executable"])
     spec = _required_graalpy()
+    explicit = _explicit_graalpy_setting()
+    if explicit is not None:
+        return _validate_explicit_graalpy(explicit[0], explicit[1], spec).executable
     if spec is not None:
         found = _find_graalpy(spec)
         return found.executable if found is not None else None
@@ -12549,6 +12618,9 @@ def _setup_recorded_graalpy() -> Path | None:
 
 def _find_global_graalpy() -> tuple[Path, str] | None:
     """Locate a GraalPy interpreter outside any project virtualenv."""
+    explicit = _explicit_graalpy_setting()
+    if explicit is not None:
+        return explicit[0], explicit[1]
     recorded = _setup_recorded_graalpy()
     if recorded is not None:
         return recorded, "pyronaut setup"

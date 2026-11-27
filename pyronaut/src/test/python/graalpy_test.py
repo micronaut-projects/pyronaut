@@ -221,6 +221,114 @@ class GraalPyProvisioningTest(unittest.TestCase):
             env = cli._build_java_home_env("run", lambda: "/tmp/graalvm")
         self.assertEqual("/custom/python", env["PYRONAUT_PYTHON_EXECUTABLE"])
 
+    def _write_settings(self, text: str) -> None:
+        settings = self.home / ".pyronaut" / "settings.toml"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(text, encoding="utf-8")
+
+    def _setup_expectation(self) -> dict[str, object]:
+        # The descriptor hashes exist only in an installed wheel.
+        with (
+            patch.object(cli, "_packaged_sdk_descriptor_hash", return_value="sdk"),
+            patch.object(cli, "_packaged_tool_descriptor_hash", return_value="tool"),
+            patch.object(cli, "_installed_pyronaut_version", return_value="0.0.0"),
+        ):
+            return cli._setup_expectation([])
+
+    def test_settings_executable_replaces_discovery_and_provisioning(self):
+        _write_fake_graalpy(self.home / ".pyronaut" / "sdks" / _SPEC.name)
+        custom = _write_fake_graalpy(self.root / "custom")
+        self._write_settings(f'[graalpy]\nexecutable = "{custom}"\n')
+        with (
+            patch.object(cli, "_required_graalpy", return_value=_SPEC),
+            patch.object(cli, "_install_graalpy_with_pyenv") as pyenv_install,
+            patch.object(cli, "_download_and_install_graalpy") as download,
+        ):
+            installation = cli._ensure_graalpy(lambda command, env=None: 1)
+            self.assertEqual(custom, installation.executable)
+            self.assertEqual(custom, cli._graalpy_for_project_environment())
+            self.assertEqual(str(custom), self._setup_expectation()["graalpyExecutable"])
+        pyenv_install.assert_not_called()
+        download.assert_not_called()
+        self.assertEqual((custom, "[graalpy] executable in ~/.pyronaut/settings.toml"), cli._find_global_graalpy())
+
+    def test_environment_variable_overrides_settings_executable(self):
+        from_settings = _write_fake_graalpy(self.root / "settings")
+        from_env = _write_fake_graalpy(self.root / "env")
+        self._write_settings(f'[graalpy]\nexecutable = "{from_settings}"\n')
+        with (
+            patch.dict(os.environ, {"PYRONAUT_GRAALPY": str(from_env)}),
+            patch.object(cli, "_required_graalpy", return_value=_SPEC),
+        ):
+            self.assertEqual(from_env, cli._ensure_graalpy(lambda command, env=None: 1).executable)
+            self.assertEqual((from_env, "PYRONAUT_GRAALPY"), cli._find_global_graalpy())
+
+    def test_settings_executable_expands_home(self):
+        custom = _write_fake_graalpy(self.home / "tools" / "graalpy")
+        self._write_settings('[graalpy]\nexecutable = "~/tools/graalpy/bin/graalpy"\n')
+        with patch.dict(os.environ, {"HOME": str(self.home)}), patch.object(cli, "_required_graalpy", return_value=_SPEC):
+            self.assertEqual(custom, cli._ensure_graalpy(lambda command, env=None: 1).executable)
+
+    def test_configured_executable_with_wrong_version_fails_without_fallback(self):
+        _write_fake_graalpy(self.home / ".pyronaut" / "sdks" / _SPEC.name)
+        other = _write_fake_graalpy(self.root / "old", "GraalPy 3.12.8 (Oracle GraalVM Native 25.3.4.1)")
+        with (
+            patch.dict(os.environ, {"PYRONAUT_GRAALPY": str(other)}),
+            patch.object(cli, "_required_graalpy", return_value=_SPEC),
+            patch.object(cli, "_download_and_install_graalpy") as download,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                cli._ensure_graalpy(lambda command, env=None: 1)
+        message = str(raised.exception)
+        self.assertIn(str(other), message)
+        self.assertIn("PYRONAUT_GRAALPY", message)
+        self.assertIn("25.3.4.1", message)
+        self.assertIn("graalpy3.13-25.4.4 (25.4.4.1.1)", message)
+        download.assert_not_called()
+
+    def test_configured_executable_that_does_not_exist_fails(self):
+        missing = self.root / "missing" / "bin" / "graalpy"
+        self._write_settings(f'[graalpy]\nexecutable = "{missing}"\n')
+        with patch.object(cli, "_required_graalpy", return_value=_SPEC):
+            with self.assertRaisesRegex(RuntimeError, "is not an executable file"):
+                cli._ensure_graalpy(lambda command, env=None: 1)
+
+    def test_invalid_graalpy_settings_are_rejected(self):
+        self._write_settings('graalpy = "x"\n')
+        with self.assertRaisesRegex(RuntimeError, r"\[graalpy\] in .* must be a table"):
+            cli._explicit_graalpy_setting()
+        self._write_settings('[graalpy]\nexecutable = ""\n')
+        with self.assertRaisesRegex(RuntimeError, r"\[graalpy\]\.executable .* must be a non-empty string"):
+            cli._explicit_graalpy_setting()
+        self._write_settings('[graalpy]\n')
+        self.assertIsNone(cli._explicit_graalpy_setting())
+
+    def test_source_checkout_accepts_any_configured_graalpy(self):
+        custom = _write_fake_graalpy(self.root / "custom", "GraalPy 3.12.8 (Oracle GraalVM Native 25.3.4.1)")
+        with (
+            patch.dict(os.environ, {"PYRONAUT_GRAALPY": str(custom)}),
+            patch.object(cli, "_required_graalpy", return_value=None),
+        ):
+            self.assertEqual(custom, cli._graalpy_for_project_environment())
+            self.assertIsNone(self._setup_expectation()["graalpyExecutable"])
+
+    def test_changing_configured_executable_invalidates_setup(self):
+        custom = _write_fake_graalpy(self.root / "custom")
+        with patch.object(cli, "_required_graalpy", return_value=_SPEC):
+            unset = self._setup_expectation()
+            with patch.dict(os.environ, {"PYRONAUT_GRAALPY": str(custom)}):
+                configured = self._setup_expectation()
+        self.assertIsNone(unset["graalpyExecutable"])
+        self.assertEqual(str(custom), configured["graalpyExecutable"])
+        manifest = self.root / "setup.json"
+        manifest.write_text(json.dumps(unset), encoding="utf-8")
+        with (
+            patch.object(cli, "_setup_manifest_path", return_value=manifest),
+            patch.object(cli, "_setup_expectation", return_value=configured),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "pyronaut setup"):
+                cli._read_valid_setup_manifest([])
+
 
 class RunningGraalPyTest(unittest.TestCase):
     def test_running_graalpy_finds_windows_executable_in_base_prefix(self):

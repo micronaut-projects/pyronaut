@@ -52,6 +52,19 @@ Setup reuses a matching GraalPy that is already installed with pyenv or under `~
 installed, setup runs `pyenv install` if pyenv is available, and otherwise downloads GraalPy into
 `~/.pyronaut/sdks`.
 
+To use a GraalPy installed elsewhere, name its executable in `~/.pyronaut/settings.toml`:
+
+[source,toml]
+----
+[graalpy]
+executable = "/opt/graalpy-25.4.4/bin/graalpy"
+----
+
+The `PYRONAUT_GRAALPY` environment variable overrides that setting. Setup then uses only that interpreter: it never
+searches pyenv, installs, or downloads GraalPy, and it fails when the executable does not exist or when
+`graalpy --version` does not report the version that `pyronaut --version` shows. Run `pyronaut setup` again after you
+change the setting; until then, other commands report that setup is required.
+
 Pyronaut records setup state in `setup.json` under the Pyronaut home directory:
 
 [source,text]
