@@ -33,6 +33,15 @@ class PytestMicronautExtensionTest {
     @TempDir
     Path tempDir;
 
+    @Test
+    void generatedJavaClassIsNullForValuesThatAreNotPythonClasses() {
+        assertNull(PytestMicronautExtension.generatedJavaClass(null));
+        assertNull(PytestMicronautExtension.generatedJavaClass(Value.asValue(null)));
+        assertNull(PytestMicronautExtension.generatedJavaClass(Value.asValue(new Object())));
+        // A guest value that cannot be converted to a Class resolves to no generated class.
+        assertNull(PytestMicronautExtension.generatedJavaClass(Value.asValue(42)));
+    }
+
     @AfterEach
     void cleanupPythonContextRuntime() {
         PythonContextRuntime.setReuseContext(false);
