@@ -1,5 +1,6 @@
 """Vendored GraalPy environments in JARs and application wheels."""
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -85,6 +86,106 @@ class PackagedPythonTest(unittest.TestCase):
             cli._copy_docker_classes(classes, root / "docker-classes")
             self.assertFalse((root / "docker-classes" / VFS / "venv").exists())
             self.assertTrue((classes / VFS / "venv/host-native.so").exists())
+
+    def _build_native_wheel(self, project, *, native_base_flag):
+        """Run pyronaut build with packaged dependencies and return the staged wheel files."""
+        vfs = project / "__pyronaut__/classes" / VFS
+        staged = {}
+
+        def prepare(*args, **kwargs):
+            package = vfs / "venv/lib/python3.13/site-packages/vaderSentiment"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("PACKAGED = True\n")
+            (package / "__pycache__").mkdir()
+            (vfs / "venv/pyvenv.cfg").write_text("home = /build/graalpy\n")
+            (vfs / "venv/pyronaut-packaged.txt").write_text("Python runtime dependencies\n")
+
+        def runner(command, env):
+            if command[0] == "/tmp/pyronaut-native-build":
+                output = Path(command[command.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("binary")
+            elif command[1:3] == ["-m", "pip"]:
+                staging = Path(command[-1])
+                staged.update({path.relative_to(staging).as_posix(): path for path in staging.rglob("*")})
+                staged["native-venv"] = sorted(
+                    path.relative_to(project).as_posix() for path in (project / "__pyronaut__/native/venv").rglob("*")
+                ) if (project / "__pyronaut__/native/venv").is_dir() else []
+            return 0
+
+        base = project.parent / "bundled-base/pyronaut-run-python"
+        base.parent.mkdir(exist_ok=True)
+        base.write_text("binary")
+        with (
+            patch.object(cli, "_prepare_packaged_python_dependencies", side_effect=prepare),
+            patch.object(cli, "_bundled_default_native_base", return_value=base),
+            patch.object(cli, "_run_preflight", return_value=cli.SUCCESS),
+            patch.object(cli, "_run_lifecycle_validation", return_value=cli.SUCCESS),
+            patch.object(cli, "_build_native_classpath"),
+            patch.object(cli, "_build_non_test_resources_env", return_value={}),
+        ):
+            exit_code = cli.run(
+                ["build", *native_base_flag, "--project-dir", str(project)],
+                runner_with_env=runner,
+                resolver=lambda name: f"/tmp/{name}",
+                platform_name="darwin",
+                java_home_provider=lambda: "/tmp/graalvm-jdk-25",
+            )
+        self.assertEqual(cli.SUCCESS, exit_code)
+        return staged
+
+    def _native_project(self, root):
+        project = root / "vader"
+        (project / "__pyronaut__/classes" / VFS / "src").mkdir(parents=True)
+        (project / "__pyronaut__/classes" / VFS / "src/main.py").write_text("import vaderSentiment\n")
+        (project / "__pyronaut__/resolved-runtime-dependencies").write_text("\n")
+        (project / "pyproject.toml").write_text(
+            '[project]\nname = "vader"\nversion = "1.0"\ndependencies = ["vaderSentiment==3.3.2"]\n'
+        )
+        return project
+
+    def test_crema_wheel_and_staged_native_base_carry_the_packaged_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = self._native_project(Path(temporary))
+            staged = self._build_native_wheel(project, native_base_flag=["--native-base"])
+            classes = "vader_launcher/app/__pyronaut__/classes/" + VFS.as_posix()
+            self.assertIn(f"{classes}/venv/lib/python3.13/site-packages/vaderSentiment/__init__.py", staged)
+            self.assertIn(f"{classes}/venv/pyronaut-packaged.txt", staged)
+            self.assertNotIn("vader_launcher/app/__pyronaut__/native/venv", staged)
+            native = project / "__pyronaut__/native"
+            # The staged base runs the project's classes, which lose the
+            # packaged environment once the build restores development.
+            self.assertFalse((project / "__pyronaut__/classes" / VFS / "venv").exists())
+            self.assertTrue((native / "venv/pyronaut-packaged.txt").is_file())
+            self.assertTrue((native / "venv/pyvenv.cfg").is_file())
+            self.assertTrue((native / "venv/lib/python3.13/site-packages/vaderSentiment/__init__.py").is_file())
+            self.assertFalse((native / "venv/lib/python3.13/site-packages/vaderSentiment/__pycache__").exists())
+            self.assertIn("__pyronaut__/native/venv/pyronaut-packaged.txt", staged["native-venv"])
+
+    def test_native_base_environment_follows_the_current_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            native = Path(temporary) / "__pyronaut__/native"
+            classes_venv = Path(temporary) / "__pyronaut__/classes" / VFS / "venv"
+            (native / "venv/lib/stale").mkdir(parents=True)
+            (native / "venv/pyronaut-packaged.txt").touch()
+            classes_venv.mkdir(parents=True)
+            (classes_venv / "pyronaut-packaged.txt").touch()
+            (classes_venv / "lib/current").mkdir(parents=True)
+            cli._stage_native_base_python_environment(Path(temporary), native, native_base=True)
+            self.assertTrue((native / "venv/lib/current").is_dir())
+            self.assertFalse((native / "venv/lib/stale").exists())
+            # A full native image embeds its environment; a stale copy beside it is removed.
+            cli._stage_native_base_python_environment(Path(temporary), native, native_base=False)
+            self.assertFalse((native / "venv").exists())
+            # Requirements removed: nothing is packaged, so nothing is staged.
+            shutil.rmtree(classes_venv)
+            cli._stage_native_base_python_environment(Path(temporary), native, native_base=True)
+            self.assertFalse((native / "venv").exists())
+            # An environment the build did not stage is left alone.
+            (native / "venv").mkdir()
+            (native / "venv/user.txt").touch()
+            cli._stage_native_base_python_environment(Path(temporary), native, native_base=True)
+            self.assertTrue((native / "venv/user.txt").is_file())
 
     def test_removing_requirements_removes_the_previous_vendored_environment(self):
         with tempfile.TemporaryDirectory() as temporary:

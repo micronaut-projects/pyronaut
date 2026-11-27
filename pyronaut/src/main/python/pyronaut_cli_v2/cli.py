@@ -3339,6 +3339,9 @@ def _run_build(
                 if not output_binary.exists():
                     print(f"Native build reported success but no binary was produced at: {output_binary}", file=sys.stderr)
                     return PRECONDITION_FAILED
+                _stage_native_base_python_environment(
+                    project_dir, output_dir, native_base=default_native_base or configured_base is not None,
+                )
                 with tempfile.TemporaryDirectory(prefix="pyronaut-build-native-") as staging_root:
                     staging_dir = Path(staging_root) / "stage"
                     wheel_exit = _build_wheel(
@@ -4444,6 +4447,26 @@ def _prepare_packaged_python_dependencies(project_dir: Path, *, offline: bool) -
         python_packages.install(root / "project" / relative, requirements, uv=uv, python=python,
                                 venv=root / "venv", offline=offline)
         python_packages.package(root / "venv", classes)
+
+
+def _stage_native_base_python_environment(project_dir: Path, native_dir: Path, *, native_base: bool) -> None:
+    """Keep the packaged environment beside a staged native base executable.
+
+    A native base executable embeds no application resources: it loads the
+    processed classes of the directory it runs in, and the packaged
+    environment is removed from the project's classes once the build ends so
+    that development keeps using the project environment. The launcher selects
+    ``venv`` beside the executable instead. The wheel does not need the copy;
+    its classes carry the environment.
+    """
+    from . import python_packages
+
+    target = native_dir / "venv"
+    if (target / python_packages.PACKAGED_MARKER).is_file():
+        shutil.rmtree(target)
+    source = _pyronaut_output_dir(project_dir) / "classes" / python_packages.PACKAGED_VENV
+    if native_base and (source / python_packages.PACKAGED_MARKER).is_file() and not target.exists():
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__"))
 
 
 def _add_docker_python_dependencies(project_dir: Path, context_dir: Path, dockerfile: Path, *, static_native: bool) -> None:

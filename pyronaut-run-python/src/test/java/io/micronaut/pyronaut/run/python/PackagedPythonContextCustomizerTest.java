@@ -60,4 +60,19 @@ class PackagedPythonContextCustomizerTest {
                 PackagedPythonContextCustomizer.packagedExecutable(loader));
         }
     }
+
+    @Test
+    void selectsTheEnvironmentStagedBesideANativeBase() throws Exception {
+        Path executable = temporary.resolve("__pyronaut__/native/demo");
+        Files.createDirectories(executable.resolveSibling("venv"));
+        Files.writeString(executable, "binary");
+        assertNull(PackagedPythonContextCustomizer.stagedExecutable(executable));
+        Files.writeString(executable.resolveSibling("venv/pyronaut-packaged.txt"), "packaged\n");
+        assertEquals(executable.resolveSibling("venv/bin/python"), PackagedPythonContextCustomizer.stagedExecutable(executable));
+    }
+
+    @Test
+    void ignoresStagedEnvironmentsOnTheJvm() {
+        assertNull(PackagedPythonContextCustomizer.stagedExecutable(null));
+    }
 }
