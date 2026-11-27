@@ -190,7 +190,7 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
         }
         try {
             return pythonClass.as(Class.class);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException _) {
             return null;
         }
     }
