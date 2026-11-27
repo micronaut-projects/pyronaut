@@ -4,8 +4,9 @@ before it runs, and which runtime features the Pyronaut SDK includes for you.
 
 == Use Micronaut annotations as decorators
 
-Micronaut uses annotations such as `@Controller`, `@Get`, `@Singleton`, and `@Value`. Pyronaut exposes these annotations
-as Python decorators. Import them from the Java package with the leading `io.` removed:
+Micronaut uses annotations such as `@Controller`, `@Get`, `@Singleton`, and `@Value`. A Java annotation looks like a
+Python decorator but does not wrap anything: it is a label that the framework reads to decide how to treat a class or
+method. Pyronaut exposes these annotations as Python decorators. Import them from the Java package with the leading `io.` removed:
 
 [source,python]
 ----
@@ -17,9 +18,6 @@ def index() -> str:
     return "Hello from Pyronaut"
 ----
 
-NOTE: Decorator names retain the capitalization of their corresponding Micronaut annotations. For example, use `@Get`,
-not `@get`.
-
 NOTE: Pyronaut omits the `io.` prefix because `io` is a Python standard-library module and a package cannot shadow it.
 For example, when the https://docs.micronaut.io/latest/api/[Micronaut API reference] lists
 `io.micronaut.http.annotation.Get`, import it as `micronaut.http.annotation.Get`. Packages that do not start with
@@ -29,8 +27,16 @@ For example, when the https://docs.micronaut.io/latest/api/[Micronaut API refere
 Pass annotation members as keyword arguments, for example `@Get(value="/", produces="text/plain")`, or pass a single
 positional argument for the `value` member, as in `@Get("/")`.
 
-NOTE: A decorator on a Python class corresponds to a type-level annotation. A decorator on a function or method
-corresponds to a method-level annotation.
+Put a decorator where the Micronaut guide puts the annotation. A decorator on a class configures the whole class, and a
+decorator on a function or method configures that function:
+
+[source,python]
+----
+@Controller("/books")       # applies to the class: every route in it starts with /books
+class BookController:
+    @Get("/{isbn}")         # applies to this method: GET /books/{isbn}
+    def show(self, isbn: str) -> str: ...
+----
 
 Use `typing.Annotated` for annotations that Java applies to fields or parameters. It keeps the type hint and annotation
 together:
@@ -49,6 +55,13 @@ def save(name: Annotated[str, NotBlank, Size(min=1, max=30)], payload: Annotated
 
 A bare name inside `Annotated`, such as `NotBlank`, applies the annotation with its default values. Call the annotation
 to pass members.
+
+=== Why the decorators are capitalized
+
+Each decorator is a Micronaut annotation and keeps the annotation's exact name. Java names classes, annotations
+included, in CapitalizedWords. `@Get` is the annotation `io.micronaut.http.annotation.Get`, so its
+name, its arguments, and its documentation are the ones in the Micronaut guide and API reference. There are no
+lowercase aliases such as `@get`; use `@Get`.
 
 === Names that clash with Python keywords
 

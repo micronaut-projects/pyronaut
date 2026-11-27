@@ -1,6 +1,7 @@
 Use this guide to create a Pyronaut project, add an HTTP route, configure the
-application, and run a test. If you prefer direct-source mode, follow the
-<<fastApiTutorial,FastAPI tutorial>> instead.
+application, and run a test. A project is the standard Python layout: `pyproject.toml`, sources under `src/`, and
+tests under `tests/`. If you would rather start from a single file, follow the
+<<fastApiTutorial,FastAPI tutorial>> first.
 
 [[prerequisites]]
 == Step 1: Complete the prerequisites
@@ -30,7 +31,9 @@ cd hello-pyronaut
 Add `--features data-jdbc,mysql` to the `pyronaut create` command when you need those Micronaut features.
 The generated project includes `src/main.py` for logging setup, `tests/test_application.py` as a starter test, and
 `config/application.toml` for application settings. The following steps add an HTTP route, configure its port, and
-replace the starter test.
+replace the starter test. <<completeProjectTree,A complete project>> shows the full file tree of a project like this
+one, and <<fastApiProject,step 8 of the FastAPI tutorial>> shows a larger project-mode example with validation and
+pytest fixtures.
 
 The following optional subsection briefly explains the project configuration. Skip it to continue with the generated
 files.

@@ -1,12 +1,29 @@
 = Installing Pyronaut
 
-Install the Pyronaut CLI, then run `pyronaut setup` to provision the SDK that runs Pyronaut applications.
+Install the Pyronaut CLI, then run `pyronaut setup` to provision the SDK that runs Pyronaut applications. Setup
+downloads a Java runtime and GraalPy, a few hundred megabytes in total; see <<setupSize,Download and disk size>>.
 
 == Install the Pyronaut CLI
 
 The CLI requires Python 3.10 or later. On Python 3.10, which has no built-in TOML parser, the `tomli` package is installed automatically with the CLI.
 
-Install Pyronaut from PyPI:
+The recommended way to install the CLI is as a https://docs.astral.sh/uv/[uv] tool, which gives it an isolated
+environment and puts `pyronaut` on your `PATH`:
+
+[source,bash]
+----
+uv tool install pyronaut
+pyronaut --version
+----
+
+To try Pyronaut without installing it, run it through `uvx`, for example `uvx pyronaut --version`, then
+`uvx pyronaut setup` and `uvx pyronaut dev app.py`.
+
+Install the CLI as a tool rather than adding it to a project's own dependencies. Pyronaut creates and manages the
+project's `.venv` with GraalPy, and `uv run` in a project would otherwise create that `.venv` with CPython; see
+<<python-uv-projects,uv projects>> for how Pyronaut works with uv-managed projects.
+
+Alternatively, install the CLI with `pip`:
 
 [source,bash,subs="attributes"]
 ----
@@ -25,7 +42,7 @@ python3 -m pip install --upgrade --no-index \
 pyronaut --version
 ----
 
-The Python installation used by `pip` only installs the CLI. Pyronaut applications run with the embedded GraalPy
+The Python installation that uv or `pip` uses only runs the CLI. Pyronaut applications run with the embedded GraalPy
 runtime supplied by the Pyronaut SDK, and `pyronaut setup` provisions the matching GraalPy interpreter for project
 virtual environments. `pyronaut --version` shows the required version on the `GraalPy Interpreter` line.
 If your application or tests use Python packages, see <<project-installation,Getting Started Step 3: Install project dependencies>>
@@ -74,6 +91,15 @@ pyronaut update
 
 The command also removes the launchers and cached artifacts of older versions. See <<pyronautCliV2,Pyronaut CLI Reference>> for its options.
 
+`pyronaut update` installs the new wheel with `pip` from the CLI's own Python environment. A `uv tool` environment has
+no `pip`, so if you installed the CLI with uv, upgrade with uv and then provision the new version:
+
+[source,bash]
+----
+uv tool upgrade pyronaut
+pyronaut setup
+----
+
 If `pyronaut setup` or any later command fails, run `pyronaut doctor` first:
 
 [source,bash]
@@ -108,6 +134,48 @@ Pyronaut downloads the native launchers into `~/.pyronaut/bin` (`bin` in the dat
 
 TIP: See
 <<proxyConfig,Proxy Configuration>> for proxy setup.
+
+[[setupSize]]
+== Download and disk size
+
+Pyronaut is a large install compared with a Python web framework, because it brings its own Java runtime and Python
+implementation. Approximate sizes on macOS and Linux:
+
+[cols="2,1,1,3", options="header"]
+|===
+|Piece |Download |On disk |What it is for
+
+|Pyronaut CLI wheel
+|72 MB
+|72 MB
+|The `pyronaut` command and the Java tools it runs. Installed by uv or `pip`.
+
+|GraalVM JDK
+|370 MB
+|750 MB
+|The Java runtime that runs your application, the processor, and the test runner during development. Skipped when a
+compatible GraalVM is already installed.
+
+|GraalPy
+|105 MB
+|470 MB
+|The Python interpreter used to create the project's `.venv`, so that packages you install match the Python
+implementation that runs your code. Skipped when a matching GraalPy is already installed.
+
+|Native launchers (optional)
+|620 MB
+|1.9 GB
+|Precompiled executables that start `pyronaut dev`, `test`, and direct-source commands faster than the JVM. Downloaded the first time a command needs them, or with `pyronaut setup --native-launchers`.
+
+|Maven artifacts and project `.venv`
+|varies
+|varies
+|Java libraries in `~/.m2/repository`, shared between projects, and each project's Python packages.
+|===
+
+With the native launchers and one project, expect about 3.4 GiB on disk in total. `pyronaut update` removes the
+launchers and cached artifacts of older versions, and `pyronaut clean --full` removes a project's `.venv` and
+`__pyronaut__`.
 
 [[pyronautHome]]
 == Relocate Pyronaut state

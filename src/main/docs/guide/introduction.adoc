@@ -1,26 +1,14 @@
 Pyronaut is a framework for building Python applications on https://www.graalvm.org/python/[GraalPy] and https://micronaut.io[Micronaut]. It gives Python code access to Micronaut's HTTP server, dependency injection, configuration, validation, serialization, observability, and testing capabilities. Pyronaut processes Python and Java source before the application starts, preparing routes, beans, serializers, and validation metadata.
 
 Use type hints and decorators to build applications for development, direct
-execution, or deployment as JVM applications, native executables, or
+execution, or deployment on the Java virtual machine (JVM), as native executables, or in
 containers. You write ordinary Python while Pyronaut connects it to the
 Micronaut application model.
 
-== Recommended path
-
-. Start with <<installation,Installing Pyronaut>>.
-. Follow <<project,Create a Pyronaut Project>> to build a project in project mode; complete <<project-installation,Step 3: Install project dependencies>> before running pytest. Alternatively, follow <<fastApiTutorial,The FastAPI Tutorial>> to try direct-source mode without a project virtual environment.
-. After the tutorial, read <<concepts,Micronaut Concepts for Python Developers>>. The remaining chapters assume you
-understand these concepts. Then use <<configuration,Configure a Pyronaut Project>> as you add dependencies and
-application settings.
-. Use <<testing,Testing>> and <<packaging,Packaging and Deployment>> when you are ready to verify and distribute the application.
-
-If an existing Maven or Gradle build manages the project, or if Python code
-needs Java libraries, see <<mavenGradle,Using Maven and Gradle Projects>> and
-<<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>>.
-
+[[minimalApplication]]
 == A minimal application
 
-Create `app.py`:
+A Pyronaut application can start from a single file. Create `app.py`:
 
 [source,python]
 ----
@@ -39,32 +27,126 @@ Run:
 pyronaut dev app.py
 ----
 
-Pyronaut processes the source, starts a server on port 8080, and reloads it when the file changes. The route returns JSON, Pyronaut generates an OpenAPI description, and it serves Swagger UI at `/swagger-ui/index.html`. This direct-source application does not need `pyproject.toml`, a GraalPy virtual environment, or a separate application server.
+Pyronaut processes the source, starts a server on port 8080, and reloads it when the file changes. The route returns
+JSON, and Swagger UI for the generated OpenAPI description is served at `/swagger-ui/index.html`. There is no separate
+application server to install.
 
-== Why choose Pyronaut
+Add a `pyproject.toml` when the application grows beyond a few files, needs packages from PyPI, needs Python tests run
+with pytest, or needs to be packaged; <<project,Create a Pyronaut Project>> shows the layout. Until then, the single
+file is enough.
 
-A typical production Python service combines a web framework, an application
-server, validation, serialization, testing, observability, packaging, and
-deployment tooling. Pyronaut connects these concerns through one application
-model on top of Micronaut.
+== Recommended path
 
-Compared with Flask and FastAPI:
+. <<installation,Install Pyronaut>> and run `pyronaut setup`.
+. Run the <<minimalApplication,minimal application>> above.
+. Follow <<fastApiTutorial,The FastAPI Tutorial>>, which grows that single file into an API with validation, a request
+body, and tests.
+. Move to a project with <<project,Create a Pyronaut Project>>, which uses the standard `pyproject.toml`, `src/`, and
+`tests/` layout and pytest fixtures.
+. Read <<concepts,Micronaut Concepts for Python Developers>>. The remaining chapters assume you understand these
+concepts. Then use <<configuration,Configure a Pyronaut Project>> as you add dependencies and application settings.
+. Use <<testing,Testing>> and <<packaging,Packaging and Deployment>> when you are ready to verify and distribute the
+application.
 
-* *Decorators map to Micronaut annotations.* `@Get`, `@Singleton`, `@Value`, and the other decorators in this guide correspond to Micronaut annotations. Type hints on parameters and return values tell Micronaut how to bind requests, validate input, and serialize output.
-* *Processing happens before startup.* `pyronaut process` reads your decorators and type hints and generates route and bean metadata, serializers, and validation metadata before the application starts. Source and generated-metadata errors can therefore appear during processing instead of on the first request.
-* *Java libraries are available from Python.* Declare a Java library in `pyproject.toml`, resolve it with `pyronaut install`, and import its classes from Python. See <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>> for supported integration patterns.
-* *Threads and `asyncio` both work.* Plain `def` routes run on a thread pool, `async def` routes run on the Netty event loop, and Python coroutines can await Java asynchronous results directly. See <<threading,Threading, Blocking Work and asyncio>>.
+If an existing Maven or Gradle build manages the project, or if Python code needs Java libraries, see
+<<mavenGradle,Using Maven and Gradle Projects>> and <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>>.
 
-The application model also provides:
+== Why a Python developer might use Pyronaut
+
+*Speed.* Pyronaut runs your Python code on GraalPy, a Python implementation with a just-in-time compiler, inside the
+JVM. After warm-up, request handling is fast: in our measurements of an endpoint that reads one row
+from PostgreSQL, a Pyronaut application on the JVM handled about four times the requests per second of the equivalent
+FastAPI application under Uvicorn, with lower p99 latency. Treat that as a starting point and measure your own workload.
+
+*Batteries included.* Routing, request validation, JSON serialization, configuration files, dependency injection (the
+framework creates your service objects and passes them to the code that needs them, so you do not wire them up by
+hand), OpenAPI documentation, health checks, and a test client are part of the framework rather than separate packages
+you choose and glue together.
+
+*Databases in development and tests without setup.* Enable Test Resources, declare a PostgreSQL driver, and leave the
+connection URL out of `application.toml`. When you run `pyronaut dev` or `pyronaut test`, Pyronaut starts PostgreSQL in a Docker container
+and passes the URL and credentials to the application, so there is no connection string to copy into a `.env` file and
+no database to install. See <<testResources,Test Resources and Docker>>.
+
+*One command-line tool.* `pyronaut` creates projects, installs Python and Java dependencies, runs the development server
+with reload, runs tests, and builds wheels, container images, and standalone executables.
+
+=== Where Pyronaut is weaker
+
+* *Python code that loops over Java objects.* Every attribute access or call on a Java object crosses from Python into
+Java. A tight Python loop over thousands of Java objects is slower than the same loop over Python dicts on CPython. Keep
+hot loops on plain Python data, or move them into a Java library.
+* *Install size.* The CLI wheel is about 72 MB, and `pyronaut setup` downloads a GraalVM JDK and GraalPy. With the
+optional native launchers and a project virtual environment, expect about 3.4 GiB on disk; see
+<<installation,Installing Pyronaut>> for the breakdown.
+* *C extensions.* GraalPy runs pure-Python packages, and many popular packages with C extensions, but not every package
+on PyPI. Check a package before you depend on it; `pyronaut doctor` reports GraalPy's published compatibility results
+for the packages a project declares. See <<usingPackagesJavaLibraries,Using Python Packages and Java Libraries>>.
+* *Startup on the JVM.* A JVM application takes seconds to start, longer than Uvicorn. Native executables start much
+faster; see <<packaging,Packaging and Deployment>>.
+
+== Compared with Flask and FastAPI
+
+[cols="1,2,2,2", options="header"]
+|===
+| |Flask |FastAPI |Pyronaut
+
+|Routing
+|`@app.route` decorators on functions
+|`@app.get` decorators on functions; type hints bind parameters
+|`@Get`, `@Post` decorators on functions or on methods of a `@Controller` class; type hints bind parameters. Routes are
+checked when the source is processed, before the server starts.
+
+|Validation
+|Add-on packages such as Marshmallow or WTForms
+|Pydantic models
+|Dataclasses with constraints in `Annotated`, such as `Annotated[str, NotBlank]`. Invalid input returns
+`400 Bad Request`.
+
+|Database access
+|Add-on packages such as SQLAlchemy
+|Add-on packages such as SQLAlchemy or SQLModel
+|Micronaut Data repositories or JDBC from Python, or pure-Python database libraries. Connection pools and transactions
+come from configuration.
+
+|Testing
+|pytest with the Flask test client
+|pytest with `TestClient`
+|pytest or JUnit-style modules run with `pyronaut test`; a `requests`-compatible client targets an embedded server.
+Databases and other services can start automatically in Docker.
+
+|Packaging
+|You choose the WSGI server, Docker image, and process manager
+|You choose the ASGI server and Docker image
+|`pyronaut build` produces a wheel, a runnable JAR (a Java archive started with `java -jar`), a container image, or a native executable. The server is built in.
+
+|Startup and throughput
+|Starts quickly; throughput limited by CPython and the GIL
+|Starts quickly; good I/O concurrency with `async`
+|Seconds to start on the JVM, fast with a native executable. Higher throughput after warm-up, and several Python
+interpreter contexts can run Python code in parallel.
+
+|Ecosystem and C extensions
+|All of PyPI on CPython
+|All of PyPI on CPython
+|Pure-Python packages and the C-extension packages GraalPy supports, plus any Java library from Maven Central.
+|===
+
+Some differences that the table does not show:
+
+* *Decorators are Micronaut annotations.* `@Get`, `@Singleton`, `@Value`, and the other decorators in this guide are
+Micronaut's Java annotations used from Python. See <<how,How Pyronaut Works>>.
+* *Processing happens before startup.* `pyronaut process` reads your decorators and type hints and generates route
+metadata, serializers, and validation code before the application starts, so mistakes in them show up as errors with
+a file and line number instead of on the first request.
+* *Threads and `asyncio` both work.* Plain `def` routes run on a thread pool, `async def` routes run on the server's
+event loop, and Python coroutines can await Java asynchronous results directly. See
+<<threading,Threading, Blocking Work and asyncio>>.
+
+== What else is included
 
 Observability and operations::
 Pyronaut exposes Micronaut's management endpoints (health, info, environment, loggers, routes, and thread dumps) as part of the runtime. Add the Micronaut modules for https://micronaut-projects.github.io/micronaut-micrometer/latest/guide/[Micrometer] metrics with registries for Prometheus, Datadog, CloudWatch, and others, https://micronaut-projects.github.io/micronaut-tracing/latest/guide/[OpenTelemetry] distributed tracing, and https://micronaut-projects.github.io/micronaut-kubernetes/latest/guide/[Kubernetes] service discovery, configuration, and health probes through `[tool.pyronaut.dependencies]`. For JVM deployments, Java tooling such as Java Flight Recorder, heap and thread analysis, and JMX also applies to the Python service.
-
-Test Resources for local infrastructure::
-With `MicronautTest`, `pyronaut test` can run pytest against the application context and an embedded server. When the configured dependencies identify a supported service, https://micronaut-projects.github.io/micronaut-test-resources/latest/guide/[Micronaut Test Resources] can start the service, often in a Docker container through Testcontainers, and supply its connection settings. This can remove the need to hard-code local service URLs and credentials. The same mechanism supports `pyronaut dev`. See <<testResources,Test Resources and Docker>>.
-
-One CLI for the application lifecycle::
-`pyronaut create`, `dev`, `test`, `validate-config`, and `build` cover the project lifecycle. The build command supports Python wheels, runnable JARs, container images, GraalVM native executables, and reusable Crema runtime images. See <<packaging,Packaging and Deployment>>.
 
 Multiple deployment targets::
 JVM packages require a compatible GraalVM JDK. Native executable targets depend on the available launcher bundle and native toolchain for the target platform. Packages for Python applications include the embedded GraalPy runtime, so the deployment target does not need a separate Python installation.
@@ -74,18 +156,14 @@ Editor support::
 
 == Project structure
 
-A typical Pyronaut project directory contains:
-
-* Python application sources under `src`
-* Python tests under `tests`
-* Micronaut configuration such as `application.toml` under `config`
-* Python and Java dependencies declared in `pyproject.toml`
-* Generated state under `__pyronaut__`, which is safe to delete
-
-The `pyronaut` command is the single entry point. It creates projects, resolves Java dependencies, processes sources, runs applications during development or for deployment, runs tests, validates configuration, and builds wheels, JARs, native executables, and container images. It also generates editor stubs that VS Code (Pylance) and PyCharm can use for completion of Micronaut and Java APIs.
+A Pyronaut project uses the usual Python layout: `pyproject.toml` at the root, application code under `src`, tests under
+`tests`, and configuration such as `application.toml` under `config`. Pyronaut writes generated state to
+`__pyronaut__`, which is safe to delete. <<projectStructure,Pyronaut Project Layout and Generated State>> shows a
+complete file tree.
 
 == Next steps
 
 * Install with <<installation,Installing Pyronaut>>.
-* Choose <<project,Create a Pyronaut Project>> for a project workflow or <<fastApiTutorial,The FastAPI Tutorial>> for direct-source mode.
+* Grow the single file with <<fastApiTutorial,The FastAPI Tutorial>>, then move to a project with
+<<project,Create a Pyronaut Project>>.
 * Continue with <<configuration,Configure a Pyronaut Project>> to add dependencies, application settings, and editor support.
