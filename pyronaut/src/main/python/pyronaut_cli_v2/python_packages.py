@@ -9,6 +9,9 @@ from pathlib import Path
 
 from . import cli
 
+PACKAGED_VENV = "META-INF/GRAALPY-VFS/micronaut-application/venv"
+PACKAGED_MARKER = "pyronaut-packaged.txt"
+
 
 def _copy_runtime_libraries(executable: Path) -> None:
     """Distroless base images omit the C++ runtime needed by standalone GraalPy."""

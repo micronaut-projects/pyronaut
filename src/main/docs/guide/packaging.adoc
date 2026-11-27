@@ -107,6 +107,13 @@ for the target operating system and architecture. JARs containing native Python
 extensions have the same platform constraint. Docker builds resolve dependencies
 for Linux inside the image build.
 
+A `wheel-crema` build uses a native base that does not embed the application,
+so the executable staged at `__pyronaut__/native/<name>` runs the project's
+processed classes. The build restores those classes for development afterwards,
+so it also stages the packaged environment as `__pyronaut__/native/venv`, and the
+staged executable uses it instead of `VIRTUAL_ENV`. The installed wheel carries
+the environment with its own processed classes.
+
 == Runnable fat JARs
 
 Build one executable JAR with:
