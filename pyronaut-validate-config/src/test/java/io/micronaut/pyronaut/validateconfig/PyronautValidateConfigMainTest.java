@@ -230,6 +230,69 @@ class PyronautValidateConfigMainTest {
     }
 
     @Test
+    void executorAcceptsReadableByteSizesForReadableBytesProperties() throws Exception {
+        Path config = Files.createDirectories(tempDir.resolve("config"));
+        Files.writeString(config.resolve("application.toml"), """
+            [micronaut.server]
+            max-request-size = '6MB'
+
+            [micronaut.server.multipart]
+            max-file-size = '512kb'
+            threshold = 1048576
+            """);
+
+        Path reports = tempDir.resolve("reports");
+        PyronautValidateConfigMain.ValidationExecutionResult result = validateQuietly(config, reports);
+
+        String json = Files.readString(reports.resolve("configuration-errors.json"));
+        assertFalse(result.hasErrors(), json);
+        assertFalse(json.contains("max-request-size"), json);
+        assertFalse(json.contains("max-file-size"), json);
+    }
+
+    @Test
+    void executorRejectsInvalidByteSizesForReadableBytesProperties() throws Exception {
+        Path config = Files.createDirectories(tempDir.resolve("config"));
+        Files.writeString(config.resolve("application.toml"), """
+            [micronaut.server]
+            max-request-size = '6 parsecs'
+            """);
+
+        Path reports = tempDir.resolve("reports");
+        PyronautValidateConfigMain.ValidationExecutionResult result = validateQuietly(config, reports);
+
+        String json = Files.readString(reports.resolve("configuration-errors.json"));
+        assertTrue(result.hasErrors(), json);
+        assertTrue(json.contains("\"property\":\"micronaut.server.max-request-size\""), json);
+        assertTrue(json.contains("byte size such as 10MB"), json);
+    }
+
+    private PyronautValidateConfigMain.ValidationExecutionResult validateQuietly(Path resourcesDir, Path reports) throws Exception {
+        PrintStream originalErr = System.err;
+        try {
+            System.setErr(new PrintStream(new ByteArrayOutputStream(), true, UTF_8));
+            return new MicronautConfigurationValidatorExecutor().validate(new PyronautValidateConfigMain.ValidationSettings(
+                true,
+                false,
+                false,
+                false,
+                "reachable",
+                PyronautValidateConfigMain.ReportFormat.JSON,
+                reports,
+                tempDir,
+                List.of("test"),
+                List.of(),
+                List.of(resourcesDir),
+                List.of(),
+                List.of(),
+                "test"
+            ));
+        } finally {
+            System.setErr(originalErr);
+        }
+    }
+
+    @Test
     void validationIgnoresUserLevelTestResourcesSettings() throws Exception {
         // A settings file left behind by a shared Test Resources server that is no longer running.
         Path home = tempDir.resolve("home");
