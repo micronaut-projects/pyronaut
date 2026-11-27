@@ -1,8 +1,5 @@
-from typing import Annotated
-
 import requests
 
-from jakarta.inject import Inject
 from micronaut.context import ApplicationContext
 from micronaut.test.extensions.junit5.annotation import MicronautTest
 from pyronaut.build import Dependency
@@ -17,24 +14,25 @@ Dependency(
 
 MicronautTest()
 
-context: Annotated[ApplicationContext, Inject]
 
-def client():
-    return requests.with_context(context)
-
-def test_root():
-    response = client().get("/")
+def test_root(context: ApplicationContext):
+    client = requests.with_context(context)
+    response = client.get("/")
     assert response.json() == {"Hello": "World"}
 
-def test_read_item():
-    response = client().get("/items/5", params={"q": "somequery"})
+
+def test_read_item(context: ApplicationContext):
+    client = requests.with_context(context)
+    response = client.get("/items/5", params={"q": "somequery"})
     assert response.json() == {
         "item_id": 5,
         "q": "somequery",
     }
 
-def test_update_item():
-    response = client().put(
+
+def test_update_item(context: ApplicationContext):
+    client = requests.with_context(context)
+    response = client.put(
         "/items/5",
         json={"name": "Foo", "price": 42.0, "is_offer": True},
     )
@@ -43,8 +41,10 @@ def test_update_item():
         "item_id": 5,
     }
 
-def test_item_validation():
-    response = client().put(
+
+def test_item_validation(context: ApplicationContext):
+    client = requests.with_context(context)
+    response = client.put(
         "/items/5",
         json={"name": "", "price": -1},
     )

@@ -3,7 +3,7 @@
 Pyronaut supports JUnit 5 tests, pytest tests, or both through the JUnit Platform.
 Use `pyronaut test` when tests need the Micronaut classpath, processed sources, test resources, or Micronaut test integration.
 
-If you usually use pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions.
+If you usually use pytest, keep using it: write ordinary `test_*.py` modules with fixtures, parametrization and marks, and use the `MicronautTest` fixture described in <<micronautTest,Using MicronautTest>> when a test needs a running application. The JUnit 5 Python module style described below trades pytest's fixture model for direct dependency injection into the test module; it is the better fit for direct-source tests and for tests that share an application context across many test functions. Either way, run the tests with `pyronaut test`; <<plainPytest,plain pytest cannot collect them>>.
 
 == Selecting a test engine
 
@@ -37,15 +37,35 @@ Run all tests:
 pyronaut test
 ----
 
-VS Code's Python pytest support invokes pytest directly and is not suitable for Micronaut-backed Pyronaut tests.
-Use the Pyronaut VS Code Test Explorer extension when running these tests from VS Code.
-See <<vscodeExtension,VS Code Test Explorer Extension>>.
+[[plainPytest]]
+=== Run tests with `pyronaut test`, not `python -m pytest`
+
+Running pytest directly, for example `.venv/bin/python -m pytest`, cannot collect Pyronaut tests. The modules they
+import, such as `micronaut`, `pyronaut.test`, the Pyronaut `requests` client, and any Java class, are not packages in
+`.venv`. They exist only inside the Java process that `pyronaut test` starts, together with your processed sources and
+the Test Resources services. Plain pytest stops at the first such import:
+
+[source,text]
+----
+ImportError while importing test module '.../tests/test_main.py'.
+E   ModuleNotFoundError: No module named 'requests'
+----
+
+`pyronaut test` still runs pytest, with your fixtures, parametrization, marks, and plugins; it runs it inside that
+process. Pass pytest-style selectors with `--tests`, as described in <<projectTestDiscovery,Project test discovery>>.
+To run tests from an editor:
+
+* *VS Code*: install the Pyronaut Test Explorer extension, which runs the tests you select through `pyronaut test`, and
+turn off the Python extension's own pytest discovery. See <<vscodeExtension,VS Code Test Explorer Extension>>.
+* *PyCharm*: PyCharm's pytest run configurations call pytest directly and fail in the same way. Create a *Shell Script*
+run configuration that runs `pyronaut test` in the project directory, adding `--tests tests/test_main.py::test_root`
+to run a single test. <<ideSetup,IDE Setup for VS Code and PyCharm>> covers code completion.
 
 `pyronaut test` performs install and process preflight, runs configuration validation for the `test` scenario, starts configured project test resources, and delegates discovery to the configured engines. For direct sources, Test Resources starts only when runtime dependencies and inline runtime `@AppConfig` declarations identify a missing property supported by an inferred provider. Use `--disable-test-resources` to disable either form of automatic orchestration.
 
 == JUnit 5 Python modules
 
-The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest()` at module level. Top-level functions whose names start with `test` become test methods, while helper and lifecycle functions are also defined at module level. Injected values are available through their module-level attributes.
+The JUnit engine supports Python modules as JUnit 5 tests. Invoke `MicronautTest()` at module level. Top-level functions whose names start with `test` become test methods, while helper and lifecycle functions are also defined at module level. Injected values are available through their module-level attributes, or as parameters of a test function: `def test_root(context: ApplicationContext)` receives the running application context, as in <<fastApiTutorial,The FastAPI Tutorial>>.
 
 [source,python]
 ----
@@ -107,6 +127,7 @@ pyronaut test --report Foo.java -- FooTest.java
 pyronaut test --report build/test-reports Foo.java -- FooTest.java
 ----
 
+[[projectTestDiscovery]]
 == Project test discovery
 
 Pyronaut discovers Python tests from the configured `python-test` source directory.

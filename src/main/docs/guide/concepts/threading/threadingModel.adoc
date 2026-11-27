@@ -60,3 +60,71 @@ n-threads = 20
 WARNING: Never set `virtual = true` for an executor that runs Python code. GraalPy does not support executing Python on Java virtual threads and the application will fail at runtime.
 
 See the https://docs.micronaut.io/latest/guide/#threadPools[Configuring Server Thread Pools] section of the Micronaut guide for executor types and options.
+
+[[moduleState]]
+== Module-level state is per context
+
+In a Flask or FastAPI process, a module-level variable is shared by every request the process handles. In Pyronaut
+that is not true by default. To run Python code on several threads in parallel, Pyronaut keeps a pool of GraalPy
+contexts (independent Python interpreters inside the same process; see <<contextPool,The GIL and the Context Pool>>),
+and each context imports your modules separately. A request uses whichever context is free, so a module-level variable
+can hold a different value from one request to the next.
+
+This counter does not count the application's requests:
+
+[source,python]
+----
+from micronaut.http.annotation import Get
+
+counter = 0  # one copy per context, not one per application
+
+
+@Get("/hits")
+def hits() -> dict:
+    global counter
+    counter += 1
+    return {"count": counter}
+----
+
+Under concurrent load each context keeps its own `counter`, so successive responses can return values such as `39`,
+`11`, `98`, and `2`. The same applies to module-level caches, lists, and connections.
+
+Keep state that requests share in a `@Singleton` bean. Pyronaut creates one instance for the whole application,
+whichever context handles the request, and passes it to any controller that asks for it in `__init__` (see
+<<dependencyInjection,Dependency Injection>>):
+
+[source,python]
+----
+import threading
+
+from jakarta.inject import Singleton
+from micronaut.http.annotation import Controller, Get
+
+
+@Singleton
+class HitCounter:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._count = 0
+
+    def increment(self) -> int:
+        with self._lock:  # several requests can call this at the same time
+            self._count += 1
+            return self._count
+
+
+@Controller("/hits")
+class HitController:
+    def __init__(self, counter: HitCounter):
+        self.counter = counter
+
+    @Get("/")
+    def hits(self) -> dict:
+        return {"count": self.counter.increment()}
+----
+
+For state that must survive a restart or be shared between several running copies of the application, use an
+external store such as a database instead.
+
+Constants, functions, classes, and values that are cheap to rebuild, such as a compiled regular expression, are fine at
+module level: each context builds its own copy, and the copies are identical.
