@@ -23,6 +23,7 @@ import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.testkit.engine.EngineTestKit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * Integration test for the PytestTestEngine.
@@ -65,6 +66,28 @@ class PytestEngineTest {
                 context.close(true);
             }
         }
+    }
+
+    @Test
+    void engineDoesNotBootstrapAContextWithoutPytestSelectors() {
+        if (PythonContextRuntime.isInitialized()) {
+            Context previous = PythonContextRuntime.getContext();
+            PythonContextRuntime.setReuseContext(false);
+            PythonContextRuntime.resetContext();
+            previous.close(true);
+        }
+
+        // what a Gradle or IDE run selects when the engine is merely on its class path
+        EngineTestKit
+            .engine(PytestTestEngine.ENGINE_ID)
+            .selectors(DiscoverySelectors.selectClass(PytestEngineTest.class))
+            .execute()
+            .testEvents()
+            .assertStatistics(stats -> stats.started(0));
+
+        // a context the engine bootstrapped would be installed JVM-wide and reset (every module
+        // reloaded) after execution, breaking imports for whoever reuses it
+        assertFalse(PythonContextRuntime.isInitialized());
     }
 
     @Test

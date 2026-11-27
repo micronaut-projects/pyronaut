@@ -73,6 +73,14 @@ public class PytestTestEngine implements TestEngine {
         LOG.debug("Starting test discovery with uniqueId: {}", uniqueId);
         rejectUnsupportedUniqueIdSelectors(discoveryRequest);
         var configurationParameters = discoveryRequest.getConfigurationParameters();
+        if (!hasPytestSelection(discoveryRequest)) {
+            // Nothing this engine can resolve, such as the class selectors of a Gradle or IDE run that
+            // only has the engine on its class path. Bootstrapping would install a JVM-wide reusable
+            // context that this engine owns and resets after execution: the reset reloads every
+            // module, importlib included, and leaves imports broken for whoever reuses the context.
+            LOG.debug("No pytest file or directory selected, skipping pytest discovery");
+            return new EngineDescriptor(uniqueId, "Micronaut Pytest Engine");
+        }
         if (this.context == null) {
             createGraalPyContext(configurationParameters);
         } else {
@@ -122,6 +130,17 @@ public class PytestTestEngine implements TestEngine {
         LOG.debug("Discovery completed. Found {} test descriptors", engineDescriptor.getChildren().size());
 
         return engineDescriptor;
+    }
+
+    static boolean hasPytestSelection(EngineDiscoveryRequest request) {
+        if (!request.getSelectorsByType(FileSelector.class).isEmpty()
+            || !request.getSelectorsByType(DirectorySelector.class).isEmpty()) {
+            return true;
+        }
+        return request.getConfigurationParameters().get(TEST_SOURCE_DIR)
+            .map(Paths::get)
+            .filter(Files::exists)
+            .isPresent();
     }
 
     static void rejectUnsupportedUniqueIdSelectors(EngineDiscoveryRequest request) {

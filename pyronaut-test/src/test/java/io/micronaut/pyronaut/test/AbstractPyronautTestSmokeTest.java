@@ -1,11 +1,13 @@
 package io.micronaut.pyronaut.test;
 
+import io.micronaut.context.python.PythonContextRuntime;
 import io.micronaut.pyronaut.processor.PyronautProcessorMain;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.tools.JavaCompiler;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.PrintStream;
@@ -15,12 +17,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 abstract class AbstractPyronautTestSmokeTest {
 
@@ -43,7 +48,7 @@ abstract class AbstractPyronautTestSmokeTest {
         );
 
         RunResult result = runPyronautTest(project);
-        assertEquals(0, result.exitCode(), result.output());
+        assertPassedTests(project, result, "pass()");
     }
 
     protected void assertPythonLogbackModuleLoadsUsingProjectClasspath() throws Exception {
@@ -77,7 +82,7 @@ abstract class AbstractPyronautTestSmokeTest {
         );
 
         RunResult result = runDefaultPytest(project);
-        assertEquals(0, result.exitCode(), result.output());
+        assertPassedTests(project, result, "test_imports_logback_config");
     }
 
     protected void assertProcessedPythonBeanLookupWorks() throws Exception {
@@ -155,7 +160,7 @@ abstract class AbstractPyronautTestSmokeTest {
         assertEquals(0, processExit);
 
         RunResult result = runDefaultPytest(project);
-        assertEquals(0, result.exitCode(), result.output());
+        assertPassedTests(project, result, "test_processed_python_service_lookup");
     }
 
     protected void assertPytestUsesProcessedRuntimeSourcesForKeywordAliases() throws Exception {
@@ -234,7 +239,7 @@ abstract class AbstractPyronautTestSmokeTest {
         assertEquals(0, processExit);
 
         RunResult result = runDefaultPytest(project);
-        assertEquals(0, result.exitCode(), result.output());
+        assertPassedTests(project, result, "test_keyword_safe_java_method_alias");
     }
 
     protected void assertPytestLoadsProjectTypeConverterRegistrars() throws Exception {
@@ -285,11 +290,50 @@ abstract class AbstractPyronautTestSmokeTest {
         );
 
         RunResult result = runDefaultPytest(project);
-        assertEquals(0, result.exitCode(), result.output());
+        assertPassedTests(project, result, "test_project_type_converter_registrar");
     }
 
     protected abstract RunResult runPyronautTest(Path project) throws Exception;
     protected abstract RunResult runDefaultPytest(Path project) throws Exception;
+
+    /**
+     * Asserts that the run passed and that exactly the expected tests ran: a run that collects no
+     * tests also exits with 0, so the exit code alone does not show the tests ran.
+     */
+    private static void assertPassedTests(Path project, RunResult result, String... expectedTests) throws Exception {
+        Path report = project.resolve("__pyronaut__/reports/tests/junit.xml");
+        String reportXml = Files.isRegularFile(report) ? Files.readString(report) : "(no report)";
+        // the console output abbreviates failures; the report has them in full
+        assertEquals(0, result.exitCode(), result.output() + "\n" + reportXml);
+        assertTrue(Files.isRegularFile(report), "No test report at " + report + "\n" + result.output());
+        var testcases = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+            .parse(report.toFile())
+            .getElementsByTagName("testcase");
+        Set<String> passed = new TreeSet<>();
+        Set<String> notPassed = new TreeSet<>();
+        for (int i = 0; i < testcases.getLength(); i++) {
+            var testcase = (org.w3c.dom.Element) testcases.item(i);
+            String name = testcase.getAttribute("name");
+            boolean failedOrSkipped = testcase.getElementsByTagName("failure").getLength() > 0
+                || testcase.getElementsByTagName("error").getLength() > 0
+                || testcase.getElementsByTagName("skipped").getLength() > 0;
+            (failedOrSkipped ? notPassed : passed).add(name);
+        }
+        Set<String> expected = new TreeSet<>(List.of(expectedTests));
+        String context = "report " + report + "\n" + reportXml + "\n" + result.output();
+        assertEquals(Set.of(), notPassed, "Tests that did not pass, " + context);
+        assertEquals(expected, passed.stream().map(AbstractPyronautTestSmokeTest::simpleTestName).collect(Collectors.toCollection(TreeSet::new)),
+            "Tests that ran, " + context);
+    }
+
+    private static String simpleTestName(String reportName) {
+        // pytest node ids and Java display names carry the file or class before the test name
+        int pytestSeparator = reportName.lastIndexOf("::");
+        if (pytestSeparator >= 0) {
+            return reportName.substring(pytestSeparator + 2);
+        }
+        return reportName.substring(reportName.lastIndexOf('.') + 1);
+    }
 
     protected static RunResult runJvmTest(Path project) throws Exception {
         return runJvmTest(project, "smoke.GeneratedPassingTest");
@@ -300,6 +344,9 @@ abstract class AbstractPyronautTestSmokeTest {
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         PrintStream originalOut = System.out;
         PrintStream originalErr = System.err;
+        // A `pyronaut test` run owns its JVM; in process, each run starts without the reusable
+        // context of the previous one, whose host class loader belongs to another project
+        releaseReusableContext();
         int exitCode;
         try {
             System.setOut(new PrintStream(stdout, true, StandardCharsets.UTF_8));
@@ -315,8 +362,14 @@ abstract class AbstractPyronautTestSmokeTest {
         } finally {
             System.setOut(originalOut);
             System.setErr(originalErr);
+            releaseReusableContext();
         }
         return new RunResult(exitCode, stdout.toString(StandardCharsets.UTF_8) + stderr.toString(StandardCharsets.UTF_8));
+    }
+
+    private static void releaseReusableContext() {
+        PythonContextRuntime.setReuseContext(false);
+        PythonContextRuntime.resetContext();
     }
 
     private static Path buildSupportJar(Path workDir) throws Exception {
