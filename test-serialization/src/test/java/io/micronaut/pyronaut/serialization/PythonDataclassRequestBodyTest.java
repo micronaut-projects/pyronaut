@@ -74,4 +74,20 @@ class PythonDataclassRequestBodyTest {
             assertEquals(HttpStatus.BAD_REQUEST, missingCount.getStatus());
         }
     }
+
+    @Test
+    void passesTheBodyToTheRouteAndToAServiceAsADataclassInstance() {
+        try (EmbeddedServer server = ApplicationContext.run(EmbeddedServer.class);
+             HttpClient httpClient = server.getApplicationContext().createBean(HttpClient.class, server.getURL())) {
+            BlockingHttpClient client = httpClient.toBlocking();
+
+            assertEquals(
+                Map.of(
+                    "route_type", "BookRequest", "route_is_dataclass", "True", "route_note", "None", "route_status", "WANT_TO_READ",
+                    "service_type", "BookRequest", "service_is_dataclass", "True", "service_note", "None", "service_status", "WANT_TO_READ"
+                ),
+                client.retrieve(HttpRequest.POST("/books/asdict", "{\"name\":\"x\",\"count\":1}"), Map.class)
+            );
+        }
+    }
 }

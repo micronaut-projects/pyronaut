@@ -15,5 +15,6 @@ class ReadingStatus(enum.Enum):
 class BookRequest:
     name: str
     count: int
+    note: str | None = None
     status: ReadingStatus = ReadingStatus.WANT_TO_READ
     label: str = "default-label"
