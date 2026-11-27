@@ -1106,7 +1106,9 @@ def _delegate_direct_source(
         [value for value in args if value not in {"--jvm", "--native"}]
     )
     try:
-        executable_path = _resolve_direct_source_dev_executable(forwarded_args, resolver, debug_vm=debug_vm)
+        # Select the launcher from the original arguments: forwarded_args no
+        # longer carries --jvm/--native, which would silently pick native.
+        executable_path = _resolve_direct_source_dev_executable(args, resolver, debug_vm=debug_vm)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return PRECONDITION_FAILED
@@ -1121,25 +1123,53 @@ def _delegate_direct_source(
     if debug_vm:
         env = _apply_debug_vm_env(env)
     env = _apply_direct_source_jvm_options(env, executable_path, command, args, debug_vm=debug_vm)
-    jvm_args = _build_direct_source_native_jvm_args(
-        executable_path,
-        env,
-        command=command,
-        environment=_default_environment(command, forwarded_args),
-        # Keep orchestration flags available while constructing JVM
-        # properties. In particular, --control-panel is stripped from the
-        # delegated argument list below but must still enable its classpath.
-        args=args,
-    )
+    try:
+        jvm_args = _build_direct_source_native_jvm_args(
+            executable_path,
+            env,
+            command=command,
+            environment=_default_environment(command, forwarded_args),
+            # Keep orchestration flags available while constructing JVM
+            # properties. In particular, --control-panel is stripped from the
+            # delegated argument list below but must still enable its classpath.
+            args=args,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
     forwarded_args = [
         "-Dmicronaut.control-panel.enabled=true" if value == "--control-panel" else value
         for value in forwarded_args
         if value not in {"--jvm", "--native"}
     ]
-    command_line = [executable_path, *jvm_args, *forwarded_args]
+    command_line = _direct_source_command_line(executable_path, jvm_args, forwarded_args)
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
     return runner(command_line, env)
+
+
+def _direct_source_command_line(
+    executable_path: str,
+    jvm_args: Sequence[str],
+    forwarded_args: Sequence[str],
+) -> list[str]:
+    if forwarded_args[:1] == ["test"] and _is_launcher_script(executable_path):
+        # A JVM launcher script hands leading -D arguments to main as
+        # application arguments, and pyronaut-dev recognizes a direct-source
+        # test only by its leading "test"; it applies the -D arguments that
+        # follow as system properties.
+        return [executable_path, "test", *jvm_args, *forwarded_args[1:]]
+    return [executable_path, *jvm_args, *forwarded_args]
+
+
+def _is_launcher_script(executable_path: str) -> bool:
+    if Path(executable_path).suffix.lower() in {".bat", ".cmd"}:
+        return True
+    try:
+        with open(executable_path, "rb") as executable:
+            return executable.read(2) == b"#!"
+    except OSError:
+        return False
 
 
 def _run_direct_source(
@@ -1214,8 +1244,9 @@ def _resolve_direct_source_dev_executable(
 ) -> str | None:
     """Select the direct-source launcher, honoring the command-line override."""
     if _direct_source_uses_jvm(args, debug_vm=debug_vm):
-        bundled = _bundled_executable(DEV_NATIVE_EXECUTABLE)
-        return str(bundled) if bundled is not None and bundled.exists() else resolver(DEV_NATIVE_EXECUTABLE)
+        # The resolver prefers the launcher whose libraries setup resolved;
+        # the wheel's own copy omits the Maven-provided jars such as JUnit.
+        return resolver(DEV_NATIVE_EXECUTABLE)
     return _resolve_pyronaut_dev_native_executable(resolver) or resolver(DEV_NATIVE_EXECUTABLE)
 
 
@@ -1341,19 +1372,23 @@ def _run_direct_source_with_auto_restart(
         for value in direct_args
         if value not in {"--jvm", "--native"}
     ]
-    command_line = [
-        executable_path,
-        *_build_direct_source_native_jvm_args(
+    try:
+        command_line = _direct_source_command_line(
             executable_path,
-            env,
-            command=command,
-            environment=_default_environment(command, direct_args),
-            # --control-panel is removed from direct_args before delegation;
-            # retain the original flags for JVM-property construction.
-            args=args,
-        ),
-        *forwarded_args,
-    ]
+            _build_direct_source_native_jvm_args(
+                executable_path,
+                env,
+                command=command,
+                environment=_default_environment(command, direct_args),
+                # --control-panel is removed from direct_args before delegation;
+                # retain the original flags for JVM-property construction.
+                args=args,
+            ),
+            forwarded_args,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return PRECONDITION_FAILED
 
     cleanup = lambda: _stop_direct_source_test_resources_server(
         project_dir=Path.cwd().resolve(),
@@ -2305,14 +2340,38 @@ def _native_launcher_compile_classpath_entries(
             else _packaged_native_compile_descriptor_entries(image_name)
         )
         if image["descriptorSha256"] != _native_descriptor_hash(entries):
+            if launcher_executable and image["descriptorSha256"] == _native_descriptor_hash(
+                _packaged_native_compile_descriptor_entries(image_name)
+            ):
+                # Setup resolved the classpath this Pyronaut release ships, so
+                # running setup again cannot help: the launcher itself is from
+                # another release, typically through a settings override.
+                raise _NativeLauncherMismatch(_native_launcher_mismatch_message(launcher_executable, image_name))
             raise ValueError("native descriptor changed")
         resolved = image["classpath"]
         if len(resolved) != len(entries) or not all(isinstance(path, str) and Path(path).is_file() for path in resolved):
             raise ValueError("native classpath is incomplete")
         _verify_descriptor_paths(entries, resolved)
         return list(resolved)
+    except _NativeLauncherMismatch:
+        raise
     except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
         raise RuntimeError(_SETUP_REQUIRED_MESSAGE) from exc
+
+
+class _NativeLauncherMismatch(RuntimeError):
+    """A native launcher whose compiler classpath is not the one setup resolved."""
+
+
+def _native_launcher_mismatch_message(launcher_executable: str, image_name: str) -> str:
+    version = _installed_pyronaut_version()
+    env_key = image_name.upper().replace("-", "_") + "_NATIVE_EXECUTABLE"
+    return (
+        f"The {image_name} native launcher at {launcher_executable} was not built for Pyronaut {version}: "
+        f"its compiler classpath differs from the one pyronaut setup resolved. "
+        f"Use the launcher released with Pyronaut {version} by removing the [{_NATIVE_IMAGE_SETTINGS_TABLE}] "
+        f"version and base-url overrides in {_settings_label()} (and unsetting {env_key}), or run with --jvm."
+    )
 
 
 def _native_launcher_provided_jar_entries(launcher_executable: str | None) -> list[str]:

@@ -10646,6 +10646,127 @@ java-version = 25
                 with self.assertRaisesRegex(RuntimeError, "Missing native compiler classpath descriptor for pyronaut-run"):
                     cli._packaged_native_compile_descriptor_entries("pyronaut-run")
 
+    def test_native_launcher_from_another_release_is_reported_instead_of_stale_setup(self):
+        # A [native-images] override in settings.toml selected a pyronaut-dev
+        # launcher built for another release right after a successful setup;
+        # direct-source tests failed with a traceback asking to run setup again.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            package = root / "package"
+            packaged_launcher = package / "tools" / "pyronaut-dev" / "bin" / "pyronaut-dev"
+            packaged_launcher.parent.mkdir(parents=True)
+            artifacts = self._write_native_compile_descriptor(
+                packaged_launcher,
+                root / "home",
+                [("com.example", "compiler", "1.0", "compiler-1.0.jar")],
+            )
+            other_launcher = root / "bin" / "0.2.0-SNAPSHOT" / "pyronaut-dev"
+            other_launcher.parent.mkdir(parents=True)
+            self._write_native_compile_descriptor(
+                other_launcher,
+                root / "home",
+                [("com.example", "compiler", "2.0", "compiler-2.0.jar")],
+            )
+            (root / "app.py").write_text("", encoding="utf-8")
+            with patch.object(cli, "__file__", str(package / "cli.py")):
+                entries = cli._packaged_native_compile_descriptor_entries("pyronaut-dev")
+                manifest = {
+                    "images": {
+                        "pyronaut-dev": {
+                            "descriptorSha256": cli._native_descriptor_hash(entries),
+                            "classpath": [str(artifacts[0])],
+                        }
+                    }
+                }
+                previous_cwd = Path.cwd()
+                stderr = io.StringIO()
+                try:
+                    os.chdir(root)
+                    with (
+                        patch.object(cli, "_setup_is_required", return_value=True),
+                        patch.object(cli, "_validated_setup_manifest", manifest),
+                        patch.object(cli, "_resolve_pyronaut_dev_native_executable", return_value=str(other_launcher)),
+                        redirect_stderr(stderr),
+                    ):
+                        with self.assertRaises(RuntimeError) as raised:
+                            cli._native_launcher_compile_classpath_entries(str(other_launcher))
+                        runner = Mock(return_value=0)
+                        exit_code = cli._delegate_direct_source(
+                            "test",
+                            ["test", "app.py"],
+                            runner,
+                            lambda _: None,
+                            java_home_provider=lambda: "/tmp/java-home",
+                        )
+                finally:
+                    os.chdir(previous_cwd)
+
+        message = str(raised.exception)
+        self.assertNotEqual(cli._SETUP_REQUIRED_MESSAGE, message)
+        self.assertIn(str(other_launcher), message)
+        self.assertIn("[native-images]", message)
+        self.assertIn("--jvm", message)
+        self.assertEqual(cli.PRECONDITION_FAILED, exit_code)
+        runner.assert_not_called()
+        self.assertIn(message, stderr.getvalue())
+
+    def test_direct_source_test_with_jvm_flag_runs_the_resolved_jvm_launcher(self):
+        # --jvm was stripped before the launcher was selected, so direct-source
+        # tests downloaded and ran the native launcher. The wheel's own JVM
+        # launcher lacks the Maven-provided jars (JUnit), and a launcher script
+        # only recognizes a direct test when "test" precedes the -D arguments.
+        captured = {}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "app.py").write_text("", encoding="utf-8")
+            incomplete = root / "package" / "tools" / "pyronaut-dev" / "bin" / "pyronaut-dev"
+            incomplete.parent.mkdir(parents=True)
+            incomplete.write_text("#!/bin/sh\n", encoding="utf-8")
+            resolved = root / "tools" / "0.1.2" / "current" / "pyronaut-dev" / "bin" / "pyronaut-dev"
+            resolved.parent.mkdir(parents=True)
+            resolved.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            def capture(command, env=None):
+                captured["command"] = command
+                return 0
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                with (
+                    patch.object(cli, "_bundled_executable", return_value=incomplete),
+                    patch.object(
+                        cli,
+                        "_resolve_pyronaut_dev_native_executable",
+                        side_effect=AssertionError("native launcher selected"),
+                    ),
+                    patch.object(cli, "_build_direct_source_native_jvm_args", return_value=["-Dpyronaut.example=true"]),
+                ):
+                    exit_code = cli._delegate_direct_source(
+                        "test",
+                        ["test", "--jvm", "app.py", "--", "app_test.py"],
+                        capture,
+                        lambda name: str(resolved) if name == "pyronaut-dev" else None,
+                        java_home_provider=lambda: "/tmp/java-home",
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(
+            [str(resolved), "test", "-Dpyronaut.example=true", "app.py", "--", "app_test.py"],
+            captured["command"],
+        )
+
+    def test_direct_source_native_launcher_keeps_system_properties_first(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            launcher = Path(temp_dir) / "pyronaut-dev"
+            launcher.write_bytes(b"\xcf\xfa\xed\xfe")
+            self.assertEqual(
+                [str(launcher), "-Dpyronaut.example=true", "test", "app.py"],
+                cli._direct_source_command_line(str(launcher), ["-Dpyronaut.example=true"], ["test", "app.py"]),
+            )
+
     def test_bundled_pyronaut_maven_repository_stages_jars_and_bom_in_default_repository(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
