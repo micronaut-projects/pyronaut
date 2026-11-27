@@ -172,6 +172,30 @@ public final class PytestMicronautExtension extends AbstractMicronautExtension<V
     }
 
     /**
+     * Resolves a Python class to the Java class the Python compiler generated for it.
+     *
+     * <p>The resolution is delegated to the host access Micronaut Core configures for the GraalPy
+     * context, which maps a Python class passed where a {@code Class} is expected through the
+     * application's registered target type mappings and, for generated interfaces and abstract
+     * classes that have no mapping, through the names the compiler gives generated classes. Asking it
+     * keeps the test context lookup in step with the compiler instead of re-deriving the generated
+     * class name from the Python module.</p>
+     *
+     * @param pythonClass The Python class.
+     * @return The generated Java class, or {@code null} if the class has no generated Java class.
+     */
+    public static @Nullable Class<?> generatedJavaClass(@Nullable Value pythonClass) {
+        if (pythonClass == null || pythonClass.isNull() || pythonClass.isHostObject()) {
+            return null;
+        }
+        try {
+            return pythonClass.as(Class.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
      * Builds a Micronaut test value from GraalPy-friendly inputs.
      *
      * @param environments The environments.

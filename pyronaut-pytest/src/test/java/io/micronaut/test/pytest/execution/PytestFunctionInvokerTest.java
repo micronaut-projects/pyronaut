@@ -16,6 +16,7 @@
 package io.micronaut.test.pytest.execution;
 
 import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.HostAccess;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -168,6 +170,86 @@ class PytestFunctionInvokerTest {
             assertEquals("helloworld.services.MessageService|helloworld.MessageService", bindings.getMember("packaged").asString());
             assertEquals("Bar.Bar|python.Bar", bindings.getMember("same_name").asString());
         }
+    }
+
+    @Test
+    void applicationContextWrapperResolvesAPythonClassThroughTheGeneratedTypeMapping() throws Exception {
+        // Core's host access maps a Python class passed where a Class is expected to its generated
+        // Java class. The generated class of bookshelf/repository.py lives in the Java package
+        // 'bookshelf', not 'bookshelf.repository', so the lookup must not derive it from the module.
+        try (Context context = contextWithGeneratedTypeMapping()) {
+            context.getBindings("python").putMember("beanContext", new SingleBeanContext(new BookRepository()));
+
+            context.eval("python", """
+                BookRepository = type("BookRepository", (), {"__module__": "bookshelf.repository"})
+                AuthorRepository = type("AuthorRepository", (), {"__module__": "bookshelf.repository"})
+                wrapper = ApplicationContextWrapper(beanContext)
+                _, lookup_key = wrapper._resolve_bean_key(BookRepository)
+                repository_title = wrapper[BookRepository].title()
+                try:
+                    wrapper[AuthorRepository]
+                    missing_error = None
+                except KeyError as e:
+                    missing_error = str(e)
+                """);
+
+            Value bindings = context.getBindings("python");
+            assertEquals(BookRepository.class.getName(), bindings.getMember("lookup_key").asString());
+            assertEquals("bookshelf", bindings.getMember("repository_title").asString());
+            String missingError = bindings.getMember("missing_error").asString();
+            assertTrue(missingError.contains("Python class 'bookshelf.repository.AuthorRepository'"), missingError);
+            assertTrue(missingError.contains("'bookshelf.repository.AuthorRepository', 'bookshelf.AuthorRepository'"), missingError);
+            assertTrue(missingError.contains("ctx['bookshelf.AuthorRepository']"), missingError);
+        }
+    }
+
+    @Test
+    void applicationContextWrapperNamesThePythonClassOfAMissingBean() throws Exception {
+        try (Context context = contextWithGeneratedTypeMapping()) {
+            context.getBindings("python").putMember("beanContext", new SingleBeanContext("not a repository"));
+
+            context.eval("python", """
+                BookRepository = type("BookRepository", (), {"__module__": "bookshelf.repository"})
+                wrapper = ApplicationContextWrapper(beanContext)
+                try:
+                    wrapper[BookRepository]
+                    missing_error = None
+                except KeyError as e:
+                    missing_error = str(e)
+                """);
+
+            String missingError = context.getBindings("python").getMember("missing_error").asString();
+            assertTrue(missingError.contains("'" + BookRepository.class.getName() + "' not found in context"), missingError);
+            assertTrue(missingError.contains("Python class 'bookshelf.repository.BookRepository'"), missingError);
+        }
+    }
+
+    /**
+     * A context whose host access maps the Python class {@code BookRepository} to its "generated"
+     * Java class the way Core's GraalPyHostAccessFactory does, with test.py loaded.
+     */
+    private Context contextWithGeneratedTypeMapping() throws Exception {
+        HostAccess hostAccess = HostAccess.newBuilder(HostAccess.ALL)
+            .targetTypeMapping(
+                Value.class,
+                Class.class,
+                value -> value.hasMember("__mro__")
+                    && value.hasMember("__name__")
+                    && "BookRepository".equals(value.getMember("__name__").asString()),
+                value -> BookRepository.class
+            )
+            .build();
+        Context context = Context.newBuilder("python")
+            .allowAllAccess(true)
+            .allowHostAccess(hostAccess)
+            .build();
+        String testSupport = new String(Objects.requireNonNull(
+            getClass().getClassLoader().getResourceAsStream(
+                "META-INF/GRAALPY-VFS/micronaut-application/src/pyronaut/test/test.py"
+            )
+        ).readAllBytes(), StandardCharsets.UTF_8);
+        context.eval(Source.newBuilder("python", testSupport, "pyronaut-test.py").build());
+        return context;
     }
 
     @Test
@@ -377,6 +459,24 @@ class PytestFunctionInvokerTest {
     public static final class FailingContext {
         public void stop() {
             throw new IllegalStateException("boom");
+        }
+    }
+
+    public static final class BookRepository {
+        public String title() {
+            return "bookshelf";
+        }
+    }
+
+    public static final class SingleBeanContext {
+        private final Object bean;
+
+        SingleBeanContext(Object bean) {
+            this.bean = bean;
+        }
+
+        public Optional<Object> findBean(Class<?> type) {
+            return type.isInstance(bean) ? Optional.of(bean) : Optional.empty();
         }
     }
 }

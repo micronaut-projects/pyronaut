@@ -202,7 +202,8 @@ class ApplicationContextWrapper:
             java.type('io.micronaut.inject.qualifiers.Qualifiers').byName(name)
             if name is not None else None
         )
-        result = self._find_bean(bean_class, lookup_key, qualifier)
+        result = self._find_bean(bean_class, lookup_key, qualifier,
+                                 key if isinstance(key, type) else None)
         if hasattr(result, 'asPolyglotValue'):
             return result.asPolyglotValue()
         return result
@@ -215,13 +216,16 @@ class ApplicationContextWrapper:
                 raise KeyError(f"Key '{key}' not found in context")
 
         if isinstance(key, type):
+            generated = self._generated_java_class(key)
+            if generated is not None:
+                return generated, str(generated.getName())
             candidates = self._python_type_lookup_candidates(key)
             for candidate in candidates:
                 try:
                     return java.type(candidate), candidate
                 except BaseException:
                     continue
-            raise KeyError(f"Key '{candidates[0]}' not found in context")
+            raise KeyError(self._unresolved_python_type_message(key, candidates))
 
         foreign_key = self._unwrap_micronaut_java_type(key)
         lookup_key = self._foreign_java_class_name(foreign_key)
@@ -247,16 +251,41 @@ class ApplicationContextWrapper:
                 pass
         return getattr(key, "_target", key)
 
+    def _generated_java_class(self, key):
+        """Return the Java class Core generated for a Python class, or None.
+
+        Core's host access resolves a Python class passed where a Java Class is
+        expected through the application's recorded Python-to-Java type mappings
+        (and the generated class names for interfaces without a mapping), so
+        defer to it rather than re-deriving the name from the Python module.
+        """
+        try:
+            PytestMicronautExtension = java.type("io.micronaut.test.pytest.extension.PytestMicronautExtension")
+            return PytestMicronautExtension.generatedJavaClass(key)
+        except BaseException:
+            return None
+
     def _python_type_lookup_candidates(self, key):
         """Return the Java class names Core may generate for a Python class."""
         candidates = [self._python_type_to_lookup_key(key)]
         # Core puts the classes of a top-level module in the 'python' package
-        # and the classes of a module inside a package in that package.
+        # and the classes of a module inside a package in that package, and
+        # names a nested class Outer$Inner.
         package = key.__module__.rpartition('.')[0] or 'python'
-        fallback = f"{package}.{key.__qualname__}"
+        fallback = f"{package}.{key.__qualname__.replace('.', '$')}"
         if fallback not in candidates:
             candidates.append(fallback)
         return candidates
+
+    def _unresolved_python_type_message(self, key, candidates):
+        python_name = f"{key.__module__}.{key.__qualname__}"
+        tried = ", ".join(f"'{candidate}'" for candidate in candidates)
+        return (
+            f"Key '{python_name}' not found in context: no Java class generated for the Python class "
+            f"'{python_name}' was found (tried {tried}). Make sure the class is declared in the "
+            f"application or test sources processed by Pyronaut, or look the bean up by its generated "
+            f"Java class name, for example ctx['{candidates[-1]}']."
+        )
 
     def _python_type_to_lookup_key(self, key):
         module_name = key.__module__
@@ -296,21 +325,27 @@ class ApplicationContextWrapper:
         match = JAVA_CLASS_RE.search(repr(key))
         return match.group(1) if match is not None else None
 
-    def _find_bean(self, bean_class, lookup_key, qualifier=None):
+    def _find_bean(self, bean_class, lookup_key, qualifier=None, python_type=None):
+        message = f"Key '{lookup_key}' not found in context"
+        if python_type is not None:
+            message += (
+                f" (the Java class generated for the Python class "
+                f"'{python_type.__module__}.{python_type.__qualname__}')"
+            )
         try:
             findBean = getattr(self.java_ctx, 'findBean', None)
             if findBean is not None:
                 opt = findBean(bean_class) if qualifier is None else findBean(bean_class, qualifier)
                 present = opt is not None and (not hasattr(opt, 'isPresent') or opt.isPresent())
                 if not present:
-                    raise KeyError(f"Key '{lookup_key}' not found in context")
+                    raise KeyError(message)
                 return opt.get() if hasattr(opt, 'get') else opt
             return (
                 self.java_ctx.getBean(bean_class)
                 if qualifier is None else self.java_ctx.getBean(bean_class, qualifier)
             )
         except BaseException:
-            raise KeyError(f"Key '{lookup_key}' not found in context")
+            raise KeyError(message)
 
     def __getattr__(self, name):
         """
