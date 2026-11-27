@@ -49,11 +49,20 @@ The fixture passes additional properties into the Micronaut context during boots
 == Bean lookup
 
 The fixture returns an application context wrapper.
-You can look up beans by Java class name, Java type, or Python class when Pyronaut can resolve the Python type to its generated bean name.
+You can look up beans by Java class name, Java type, or Python class.
+
+A Python class resolves to the Java class Pyronaut generated for it.
+Every module of a Python package shares the Java package of that package, so the class `BookRepository` declared in `bookshelf/repository.py` is generated as `bookshelf.BookRepository`, and `my_context[BookRepository]` and `my_context["bookshelf.BookRepository"]` return the same bean.
 
 [source,python]
 ----
 import java
+from bookshelf.repository import BookRepository
+
+
+def test_repository(my_context):
+    repository = my_context[BookRepository]
+    assert repository is not None
 
 
 def test_environment(my_context):

@@ -52,5 +52,12 @@ def test_my_service(my_service : MessageService):
     assert my_service is not None
     assert my_service.say_hello("John") == "Hello John!!!!!!"
 
+def test_bean_lookup_by_python_class(my_context):
+    # helloworld/services.py generates the Java class helloworld.MessageService,
+    # not helloworld.services.MessageService; the Python class must resolve to it.
+    service = my_context[MessageService]
+    assert service.say_hello("Jane") == "Hello Jane!!!!!!"
+    assert MessageService in my_context
+
 def test_context(my_context):
     assert my_context.isRunning()
