@@ -654,5 +654,81 @@ class ProjectVirtualenvTest(unittest.TestCase):
         self.assertTrue(cli._python_requirements_stale(self.project))
 
 
+# Abridged `pip install` output of GraalPy 25.4 on macOS arm64 (issue #445).
+_PIP_SOURCE_BUILD_OUTPUT = """\
+Looking in indexes: https://pypi.org/simple, https://www.graalvm.org/python/wheels/
+Collecting pandas
+  Downloading pandas-3.0.3.tar.gz (4.6 MB)
+  Looking for GraalPy patches for pandas
+Collecting pyarrow
+  Using cached pyarrow-24.0.0.tar.gz (1.2 MB)
+  Installing build dependencies: started
+      Collecting libcst>=1.8.6
+        Downloading libcst-1.9.0.tar.gz (914 kB)
+Collecting numpy>=1.26.0 (from pandas)
+  Using cached numpy-2.4.4-graalpy313-graalpy253_313_native-macosx_27_0_arm64.whl
+Collecting pydantic-core
+  Downloading pydantic_core-2.50.5-graalpy313-graalpy253_313_native-macosx_11_0_arm64.whl (1.9 MB)
+Collecting PANDAS
+  Downloading pandas-3.0.3.tar.gz (4.6 MB)
+Building wheels for collected packages: pandas, pyarrow
+  Building wheel for pandas (pyproject.toml): started
+  Building wheel for pyarrow (pyproject.toml): started
+  Building wheel for pyarrow (pyproject.toml): finished with status 'error'
+ERROR: Failed to build 'pyarrow'
+"""
+
+
+class PipSourceBuildTest(unittest.TestCase):
+    def test_reports_top_level_source_distributions_once(self):
+        watcher = cli._PipSourceBuildWatcher()
+        announced = [event for line in _PIP_SOURCE_BUILD_OUTPUT.splitlines() if (event := watcher.feed(line))]
+        self.assertEqual([("pandas", "3.0.3"), ("pyarrow", "24.0.0")], announced)
+        self.assertEqual({"pandas": "3.0.3", "pyarrow": "24.0.0"}, watcher.source_builds)
+        building = [name for line in _PIP_SOURCE_BUILD_OUTPUT.splitlines() if (name := watcher.building(line))]
+        self.assertEqual(["pandas", "pyarrow", "pyarrow"], building)
+
+    def test_failed_install_names_the_packages_built_from_source(self):
+        script = self._temp_script(_PIP_SOURCE_BUILD_OUTPUT, exit_code=1)
+        step = types.SimpleNamespace(label="Installing Python dependencies into .venv")
+        stderr = io.StringIO()
+        with patch.object(cli.sys, "platform", "darwin"), patch.object(cli.platform, "machine", return_value="arm64"), \
+                redirect_stderr(stderr):
+            exit_code = cli._run_pip_install(cli._run_subprocess, [sys.executable, str(script)], None, step)
+        output = stderr.getvalue()
+        self.assertEqual(1, exit_code)
+        self.assertEqual("Installing Python dependencies into .venv", step.label)
+        self.assertIn("No GraalPy wheel of pandas 3.0.3 for macOS arm64; pip is building it from source", output)
+        self.assertIn("No GraalPy wheel of pyarrow 24.0.0 for macOS arm64", output)
+        self.assertNotIn("libcst", output.split("ERROR: Failed to build 'pyarrow'")[1])
+        self.assertIn("ERROR: Failed to build 'pyarrow'", output)
+        self.assertIn(
+            "pip had to build pandas, pyarrow from source because it found no GraalPy wheel for macOS arm64 "
+            "on PyPI or https://www.graalvm.org/python/wheels/",
+            output,
+        )
+        # The warnings come before pip's output, which is shown only on failure.
+        self.assertLess(output.index("No GraalPy wheel of pandas"), output.index("Looking in indexes"))
+
+    def test_successful_install_only_warns(self):
+        script = self._temp_script(_PIP_SOURCE_BUILD_OUTPUT.replace("ERROR: Failed to build 'pyarrow'\n", ""), exit_code=0)
+        step = types.SimpleNamespace(label="Installing")
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = cli._run_pip_install(cli._run_subprocess, [sys.executable, str(script)], None, step)
+        self.assertEqual(0, exit_code)
+        output = stderr.getvalue()
+        self.assertIn("No GraalPy wheel of pyarrow 24.0.0", output)
+        self.assertNotIn("Looking in indexes", output)
+        self.assertNotIn("pip had to build", output)
+
+    def _temp_script(self, text: str, *, exit_code: int) -> Path:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        script = Path(temp.name) / "fake_pip.py"
+        script.write_text(f"import sys\nsys.stdout.write({text!r})\nsys.exit({exit_code})\n", encoding="utf-8")
+        return script
+
+
 if __name__ == "__main__":
     unittest.main()

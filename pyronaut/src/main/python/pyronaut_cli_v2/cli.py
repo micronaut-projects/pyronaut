@@ -3459,6 +3459,116 @@ def _run_showing_output_on_failure(runner: RunnerWithEnv, command_line: list[str
     return int(completed.returncode)
 
 
+_GRAALPY_WHEELS_URL = "https://www.graalvm.org/python/wheels/"
+# pip reports a source distribution it fetched for the project being installed
+# with two-space indentation; nested build-dependency output is indented further.
+_PIP_SOURCE_DIST = re.compile(
+    r"^  (?:Downloading|Using cached|Obtaining|Processing) (?:\S*/)?(?P<file>[^/\s]+?)\.(?:tar\.gz|tar\.bz2|tar\.xz|zip|tgz)\b"
+)
+_PIP_BUILDING_WHEEL = re.compile(r"^  Building wheel for (?P<name>\S+) \(")
+
+
+def _source_dist_name(filename: str) -> tuple[str, str]:
+    """``("pyarrow", "24.0.0")`` for ``pyarrow-24.0.0``."""
+    name, _, version = filename.rpartition("-")
+    return (name, version) if name else (filename, "")
+
+
+def _platform_display_name() -> str:
+    system = {"darwin": "macOS", "linux": "Linux", "win32": "Windows"}.get(sys.platform, sys.platform)
+    return f"{system} {platform.machine().lower()}"
+
+
+class _PipSourceBuildWatcher:
+    """Spot the packages pip builds from source while ``pip install`` runs.
+
+    GraalPy can only install wheels built for GraalPy; everything else is an
+    sdist that pip compiles locally, which for packages with native code can
+    take a long time and needs their native toolchains.
+    """
+
+    def __init__(self) -> None:
+        self.source_builds: dict[str, str] = {}
+
+    def feed(self, line: str) -> tuple[str, str] | None:
+        """Record ``line``; return ``(name, version)`` for a newly seen source build."""
+        match = _PIP_SOURCE_DIST.match(line)
+        if match is None:
+            return None
+        name, version = _source_dist_name(match.group("file"))
+        if name.lower() in (known.lower() for known in self.source_builds):
+            return None
+        self.source_builds[name] = version
+        return name, version
+
+    def building(self, line: str) -> str | None:
+        match = _PIP_BUILDING_WHEEL.match(line)
+        return match.group("name") if match is not None else None
+
+
+def _pip_source_build_warning(name: str, version: str) -> str:
+    package = f"{name} {version}".strip()
+    return (
+        f"No GraalPy wheel of {package} for {_platform_display_name()}; pip is building it from source, "
+        f"which can take a long time and needs the package's native build tools"
+    )
+
+
+def _pip_source_build_failure_hint(source_builds: Sequence[str]) -> str:
+    return (
+        f"pip had to build {', '.join(source_builds)} from source because it found no GraalPy wheel for "
+        f"{_platform_display_name()} on PyPI or {_GRAALPY_WHEELS_URL}. Install the native build tools these packages need, "
+        f"pin versions that have GraalPy wheels, or install on a platform that has them (GraalPy publishes most "
+        f"wheels for Linux x86_64 and aarch64)."
+    )
+
+
+def _run_pip_install(runner: RunnerWithEnv, command_line: list[str], env: dict[str, str] | None, step) -> int:
+    """Run ``pip install`` and say which packages it builds from source.
+
+    The output stays hidden unless pip fails, like
+    :func:`_run_showing_output_on_failure`, but a source build is announced as
+    soon as pip downloads the sdist, before the build starts.
+    """
+    if runner is not _run_subprocess:
+        return runner(command_line, env)
+    console = _progress_console()
+    watcher = _PipSourceBuildWatcher()
+    output: list[str] = []
+    base_label = step.label
+    try:
+        process = subprocess.Popen(
+            command_line, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+        )
+    except OSError as exception:
+        print(f"Failed executing delegated command: {exception}", file=sys.stderr)
+        return INTERNAL_ERROR
+    try:
+        assert process.stdout is not None
+        for raw in process.stdout:
+            line = raw.rstrip("\r\n")
+            output.append(line)
+            source_build = watcher.feed(line)
+            if source_build is not None:
+                console.warn(_pip_source_build_warning(*source_build))
+            building = watcher.building(line)
+            if building is not None:
+                step.label = f"{base_label} (building {building} from source)"
+        returncode = process.wait()
+    except KeyboardInterrupt:
+        process.kill()
+        process.wait()
+        return 130
+    finally:
+        step.label = base_label
+    if returncode != 0:
+        for line in output:
+            console.print(line)
+        if watcher.source_builds:
+            console.fail(_pip_source_build_failure_hint(list(watcher.source_builds)))
+    return int(returncode)
+
+
 def _run_fat_jar_build(
     *,
     project_dir: Path,
@@ -12062,7 +12172,10 @@ def _ensure_project_virtualenv(
     if _delegation_trace_enabled():
         print(shlex.join(command_line), file=sys.stderr)
     with progress.step(label, done=done) as step:
-        exit_code = _run_showing_output_on_failure(runner, command_line, env)
+        if uv is not None:
+            exit_code = _run_showing_output_on_failure(runner, command_line, env)
+        else:
+            exit_code = _run_pip_install(runner, command_line, env, step)
         step.failed = exit_code != SUCCESS
     if exit_code != SUCCESS:
         return exit_code
