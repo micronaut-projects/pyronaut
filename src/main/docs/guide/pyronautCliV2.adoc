@@ -91,6 +91,7 @@ Setup provisions the packaged/default GraalVM JDK first, so you do not need `JAV
 It then locates the exact GraalPy interpreter the SDK was built with (shown by `pyronaut --version` as `GraalPy Interpreter`, for example `graalpy3.13-25.4.4`).
 Setup reuses a matching GraalPy when the CLI itself runs on one, when `~/.pyronaut/sdks/<version>` already contains one, or when pyenv already has that version installed.
 Otherwise it runs `pyenv install <version>` when pyenv is available, and falls back to downloading the checksum-verified GraalPy release from GitHub into `~/.pyronaut/sdks/<version>`.
+An explicitly configured interpreter, from the `PYRONAUT_GRAALPY` environment variable or `executable` in the `[graalpy]` table of `~/.pyronaut/settings.toml` (the environment variable wins), replaces that search: setup validates it with `graalpy --version` and fails with the reported version when it does not match, instead of falling back to another GraalPy. Changing the configured executable requires `pyronaut setup` again.
 Delegated commands receive that interpreter through `PYRONAUT_PYTHON_EXECUTABLE` and `PATH`; a project `.venv` takes precedence.
 It then seeds wheel-bundled Pyronaut artifacts into the selected Maven repository, and resolves the wheel's portable dependency descriptors, including the compiler classpaths of the native launchers.
 Setup does not download the native `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` launchers.
@@ -157,7 +158,7 @@ The checks, in order:
 - TOML parser: `tomllib` (Python 3.11 and newer) or the `tomli` package (Python 3.10) can be imported, so `pyproject.toml` can be read.
 - Pyronaut SDK: the installed wheel version and whether the cached setup state below `~/.pyronaut/setup` is valid for it (suggests `pyronaut setup`, or `pyronaut setup --refresh` when stale state exists).
 - GraalVM JDK: the discovery used by `pyronaut setup --offline` (`JAVA_HOME`, `~/.pyronaut/sdks`, SDKMAN, jenv, Gradle JDKs) finds a GraalVM JDK 25+. The check reports a warning when it silently ignores `JAVA_HOME` because it does not point to a compatible GraalVM.
-- GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks the GraalPy recorded by `pyronaut setup`, or a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
+- GraalPy: inside a project, the check verifies that `.venv` uses GraalPy; otherwise it checks the GraalPy configured by `PYRONAUT_GRAALPY` or `[graalpy] executable`, the GraalPy recorded by `pyronaut setup`, or a GraalPy selected by `PYENV_VERSION`, by the global `~/.pyenv/version` file, or found on `PATH`. A GraalPy other than the version bundled with the SDK is a warning.
 - Interpreter: the check verifies that the pieces agree. `PYRONAUT_PYTHON_EXECUTABLE` must point at an existing GraalPy, an activated `VIRTUAL_ENV` must be the project `.venv`, and the `.venv` must use the currently selected GraalPy (the check reports a `.venv` that remained after `pyenv global` moved to another version, or whose base interpreter someone removed).
 - Native launchers: whether `pyronaut-dev`, `pyronaut-run`, and `pyronaut-run-python` are cached below `~/.pyronaut/bin` for the configured version and platform. Launchers that are not downloaded yet pass, because a command downloads them when it first needs one; stale launchers are a warning.
 
@@ -1205,6 +1206,7 @@ ASCII set for the Java tools.
 - `PYRONAUT_LOCK_REPOSITORY=<dir>`: resolves Maven artifacts only from this directory of locked artifacts; implies `PYRONAUT_LOCKED`.
 - `PYRONAUT_LOCK_FILE=<file>`: uses this lock file instead of `pyronaut.lock` in the project directory.
 - `PYRONAUT_TEST_RESOURCES_DISABLED=true`: disables automatic test-resources orchestration for `dev` and `test`.
+- `PYRONAUT_GRAALPY=<graalpy>`: the GraalPy interpreter that `pyronaut setup` validates and records instead of searching for or provisioning one; overrides `[graalpy] executable` in `~/.pyronaut/settings.toml`.
 - `PYRONAUT_PYTHON_EXECUTABLE=<python>`: overrides the GraalPy interpreter that `pyronaut setup` recorded for delegated commands, and the Python executable used for wheel builds.
 - `PYRONAUT_NATIVE_BUILD_EXECUTABLE=<path>`: overrides native build delegate executable.
 - `PYRONAUT_INSTALL_EXECUTABLE`, `PYRONAUT_PROCESSOR_EXECUTABLE`, `PYRONAUT_RUN_EXECUTABLE`, `PYRONAUT_TEST_EXECUTABLE`, `PYRONAUT_VALIDATE_CONFIG_EXECUTABLE`, `PYRONAUT_TEST_RESOURCES_SERVER_EXECUTABLE`, `PYRONAUT_TUI_EXECUTABLE`: override specific delegated executables.

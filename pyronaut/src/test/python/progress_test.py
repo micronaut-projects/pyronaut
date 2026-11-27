@@ -298,8 +298,16 @@ class ProgressTest(unittest.TestCase):
             self.assertEqual((write_fd, read_fd), indicator.pass_fds)
             self.assertTrue(self.console.interactive)
             # The child reports, then waits for the acknowledgement before printing.
+            # It uses Python rather than sh: dash rejects `>&N` for descriptors
+            # above 9, and the inherited descriptors can be numbered that high.
+            child_code = (
+                "import os, sys\n"
+                f"os.write({write_fd}, b'S')\n"
+                f"ack = os.read({read_fd}, 1).decode()\n"
+                "sys.stdout.write('child output ' + ack + '\\n')\n"
+            )
             child = subprocess.Popen(
-                ["sh", "-c", f"printf S >&{write_fd}; ack=$(head -c1 <&{read_fd}); echo \"child output $ack\""],
+                [sys.executable, "-c", child_code],
                 env=launched,
                 pass_fds=indicator.pass_fds,
                 stdout=subprocess.PIPE,
