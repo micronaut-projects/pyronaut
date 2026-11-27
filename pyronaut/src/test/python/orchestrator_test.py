@@ -2738,6 +2738,64 @@ type = "native"
             test_command[test_command.index("test") :],
         )
 
+    def test_test_file_selector_is_not_a_direct_source_invocation(self):
+        # Regression for #440: `--tests=test_books.py` selects a project test file,
+        # it does not name a direct source to run.
+        self.assertFalse(cli._looks_like_direct_source_invocation(["--tests=test_books.py"]))
+        self.assertFalse(cli._looks_like_direct_source_invocation(["--tests=tests/test_books.py"]))
+        self.assertFalse(cli._looks_like_direct_source_invocation(["--tests", "test_books.py"]))
+        self.assertFalse(cli._looks_like_direct_source_invocation(["--jvm", "--tests=test_books.py"]))
+        self.assertFalse(cli._looks_like_direct_source_invocation(["--tests=test_books.py::test_delete"]))
+        self.assertTrue(cli._looks_like_direct_source_invocation(["--jvm", "test_books.py"]))
+
+    def test_test_file_selection_delegates_to_project_test_launcher(self):
+        executed = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            native_dev = Path(temp_dir) / "pyronaut-dev"
+            native_dev.write_text("", encoding="utf-8")
+            native_dev.chmod(0o755)
+            project_dir = Path(temp_dir) / "demo"
+            cache_dir = project_dir / "__pyronaut__"
+            (cache_dir / "classes").mkdir(parents=True, exist_ok=True)
+            (cache_dir / "test-classes").mkdir(parents=True, exist_ok=True)
+            self._write_manifests(project_dir)
+            (project_dir / "pyproject.toml").write_text(
+                """
+[project]
+name = "demo"
+version = "1.0.0"
+
+[tool.pyronaut.toolchain]
+type = "native"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def runner(command_line, env=None):
+                executed.append(command_line)
+                return 0
+
+            with patch.object(cli, "_bundled_native_executable", side_effect=lambda command_name: native_dev if command_name == "pyronaut-dev" else None):
+                exit_code = cli.run(
+                    ["test", "--tests=test_books.py", "--project-dir", str(project_dir)],
+                    runner=runner,
+                    resolver=self._resolver(),
+                    platform_name="linux",
+                )
+
+        self.assertEqual(0, exit_code)
+        # The project pipeline processes the application and hands the test
+        # launcher the project classpath instead of a direct source launch.
+        self.assertIn([str(native_dev), "process", "--project-dir", str(project_dir), "--pass", "all"], executed)
+        test_command = next(command for command in executed if command[0] == str(native_dev) and "test" in command)
+        self.assertNotIn("-Dpyronaut.dev.direct.restartable=true", test_command)
+        self.assertTrue(any(arg.startswith("-Djava.class.path=") for arg in test_command))
+        self.assertEqual(
+            ["test", "--tests=test_books.py", "--project-dir", str(project_dir)],
+            test_command[test_command.index("test") :],
+        )
+
     def test_test_resources_server_uses_dedicated_executable_when_pyronaut_dev_native_is_available(self):
         executed = []
         with tempfile.TemporaryDirectory() as temp_dir:
