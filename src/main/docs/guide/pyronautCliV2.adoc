@@ -255,6 +255,20 @@ Before resolving Java dependencies, `pyronaut install` prepares the project Pyth
 
 An existing `.venv` that GraalPy did not create fails the command, because the embedded runtime cannot use its packages. Remove it and run `pyronaut install` again.
 
+[[python-native-packages]]
+==== Packages with native extensions
+
+GraalPy can only install wheels built for GraalPy (tags such as `graalpy313-graalpy253_313_native`); it cannot use CPython or `abi3` wheels.
+GraalPy's `pip` looks for them on PyPI and on GraalPy's own wheel index, https://www.graalvm.org/python/wheels/, unless `PIP_INDEX_URL` is set.
+uv does not know about GraalPy's index; a <<python-uv-projects,uv project>> has to declare it as a `[[tool.uv.index]]` to use those wheels.
+For a package that has no GraalPy wheel for the current platform, `pip` downloads the source distribution and compiles it, which for packages such as NumPy, pandas, SciPy, or pyarrow can take a long time and needs their native build tools (compilers, CMake, Rust, or system libraries such as Arrow C++).
+
+`pyronaut install` prints a warning for each package that `pip` builds from source as soon as it downloads the source distribution, and, if the install fails, names those packages again after `pip`'s output.
+
+GraalPy publishes most of its wheels for Linux x86_64 and aarch64. For example, with GraalPy 25.4 GraalPy's index has wheels of NumPy and pandas for both Linux architectures and of pyarrow, scikit-learn, and orjson for Linux x86_64 only, but none of these for macOS. Some projects, such as `pydantic-core`, publish GraalPy wheels on PyPI for all three platforms.
+When a dependency has no GraalPy wheel for your platform, install the tools it needs to build, pin a version that has a GraalPy wheel, or run `pyronaut install` on Linux (for example in a container).
+`pyronaut doctor` reports GraalPy's published compatibility results for the declared packages.
+
 [[python-uv-projects]]
 ==== uv projects
 
