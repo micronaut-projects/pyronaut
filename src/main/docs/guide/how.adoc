@@ -58,10 +58,16 @@ to pass members.
 
 === Why the decorators are capitalized
 
-Each decorator is a Micronaut annotation and keeps the annotation's exact name. Java names classes, annotations
-included, in CapitalizedWords. `@Get` is the annotation `io.micronaut.http.annotation.Get`, so its
-name, its arguments, and its documentation are the ones in the Micronaut guide and API reference. There are no
-lowercase aliases such as `@get`; use `@Get`.
+Each decorator imported from a Micronaut package is a Micronaut annotation and keeps the annotation's exact name.
+Java names classes, annotations included, in CapitalizedWords. `@Get` is the annotation
+`io.micronaut.http.annotation.Get`, so its name, its arguments, and its documentation are the ones in the Micronaut
+guide and API reference. In this release, import and use the annotations under those names: `@Get`, `@Controller`,
+`@Singleton`.
+
+NOTE: A future Pyronaut release adds curated `pyronaut` modules that group these imports
+(`from pyronaut import http, context, serde`) and also export each annotation under a snake_case name, so
+`@http.get("/")`, `@context.singleton` and `@serde.serdeable` will work alongside `@http.Get("/")`. Until then,
+the CapitalizedWords names are the only ones.
 
 === Names that clash with Python keywords
 
