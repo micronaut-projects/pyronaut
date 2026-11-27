@@ -337,7 +337,7 @@ public class PyronautRunMain implements Callable<Integer> {
                         return true;
                     }
                 }
-            } catch (IOException ignored) {
+            } catch (IOException _) {
                 // Defaults remain best effort when configuration cannot be read.
             }
         }
