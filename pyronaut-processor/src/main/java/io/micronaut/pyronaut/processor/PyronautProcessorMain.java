@@ -204,12 +204,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             List<String> testOptions = ProcessorOptions.resolve(root, model, options, true);
             List<Path> pyronautProcessorSupport = externalProcessorSupportClasspath();
 
-            List<Path> effectiveProcessorPath = annotationProcessorPath == null || annotationProcessorPath.isEmpty()
-                ? externalLayout != null ? (externalLayout.annotationProcessorClasspath().isEmpty() ? externalLayout.buildClasspath() : externalLayout.annotationProcessorClasspath()) : ClasspathManifestReader.read(
-                root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-build-dependencies"),
-                "Missing build scope cache. Run pyronaut-install first"
-                )
-                : annotationProcessorPath;
+            List<Path> effectiveProcessorPath = resolveProcessorPath(root, externalLayout);
             if (externalLayout != null) {
                 effectiveProcessorPath = appendDistinct(effectiveProcessorPath, pyronautProcessorSupport);
             }
@@ -284,12 +279,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
             String testStatus;
             try (ProcessorProgressReporter progressReporter = ProcessorProgressReporter.create(progress, terminal)) {
                 if (selectedPass.includesMain()) {
-                    List<Path> effectiveClasspath = classpath == null || classpath.isEmpty()
-                        ? externalLayout != null ? externalLayout.runtimeClasspath() : ClasspathManifestReader.read(
-                        root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"),
-                        "Missing runtime scope cache. Run pyronaut-install first"
-                        )
-                        : classpath;
+                    List<Path> effectiveClasspath = resolveRuntimeClasspath(root, externalLayout);
                     if (externalLayout != null) {
                         effectiveClasspath = appendDistinct(effectiveClasspath, pyronautProcessorSupport);
                     }
@@ -377,12 +367,7 @@ public final class PyronautProcessorMain implements Callable<Integer> {
                 }
 
                 if (selectedPass.includesTest()) {
-                    List<Path> effectiveTestClasspath = testClasspath == null || testClasspath.isEmpty()
-                        ? externalLayout != null ? externalTestClasspath(externalLayout, resolvedMainTargetDir) : ClasspathManifestReader.read(
-                        root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"),
-                        "Missing test scope cache. Run pyronaut-install first"
-                    )
-                        : testClasspath;
+                    List<Path> effectiveTestClasspath = resolveTestClasspath(root, externalLayout, resolvedMainTargetDir);
                     if (externalLayout != null) {
                         // Test sources can contain the generated Pyronaut
                         // application entry point too. Keep the Python
@@ -580,6 +565,47 @@ public final class PyronautProcessorMain implements Callable<Integer> {
 
     private static Path firstOrEmpty(Path root, List<Path> paths) {
         return paths == null || paths.isEmpty() ? ExternalProjectLayout.outputDirectory(root).resolve("external-java") : paths.get(0);
+    }
+
+    private List<Path> resolveProcessorPath(Path root, ExternalProjectLayout externalLayout) {
+        if (annotationProcessorPath != null && !annotationProcessorPath.isEmpty()) {
+            return annotationProcessorPath;
+        }
+        if (externalLayout != null) {
+            return externalLayout.annotationProcessorClasspath().isEmpty()
+                ? externalLayout.buildClasspath()
+                : externalLayout.annotationProcessorClasspath();
+        }
+        return ClasspathManifestReader.read(
+            root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-build-dependencies"),
+            "Missing build scope cache. Run pyronaut install first"
+        );
+    }
+
+    private List<Path> resolveRuntimeClasspath(Path root, ExternalProjectLayout externalLayout) {
+        if (classpath != null && !classpath.isEmpty()) {
+            return classpath;
+        }
+        if (externalLayout != null) {
+            return externalLayout.runtimeClasspath();
+        }
+        return ClasspathManifestReader.read(
+            root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-runtime-dependencies"),
+            "Missing runtime scope cache. Run pyronaut install first"
+        );
+    }
+
+    private List<Path> resolveTestClasspath(Path root, ExternalProjectLayout externalLayout, Path mainClasses) {
+        if (testClasspath != null && !testClasspath.isEmpty()) {
+            return testClasspath;
+        }
+        if (externalLayout != null) {
+            return externalTestClasspath(externalLayout, mainClasses);
+        }
+        return ClasspathManifestReader.read(
+            root.resolve(DEFAULT_PYRONAUT_DIR).resolve("resolved-test-dependencies"),
+            "Missing test scope cache. Run pyronaut install first"
+        );
     }
 
     private static List<Path> externalTestClasspath(ExternalProjectLayout layout, Path mainClasses) {
