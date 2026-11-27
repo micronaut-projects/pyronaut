@@ -62,7 +62,7 @@ final class LogbackServerErrorHook extends TurboFilter implements LoggerContextL
                 thrown = last;
             }
             if (thrown != null) {
-                ServerErrorCapture.record(logger == null ? null : logger.getName(), thrown);
+                ServerErrorCapture.recordException(logger == null ? null : logger.getName(), thrown);
             }
         }
         return FilterReply.NEUTRAL;
@@ -75,6 +75,7 @@ final class LogbackServerErrorHook extends TurboFilter implements LoggerContextL
 
     @Override
     public void onStart(LoggerContext context) {
+        // Nothing to do: the filter is attached when the hook is installed.
     }
 
     @Override
@@ -84,9 +85,11 @@ final class LogbackServerErrorHook extends TurboFilter implements LoggerContextL
 
     @Override
     public void onStop(LoggerContext context) {
+        // Nothing to do: the filter goes away with the stopped context.
     }
 
     @Override
     public void onLevelChange(ch.qos.logback.classic.Logger logger, Level level) {
+        // Level changes do not affect which errors are recorded.
     }
 }

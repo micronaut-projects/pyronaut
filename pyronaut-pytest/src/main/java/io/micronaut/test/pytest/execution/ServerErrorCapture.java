@@ -98,7 +98,7 @@ public final class ServerErrorCapture {
      * @param loggerName the name of the logger that logged it
      * @param throwable the exception
      */
-    static void record(String loggerName, Throwable throwable) {
+    static void recordException(String loggerName, Throwable throwable) {
         if (!recording || throwable == null || isOwnLogger(loggerName)) {
             return;
         }
@@ -132,7 +132,7 @@ public final class ServerErrorCapture {
                 if (LOGBACK_CONTEXT.equals(LoggerFactory.getILoggerFactory().getClass().getName())) {
                     LogbackServerErrorHook.install(LoggerFactory.getILoggerFactory());
                 }
-            } catch (Throwable e) {
+            } catch (RuntimeException | LinkageError e) {
                 LOG.debug("Unable to observe application errors for test failure reports", e);
             }
         }
@@ -162,22 +162,23 @@ public final class ServerErrorCapture {
         builder.append(prefix).append(describe(throwable));
         StackTraceElement[] stackTrace = throwable.getStackTrace();
         boolean guestFrames = throwable instanceof PolyglotException && hasGuestFrames(stackTrace);
-        int hostFrames = 0;
+        // For an exception raised in Python, its traceback is what matters;
+        // the host frames are the framework calling into the route.
+        List<StackTraceElement> frames = new ArrayList<>(stackTrace.length);
         for (StackTraceElement element : stackTrace) {
-            boolean guest = isGuestFrame(element);
-            if (guestFrames) {
-                // For an exception raised in Python, its traceback is what matters;
-                // the host frames are the framework calling into the route.
-                if (!guest) {
-                    continue;
-                }
-            } else if (INTERNAL_FRAME.matcher(element.getClassName()).matches()) {
-                continue;
-            } else if (hostFrames++ == MAX_HOST_FRAMES) {
-                builder.append("\n\t...");
-                break;
+            boolean shown = guestFrames
+                ? isGuestFrame(element)
+                : !INTERNAL_FRAME.matcher(element.getClassName()).matches();
+            if (shown) {
+                frames.add(element);
             }
-            builder.append("\n\tat ").append(element);
+        }
+        int limit = guestFrames ? frames.size() : Math.min(frames.size(), MAX_HOST_FRAMES);
+        for (int i = 0; i < limit; i++) {
+            builder.append("\n\tat ").append(frames.get(i));
+        }
+        if (frames.size() > limit) {
+            builder.append("\n\t...");
         }
         Throwable cause = throwable.getCause();
         if (cause != null && cause != throwable) {
