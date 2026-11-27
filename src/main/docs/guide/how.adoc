@@ -110,6 +110,13 @@ output and process a smaller source set. Processing can report source and genera
 starts. The processor must be able to see decorators statically; see <<incrementalProcessing,Incremental processing>>
 for the constructs it can and cannot follow.
 
+Each generated Java class is named after the Python definition it comes from. A top-level class keeps its name, and a
+module with decorated functions becomes a class named after the module in upper camel case: the routes of
+`bookshelf/widget_routes.py` are bridged through `bookshelf.WidgetRoutes`. A module and a class therefore map to the same
+Java name when the class is named like its module, such as `bookshelf/widget.py` defining `Widget`. That is fine while
+the module's functions are plain helpers, but when they carry decorators, such as a route, processing fails and names
+both definitions. Rename the module, for example to `widget_api.py`, or the class.
+
 To see how processing handles serialization and validation, define a data class:
 
 .Writing serializable data classes
