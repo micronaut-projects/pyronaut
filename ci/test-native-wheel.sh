@@ -52,6 +52,9 @@ cd "$work/pyronaut-examples/hello-world/python"
 mkdir "$work/launch"
 cd "$work/launch"
 log="$work/main.log"
+# Create the log before launching: the background job opens it asynchronously, and
+# reading a log that does not exist yet would end this script under `set -e`.
+: > "$log"
 # Let the server allocate a free port and read it from this launcher's own log.
 MICRONAUT_SERVER_HOST=127.0.0.1 MICRONAUT_SERVER_PORT=-1 \
   setsid "$work/.venv-wheel-$mode/bin/main" > "$log" 2>&1 &
