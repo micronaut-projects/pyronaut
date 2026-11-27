@@ -129,12 +129,24 @@ Pass a version such as `1.0.0` or `v1.0.0` to install that release instead, incl
 
 Update then:
 
-. downloads the release's wheel and installs it with `pip` into the Python environment that runs `pyronaut`;
+. downloads the release's wheel and installs it into the Python environment that runs `pyronaut`, with the installer that manages that environment (see below);
 . runs the new version's `pyronaut setup`, which prepares the Maven repository recorded by the previous setup (commands download the matching native launchers when they first need them);
 . removes the launchers, tool runtimes, setup state, and Pyronaut Maven artifacts of every version older than the installed one.
 
 Update never removes versions newer than the one it installs, nor a launcher version pinned by `[native-images].version`.
 If setup fails, the new wheel stays installed and older versions are kept; fix the reported problem and run `pyronaut setup`.
+
+Update picks the installer from the environment that runs `pyronaut`:
+
+[cols="1,2",options="header"]
+|===
+| Installed with | Wheel installed with
+| `uv tool install pyronaut`, or into a `uv venv` | `uv pip install --python <environment python> --no-deps <wheel>`. A uv tool receipt is left as it is, so `uv tool upgrade pyronaut` keeps working.
+| `pipx install pyronaut` | pipx's shared `pip`, or `pipx runpip pyronaut install` when the environment has no `pip`.
+| `pip install pyronaut` | `pip` from the same Python, or `uv pip install --python` when that Python has no `pip`.
+|===
+
+When the matching installer is not on the `PATH`, update installs nothing and prints the command to run instead, for example `uv tool upgrade pyronaut && pyronaut setup` (or `uv tool install --force pyronaut==<version> && pyronaut setup` for a requested version).
 
 `--check` reports an available update without installing it, and `--keep-old` skips the removal of older versions.
 Update reads releases through the GitHub API; set `GH_TOKEN` or `GITHUB_TOKEN` when the API requires authentication.

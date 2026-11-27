@@ -7,6 +7,7 @@ import fnmatch
 from functools import lru_cache
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import shlex
 import shutil
@@ -11305,6 +11306,85 @@ def _select_update_release(
     return max(candidates, key=lambda release: release.version, default=None)
 
 
+class _UpdateInstaller(NamedTuple):
+    """How ``pyronaut update`` installs a wheel into the environment the CLI runs from."""
+
+    tool: str
+    environment: str
+    command: list[str] | None
+    """The install command without the wheel, or ``None`` when no installer is usable."""
+    manual: str
+    """What the user can run instead; it ends with ``pyronaut setup``."""
+    problem: str = ""
+
+
+def _pyvenv_config(prefix: Path) -> dict[str, str]:
+    try:
+        text = (prefix / "pyvenv.cfg").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    config = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            config[key.strip().lower()] = value.strip()
+    return config
+
+
+def _update_installer(
+    target: str,
+    requested: str | None,
+    *,
+    prefix: Path | None = None,
+    executable: str | None = None,
+    pip_available: bool | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> _UpdateInstaller:
+    """Pick the installer that owns the environment the CLI runs from.
+
+    ``uv tool install`` and ``uv venv`` environments have no pip, so the wheel
+    goes in with ``uv pip install --python``. That leaves a uv tool receipt
+    untouched, so ``uv tool upgrade`` keeps working afterwards. A pipx
+    environment uses pipx's shared pip, or ``pipx runpip``. Any other
+    environment uses pip from the CLI's own interpreter, or uv when it has no pip.
+    """
+    prefix = Path(sys.prefix) if prefix is None else prefix
+    executable = sys.executable if executable is None else executable
+    if pip_available is None:
+        pip_available = importlib.util.find_spec("pip") is not None
+    spec = f"pyronaut=={target}"
+    setup = " && pyronaut setup"
+    python = shlex.quote(executable)
+    pip_command = [executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-deps"]
+    uv_from_env = os.environ.get("UV")
+    uv = uv_from_env if uv_from_env and os.path.isfile(uv_from_env) else which("uv")
+    uv_command = [uv, "pip", "install", "--python", executable, "--no-deps"] if uv else None
+
+    if "uv" in _pyvenv_config(prefix):
+        if (prefix / "uv-receipt.toml").is_file():
+            environment = f"the uv tool environment {prefix}"
+            manual = ("uv tool upgrade pyronaut" if requested is None else f"uv tool install --force {spec}") + setup
+        else:
+            environment = f"the uv virtual environment {prefix}"
+            manual = f"uv pip install --python {python} {spec}" + setup
+        return _UpdateInstaller("uv", environment, uv_command, manual, "" if uv_command else "uv is not on PATH")
+    if (prefix / "pipx_metadata.json").is_file():
+        environment = f"the pipx environment {prefix}"
+        manual = ("pipx upgrade pyronaut" if requested is None else f"pipx install --force {spec}") + setup
+        if pip_available:
+            return _UpdateInstaller("pip", environment, pip_command, manual)
+        pipx = which("pipx")
+        if pipx:
+            runpip = [pipx, "runpip", prefix.name, "install", "--disable-pip-version-check", "--no-input", "--no-deps"]
+            return _UpdateInstaller("pipx", environment, runpip, manual)
+        return _UpdateInstaller("pipx", environment, None, manual, "it has no pip and pipx is not on PATH")
+    environment = f"the Python environment {prefix}"
+    if pip_available:
+        return _UpdateInstaller("pip", environment, pip_command, f"{python} -m pip install {spec}" + setup)
+    manual = f"{python} -m ensurepip && {python} -m pip install {spec}" + setup
+    return _UpdateInstaller("uv", environment, uv_command, manual, "" if uv_command else "it has no pip and uv is not on PATH")
+
+
 def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
     progress = _progress_console()
     try:
@@ -11340,6 +11420,13 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
             print(f"Pyronaut {target} is available. Run pyronaut update to install it.")
             return SUCCESS
 
+        installer = _update_installer(target, requested)
+        if installer.command is None:
+            raise RuntimeError(
+                f"pyronaut update cannot install Pyronaut {target} into {installer.environment}: "
+                f"{installer.problem}. Run instead:\n  {installer.manual}"
+            )
+
         # Resolve the Maven repository from the current setup state before the
         # wheel changes: the new version has no state of its own yet, and
         # would otherwise fall back to ~/.m2/repository.
@@ -11357,17 +11444,12 @@ def _run_update(args: Sequence[str], runner: RunnerWithEnv) -> int:
                 release.wheel_url, wheel, f"Downloading pyronaut {target} wheel", headers=download_headers
             )
             with progress.step(f"Installing pyronaut {target} wheel", done=f"Installed pyronaut {target} wheel"):
-                pip_code = _run_showing_output_on_failure(
-                    runner,
-                    [
-                        sys.executable, "-m", "pip", "install",
-                        "--disable-pip-version-check", "--no-input", "--no-deps",
-                        str(wheel),
-                    ],
-                    None,
-                )
-                if pip_code != SUCCESS:
-                    raise RuntimeError(f"pip failed to install {wheel.name} with {sys.executable}")
+                install_code = _run_showing_output_on_failure(runner, [*installer.command, str(wheel)], None)
+                if install_code != SUCCESS:
+                    raise RuntimeError(
+                        f"{installer.tool} failed to install {wheel.name} into {installer.environment}. "
+                        f"Resolve the problem above, or run:\n  {installer.manual}"
+                    )
 
         # The new wheel provisions its own launchers, Maven artifacts, and
         # setup state. It renders its own progress on the shared timeline.

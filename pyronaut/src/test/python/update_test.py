@@ -373,6 +373,97 @@ class RateLimitedUpdateTest(unittest.TestCase):
             self.assertIn("rate limit exceeded", stderr)
 
 
+def _fake_environment(root, *, uv=False, uv_tool=False, pipx=False):
+    """Lay out the marker files of a virtual environment created by uv, uv tool, or pipx."""
+    prefix = Path(root) / ("pyronaut" if uv_tool or pipx else "venv")
+    prefix.mkdir(parents=True)
+    config = "home = /usr/local/bin\ninclude-system-site-packages = false\nversion = 3.12.8\n"
+    if uv or uv_tool:
+        config += "uv = 0.12.19\n"
+    (prefix / "pyvenv.cfg").write_text(config, encoding="utf-8")
+    if uv_tool:
+        (prefix / "uv-receipt.toml").write_text('[tool]\nrequirements = [{ name = "pyronaut" }]\n', encoding="utf-8")
+    if pipx:
+        (prefix / "pipx_metadata.json").write_text("{}", encoding="utf-8")
+    return prefix
+
+
+class UpdateInstallerTest(unittest.TestCase):
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("UV", None)
+
+    def _installer(self, prefix, *, requested=None, pip=False, tools=()):
+        def which(name):
+            return f"/opt/bin/{name}" if name in tools else None
+        return cli._update_installer(
+            "0.1.3", requested, prefix=prefix, executable="/env/bin/python", pip_available=pip, which=which,
+        )
+
+    def test_uv_tool_environment_installs_the_wheel_with_uv_pip(self):
+        prefix = _fake_environment(self._temp.name, uv_tool=True)
+        installer = self._installer(prefix, tools=("uv",))
+        self.assertEqual(["/opt/bin/uv", "pip", "install", "--python", "/env/bin/python", "--no-deps"], installer.command)
+        self.assertEqual("uv tool upgrade pyronaut && pyronaut setup", installer.manual)
+        self.assertIn("uv tool environment", installer.environment)
+
+    def test_uv_tool_environment_prefers_uv_over_a_pip_installed_into_it(self):
+        prefix = _fake_environment(self._temp.name, uv_tool=True)
+        installer = self._installer(prefix, pip=True, tools=("uv",))
+        self.assertEqual("/opt/bin/uv", installer.command[0])
+
+    def test_uv_tool_environment_without_uv_on_path_has_a_pinned_manual_command(self):
+        prefix = _fake_environment(self._temp.name, uv_tool=True)
+        installer = self._installer(prefix, requested="v0.1.3")
+        self.assertIsNone(installer.command)
+        self.assertEqual("uv is not on PATH", installer.problem)
+        self.assertEqual("uv tool install --force pyronaut==0.1.3 && pyronaut setup", installer.manual)
+
+    def test_uv_set_by_a_running_uv_is_used(self):
+        prefix = _fake_environment(self._temp.name, uv=True)
+        uv = Path(self._temp.name) / "uv"
+        uv.write_text("", encoding="utf-8")
+        os.environ["UV"] = str(uv)
+        installer = self._installer(prefix)
+        self.assertEqual(str(uv), installer.command[0])
+        self.assertIn("uv virtual environment", installer.environment)
+        self.assertEqual("uv pip install --python /env/bin/python pyronaut==0.1.3 && pyronaut setup", installer.manual)
+
+    def test_pipx_environment_uses_shared_pip_or_runpip(self):
+        prefix = _fake_environment(self._temp.name, pipx=True)
+        with_pip = self._installer(prefix, pip=True, tools=("pipx",))
+        self.assertEqual(["/env/bin/python", "-m", "pip", "install"], with_pip.command[:4])
+        self.assertEqual("pipx upgrade pyronaut && pyronaut setup", with_pip.manual)
+
+        runpip = self._installer(prefix, tools=("pipx",))
+        self.assertEqual(["/opt/bin/pipx", "runpip", "pyronaut", "install"], runpip.command[:4])
+        self.assertIn("--no-deps", runpip.command)
+
+        missing = self._installer(prefix, requested="0.1.3")
+        self.assertIsNone(missing.command)
+        self.assertEqual("pipx install --force pyronaut==0.1.3 && pyronaut setup", missing.manual)
+
+    def test_plain_environment_uses_pip_then_uv(self):
+        prefix = _fake_environment(self._temp.name)
+        with_pip = self._installer(prefix, pip=True, tools=("uv",))
+        self.assertEqual(
+            ["/env/bin/python", "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-deps"],
+            with_pip.command,
+        )
+        self.assertEqual("/env/bin/python -m pip install pyronaut==0.1.3 && pyronaut setup", with_pip.manual)
+
+        without_pip = self._installer(prefix, tools=("uv",))
+        self.assertEqual(["/opt/bin/uv", "pip", "install", "--python", "/env/bin/python", "--no-deps"], without_pip.command)
+
+        neither = self._installer(prefix)
+        self.assertIsNone(neither.command)
+        self.assertIn("/env/bin/python -m ensurepip", neither.manual)
+
+
 class RunUpdateTest(unittest.TestCase):
     def setUp(self):
         self._temp = tempfile.TemporaryDirectory()
@@ -380,7 +471,19 @@ class RunUpdateTest(unittest.TestCase):
         self.home.mkdir()
         self.repository = self.home / ".m2" / "repository"
         self.commands = []
+        self.prefix = _fake_environment(self._temp.name)
+        self.pip_available = True
+        self.tools = {}
+        real_installer = cli._update_installer
+
+        def installer(target, requested):
+            return real_installer(
+                target, requested, prefix=self.prefix, pip_available=self.pip_available, which=self.tools.get,
+            )
+
         self.patches = [
+            patch.object(cli, "_update_installer", side_effect=installer),
+            patch.dict(os.environ),
             patch.object(cli.Path, "home", return_value=self.home),
             # These tests cover the ~/.pyronaut layout, whatever the platform.
             patch.dict(os.environ, {"PYRONAUT_XDG": "false"}),
@@ -391,6 +494,7 @@ class RunUpdateTest(unittest.TestCase):
         ]
         for active in self.patches:
             active.start()
+        os.environ.pop("UV", None)
         self.downloads = []
 
     def tearDown(self):
@@ -405,7 +509,7 @@ class RunUpdateTest(unittest.TestCase):
     def _runner(self, code=0, setup_code=0):
         def run(command_line, env):
             self.commands.append((list(command_line), env))
-            if command_line[1:4] == ["-m", "pip", "install"]:
+            if command_line[1:4] == ["-m", "pip", "install"] or command_line[1:3] == ["pip", "install"]:
                 self.assertTrue(Path(command_line[-1]).is_file())
                 return code
             return setup_code
@@ -512,6 +616,38 @@ class RunUpdateTest(unittest.TestCase):
         self.assertIn("pip failed to install pyronaut-0.0.5-py3-none-any.whl", stderr)
         self.assertEqual(1, len(self.commands))
         self.assertTrue((self.home / ".pyronaut" / "bin" / "0.0.4").is_dir())
+
+    def test_uv_tool_environment_installs_the_wheel_with_uv_and_runs_setup(self):
+        self.prefix = _fake_environment(Path(self._temp.name) / "tools", uv_tool=True)
+        self.pip_available = False
+        self.tools = {"uv": "/opt/bin/uv"}
+        code, stdout, stderr = self._run(["--keep-old", "--progress", "off"], [_release("v0.0.5")])
+        self.assertEqual(cli.SUCCESS, code, stderr)
+        (install, _), (setup, _) = self.commands
+        self.assertEqual(["/opt/bin/uv", "pip", "install", "--python", sys.executable, "--no-deps"], install[:6])
+        self.assertEqual("pyronaut-0.0.5-py3-none-any.whl", Path(install[-1]).name)
+        self.assertEqual([sys.executable, "-m", "pyronaut_cli_v2", "setup"], setup[:4])
+        self.assertEqual("Pyronaut updated from 0.0.4 to 0.0.5\n", stdout)
+
+    def test_uv_tool_environment_without_uv_prints_the_command_to_run(self):
+        self.prefix = _fake_environment(Path(self._temp.name) / "tools", uv_tool=True)
+        self.pip_available = False
+        code, _, stderr = self._run(["0.0.5", "--progress", "off"], [_release("v0.0.5")])
+        self.assertEqual(cli.PRECONDITION_FAILED, code)
+        self.assertIn("uv is not on PATH", stderr)
+        self.assertIn("uv tool install --force pyronaut==0.0.5 && pyronaut setup", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertEqual([], self.downloads)
+        self.assertEqual([], self.commands)
+
+    def test_failed_uv_install_prints_the_command_to_run(self):
+        self.prefix = _fake_environment(Path(self._temp.name) / "tools", uv_tool=True)
+        self.tools = {"uv": "/opt/bin/uv"}
+        code, _, stderr = self._run(["--progress", "off"], [_release("v0.0.5")], runner=self._runner(code=2))
+        self.assertEqual(cli.PRECONDITION_FAILED, code)
+        self.assertIn("uv failed to install pyronaut-0.0.5-py3-none-any.whl", stderr)
+        self.assertIn("uv tool upgrade pyronaut && pyronaut setup", stderr)
+        self.assertEqual(1, len(self.commands))
 
     def test_failed_setup_keeps_older_versions(self):
         self._populate_versions("0.0.4")
