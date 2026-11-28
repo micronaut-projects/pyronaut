@@ -144,9 +144,10 @@ public class PytestTestEngine implements TestEngine {
             }
         });
         try {
-            this.context = GraalPyContextFactory.bootstrapReusableContext(
+            this.context = ApplicationGraalPyContextSettings.bootstrapReusableContext(
                 PytestTestEngine.class.getClassLoader(),
-                pythonOptions
+                pythonOptions,
+                GraalPyContextFactory.APPLICATION_MAIN
             );
             this.ownsContext = true;
         } catch (Exception e) {

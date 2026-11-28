@@ -104,7 +104,11 @@ def render_row(console: Console, result: CheckResult) -> None:
     else:
         console.fail(message)
     if result.fix:
-        console.hint(f"fix: {result.fix}")
+        # a multi-line fix (a configuration snippet, say) keeps its lines aligned under "fix: "
+        first, *rest = result.fix.splitlines()
+        console.hint(f"fix: {first}")
+        for line in rest:
+            console.hint(f"     {line}")
 
 
 def render(console: Console, results: Sequence[CheckResult]) -> None:

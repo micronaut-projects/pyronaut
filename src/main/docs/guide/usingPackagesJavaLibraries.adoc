@@ -53,6 +53,31 @@ Many common Python library use cases have high-performance JVM alternatives that
 |https://github.com/HubSpot/jinjava[Jinjava]
 |===
 
+[[packagesWithCExtensions]]
+== Packages with C extensions
+
+Packages such as NumPy, pandas, and `pydantic-core` ship C extensions: native modules that GraalPy loads through its C API emulation.
+The GraalPy context of a Pyronaut application does not allow native access by default, so importing such a package fails, typically on the first request that reaches the import:
+
+----
+ImportError: Cannot run any C extensions because native access is not allowed.
+----
+
+Before using a package with C extensions, go through this checklist:
+
+. Enable native access in `config/application.toml` (or the configuration file under your resources directory):
++
+[source,toml]
+----
+[graalpy.context]
+allow-native-access = true
+----
++
+`allow-all-access = true` implies it, and the `GRAALPY_CONTEXT_ALLOW_NATIVE_ACCESS=true` environment variable sets it without editing the file.
+. Run `pyronaut doctor`. It warns when an installed package ships C extensions and the configuration leaves native access off, and prints the snippet above. `pyronaut dev`, `pyronaut run`, and `pyronaut test` print the same warning before they start the application.
+. Check the context pool. GraalPy loads C extensions in only one context per process, while the context pool (see <<contextPool,The GIL and the Context Pool>>) creates several contexts. A C extension imported in a second pooled context fails, often only under concurrent load. Disable the pool with `micronaut.python.pool.enabled = false` for applications that depend on C extensions. GraalPy's experimental native module isolation (the `python.IsolateNativeModules` context option), which gives each context its own copy of the extensions, works on Linux only.
+. Run the tests. `pyronaut test` builds the GraalPy context that collects and runs pytest modules from the same `graalpy.context` settings, so a test module that imports NumPy needs `allow-native-access` too. When a route fails in a test, the server error is in `__pyronaut__/reports/tests/console.log`.
+
 == Optimise hot paths in Java
 
 For CPU-bound work such as a tight parsing routine or numeric kernel, a Java implementation can run faster than Python. Add the Java class to the project's Java source directory (`src-java` by default; see <<projectStructure,Pyronaut Toolchain and Project Layout>>) and make it a bean:
