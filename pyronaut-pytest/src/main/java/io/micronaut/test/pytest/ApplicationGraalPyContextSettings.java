@@ -71,7 +71,6 @@ import java.util.function.Predicate;
 public final class ApplicationGraalPyContextSettings implements GraalPyContextCustomizer {
 
     static final String PREFIX = "graalpy.context";
-    private static final Logger LOG = LoggerFactory.getLogger(ApplicationGraalPyContextSettings.class);
     /** The boolean builder flags the application can set, by property name (no reflection, for native launchers). */
     static final Map<String, BiConsumer<Context.Builder, Boolean>> FLAGS = Map.of(
         "allow-all-access", Context.Builder::allowAllAccess,
@@ -81,6 +80,7 @@ public final class ApplicationGraalPyContextSettings implements GraalPyContextCu
         "allow-inner-context-options", Context.Builder::allowInnerContextOptions,
         "use-system-exit", Context.Builder::useSystemExit
     );
+    private static final Logger LOG = LoggerFactory.getLogger(ApplicationGraalPyContextSettings.class);
     /** Package prefixes Core always keeps visible when host-class-lookup is set. */
     private static final List<String> FRAMEWORK_PACKAGES = List.of("java.", "jakarta.", "io.micronaut.");
     private static final Set<String> PRIMITIVE_TYPES = Set.of("boolean", "byte", "char", "short", "int", "long", "float", "double", "void");
@@ -167,6 +167,41 @@ public final class ApplicationGraalPyContextSettings implements GraalPyContextCu
     }
 
     /**
+     * The host class filter Core builds for {@code graalpy.context.host-class-lookup}: the JDK,
+     * Jakarta and framework packages, primitive types and the configured packages or classes,
+     * matching an array by its element type.
+     *
+     * @param hostClassLookup The configured package or class names
+     * @return The filter
+     */
+    static Predicate<String> hostClassFilter(List<String> hostClassLookup) {
+        List<String> names = hostClassLookup.stream()
+            .map(name -> name.endsWith(".") ? name.substring(0, name.length() - 1) : name)
+            .toList();
+        Predicate<String> classFilter = className -> FRAMEWORK_PACKAGES.stream().anyMatch(className::startsWith)
+            || names.stream().anyMatch(name -> className.equals(name) || className.startsWith(name + '.') || className.startsWith(name + '$'));
+        return className -> isVisible(className, classFilter);
+    }
+
+    private static boolean isVisible(String className, Predicate<String> classFilter) {
+        String name = className;
+        while (name.endsWith("[]")) {
+            name = name.substring(0, name.length() - 2);
+        }
+        if (name.startsWith("[")) {
+            String element = name.substring(name.lastIndexOf('[') + 1);
+            if (element.length() == 1) {
+                return PRIMITIVE_DESCRIPTORS.indexOf(element.charAt(0)) >= 0;
+            }
+            if (element.length() < 3 || element.charAt(0) != 'L' || !element.endsWith(";")) {
+                return false;
+            }
+            name = element.substring(1, element.length() - 1);
+        }
+        return PRIMITIVE_TYPES.contains(name) || classFilter.test(name);
+    }
+
+    /**
      * The settings read from the application configuration.
      *
      * @param flags The configured builder flags, by property name below the prefix
@@ -214,40 +249,5 @@ public final class ApplicationGraalPyContextSettings implements GraalPyContextCu
                 builder.allowHostClassLookup(hostClassFilter(hostClassLookup));
             }
         }
-    }
-
-    /**
-     * The host class filter Core builds for {@code graalpy.context.host-class-lookup}: the JDK,
-     * Jakarta and framework packages, primitive types and the configured packages or classes,
-     * matching an array by its element type.
-     *
-     * @param hostClassLookup The configured package or class names
-     * @return The filter
-     */
-    static Predicate<String> hostClassFilter(List<String> hostClassLookup) {
-        List<String> names = hostClassLookup.stream()
-            .map(name -> name.endsWith(".") ? name.substring(0, name.length() - 1) : name)
-            .toList();
-        Predicate<String> classFilter = className -> FRAMEWORK_PACKAGES.stream().anyMatch(className::startsWith)
-            || names.stream().anyMatch(name -> className.equals(name) || className.startsWith(name + '.') || className.startsWith(name + '$'));
-        return className -> isVisible(className, classFilter);
-    }
-
-    private static boolean isVisible(String className, Predicate<String> classFilter) {
-        String name = className;
-        while (name.endsWith("[]")) {
-            name = name.substring(0, name.length() - 2);
-        }
-        if (name.startsWith("[")) {
-            String element = name.substring(name.lastIndexOf('[') + 1);
-            if (element.length() == 1) {
-                return PRIMITIVE_DESCRIPTORS.indexOf(element.charAt(0)) >= 0;
-            }
-            if (element.length() < 3 || element.charAt(0) != 'L' || !element.endsWith(";")) {
-                return false;
-            }
-            name = element.substring(1, element.length() - 1);
-        }
-        return PRIMITIVE_TYPES.contains(name) || classFilter.test(name);
     }
 }
